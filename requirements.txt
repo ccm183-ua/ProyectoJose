@@ -1,0 +1,13 @@
+# Dependencias principales
+PyQt6>=6.6.1
+openpyxl==3.1.2
+pandas==2.1.4
+python-dateutil==2.8.2
+
+# Testing
+pytest==7.4.3
+pytest-qt==4.2.0
+pytest-cov==4.1.0
+
+# Utilidades
+setuptools==69.0.2
