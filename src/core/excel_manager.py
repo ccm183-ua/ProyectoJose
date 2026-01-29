@@ -33,9 +33,25 @@ class ExcelManager:
             wb = load_workbook(template_path)
             ws = wb.active
             
-            # Rellenar datos del proyecto
-            nombre_obra = f"{data.get('direccion', '')} {data.get('numero', '')}".strip()
-            direccion_completa = f"{data.get('direccion', '')} {data.get('numero', '')}, CP: {data.get('codigo_postal', '')}"
+            # Preparar datos del proyecto
+            # Si tenemos nombre_obra, usarlo; si no, construir desde los campos
+            nombre_obra = data.get('nombre_obra', '')
+            if not nombre_obra:
+                nombre_obra = f"{data.get('direccion', '')} {data.get('numero', '')}".strip()
+            
+            # Construir dirección completa
+            direccion_parts = []
+            if data.get('calle'):
+                direccion_parts.append(data.get('calle'))
+            if data.get('num_calle'):
+                direccion_parts.append(f"Nº {data.get('num_calle')}")
+            direccion_completa = ' '.join(direccion_parts)
+            if data.get('codigo_postal'):
+                direccion_completa += f", CP: {data.get('codigo_postal')}"
+            
+            # Si no hay dirección completa, usar campos antiguos
+            if not direccion_completa:
+                direccion_completa = f"{data.get('direccion', '')} {data.get('numero', '')}, CP: {data.get('codigo_postal', '')}".strip()
             
             # Buscar y rellenar campos (búsqueda flexible)
             for row in ws.iter_rows():
@@ -45,7 +61,6 @@ class ExcelManager:
                         
                         # Nombre de la obra
                         if 'nombre' in cell_value and 'obra' in cell_value:
-                            # Buscar celda adyacente para el valor
                             if cell.column == 1:  # Columna A
                                 ws.cell(row=cell.row, column=2).value = nombre_obra
                         
@@ -57,15 +72,53 @@ class ExcelManager:
                         # Código postal
                         if 'código postal' in cell_value or 'codigo postal' in cell_value:
                             if cell.column == 1:
-                                ws.cell(row=cell.row, column=2).value = data.get('codigo_postal', '')
+                                codigo_postal = data.get('codigo_postal', '') or data.get('codigo_postal', '')
+                                ws.cell(row=cell.row, column=2).value = codigo_postal
                         
-                        # Descripción
+                        # Descripción / Tipo
                         if 'descripción' in cell_value or 'descripcion' in cell_value:
                             if cell.column == 1:
-                                ws.cell(row=cell.row, column=2).value = data.get('descripcion', '')
+                                descripcion = data.get('tipo', '') or data.get('descripcion', '')
+                                ws.cell(row=cell.row, column=2).value = descripcion
+                        
+                        # Cliente
+                        if 'cliente' in cell_value:
+                            if cell.column == 1:
+                                ws.cell(row=cell.row, column=2).value = data.get('cliente', '')
+                        
+                        # Localidad
+                        if 'localidad' in cell_value:
+                            if cell.column == 1:
+                                ws.cell(row=cell.row, column=2).value = data.get('localidad', '')
+                        
+                        # Mediación
+                        if 'mediación' in cell_value or 'mediacion' in cell_value:
+                            if cell.column == 1:
+                                ws.cell(row=cell.row, column=2).value = data.get('mediacion', '')
+                        
+                        # Número de proyecto
+                        if ('número' in cell_value or 'numero' in cell_value) and 'proyecto' in cell_value:
+                            if cell.column == 1:
+                                ws.cell(row=cell.row, column=2).value = data.get('numero_proyecto', '')
+                        
+                        # Fecha del proyecto
+                        if 'fecha' in cell_value and ('proyecto' in cell_value or 'obra' in cell_value):
+                            if cell.column == 1:
+                                fecha_proyecto = data.get('fecha', '')
+                                if fecha_proyecto:
+                                    # Convertir DD-MM-YY a DD/MM/YYYY (asumiendo 20YY)
+                                    try:
+                                        parts = fecha_proyecto.split('-')
+                                        if len(parts) == 3:
+                                            day, month, year_short = parts
+                                            year_full = f"20{year_short}"
+                                            fecha_formateada = f"{day}/{month}/{year_full}"
+                                            ws.cell(row=cell.row, column=2).value = fecha_formateada
+                                    except:
+                                        ws.cell(row=cell.row, column=2).value = fecha_proyecto
                         
                         # Fecha de creación
-                        if 'fecha' in cell_value and 'creación' in cell_value or 'fecha' in cell_value and 'creacion' in cell_value:
+                        if 'fecha' in cell_value and ('creación' in cell_value or 'creacion' in cell_value):
                             if cell.column == 1:
                                 fecha_actual = datetime.now().strftime('%d/%m/%Y')
                                 ws.cell(row=cell.row, column=2).value = fecha_actual

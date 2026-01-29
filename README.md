@@ -10,6 +10,7 @@ Aplicación de escritorio desarrollada en Python con PyQt6 para la gestión y ed
 - Validación de datos de entrada
 - Rellenado automático de plantillas Excel
 - Interfaz gráfica intuitiva
+- **Funciona en macOS y Windows sin configuración adicional**
 
 ## 📋 Requisitos
 
@@ -56,102 +57,66 @@ source .venv/bin/activate
 
 ### Paso 4: Instalar dependencias
 
-**En macOS/Linux:**
 ```bash
 pip install -r requirements.txt
-# O si pip no está disponible:
-python3 -m pip install -r requirements.txt
 ```
 
-**En Windows:**
-```bash
-pip install -r requirements.txt
-# O si pip no está disponible:
-python -m pip install -r requirements.txt
-```
+**Nota:** PyQt6 se instala automáticamente y funciona sin configuración adicional en macOS y Windows.
 
 ## ▶️ Ejecución
 
 ### En macOS/Linux
 
-**Opción 1: Con el entorno virtual activado**
 ```bash
-source .venv/bin/activate
-python main.py
-```
-
-**Opción 2: Usando la ruta completa**
-```bash
-.venv/bin/python main.py
+./run.sh
 ```
 
 ### En Windows
 
-**Opción 1: Con el entorno virtual activado (PowerShell)**
-```powershell
-.venv\Scripts\Activate.ps1
-python main.py
-```
-
-**Opción 2: Con el entorno virtual activado (CMD)**
 ```cmd
-.venv\Scripts\activate.bat
+run.bat
+```
+
+### Ejecución directa
+
+```bash
 python main.py
 ```
 
-**Opción 3: Usando la ruta completa**
+## 🛠️ Solución de Problemas
+
+### Error: "ModuleNotFoundError" al ejecutar
+
+Asegúrate de usar el script `run.sh` (macOS/Linux) o `run.bat` (Windows), o activa el entorno virtual antes de ejecutar.
+
+### Error al instalar dependencias
+
+Si tienes problemas, reinstala PyQt6:
+
 ```bash
-.venv\Scripts\python main.py
-```
+# macOS/Linux
+.venv/bin/pip uninstall -y PyQt6 PyQt6-Qt6 PyQt6-sip
+.venv/bin/pip install PyQt6
 
-## 🧪 Ejecutar Tests
-
-### En macOS/Linux
-
-**Opción 1: Con el entorno virtual activado**
-```bash
-source .venv/bin/activate
-pytest tests/ -v
-```
-
-**Opción 2: Usando la ruta completa**
-```bash
-.venv/bin/python -m pytest tests/ -v
-```
-
-### En Windows
-
-**Opción 1: Con el entorno virtual activado**
-```bash
-# Después de activar el entorno virtual
-pytest tests/ -v
-```
-
-**Opción 2: Usando la ruta completa**
-```bash
-.venv\Scripts\python -m pytest tests/ -v
-```
-
-### Ejecutar tests con cobertura
-
-**En macOS/Linux:**
-```bash
-.venv/bin/python -m pytest tests/ --cov=src --cov-report=html
-```
-
-**En Windows:**
-```bash
-.venv\Scripts\python -m pytest tests/ --cov=src --cov-report=html
+# Windows
+.venv\Scripts\pip uninstall -y PyQt6 PyQt6-Qt6 PyQt6-sip
+.venv\Scripts\pip install PyQt6
 ```
 
 ## 📁 Estructura del Proyecto
 
 ```
-presupuestos_app/
+ProyectoJose/
 ├── src/              # Código fuente principal
+│   ├── core/         # Lógica de negocio
+│   ├── gui/          # Interfaz gráfica
+│   ├── models/       # Modelos de datos
+│   └── utils/        # Utilidades
 ├── tests/            # Tests unitarios e integración
 ├── templates/        # Plantillas Excel
-└── docs/            # Documentación
+├── main.py           # Punto de entrada
+├── run.sh            # Script de ejecución (macOS/Linux)
+└── run.bat           # Script de ejecución (Windows)
 ```
 
 ## 📝 Licencia

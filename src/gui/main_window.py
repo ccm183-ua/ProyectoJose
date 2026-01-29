@@ -13,10 +13,11 @@ import os
 from src.gui.dialogs.create_budget_dialog import CreateBudgetDialog
 from src.gui.dialogs.folder_config_dialog import FolderConfigDialog
 from src.gui.dialogs.data_input_dialog import DataInputDialog
+from src.gui.dialogs.project_name_dialog import ProjectNameDialog
 from src.core.excel_manager import ExcelManager
 from src.core.file_manager import FileManager
 from src.core.template_manager import TemplateManager
-from src.utils.helpers import generate_filename, sanitize_filename
+from src.utils.helpers import sanitize_filename
 
 
 class MainWindow(QMainWindow):
@@ -97,12 +98,24 @@ class MainWindow(QMainWindow):
     
     def create_new_budget(self):
         """Crea un nuevo presupuesto siguiendo el flujo completo."""
-        # Paso 1: Seleccionar ubicación de guardado
+        # Paso 1: Obtener nombre del proyecto desde el portapapeles
+        project_dialog = ProjectNameDialog(self)
+        if project_dialog.exec() != ProjectNameDialog.DialogCode.Accepted:
+            return  # Usuario canceló
+        
+        project_data = project_dialog.get_project_data()
+        project_name = project_dialog.get_project_name()
+        
+        if not project_data or not project_name:
+            self.show_error("No se pudo obtener los datos del proyecto.")
+            return
+        
+        # Paso 2: Seleccionar ubicación de guardado
         save_path = self.get_save_path()
         if not save_path:
             return  # Usuario canceló
         
-        # Paso 2: Preguntar si crear carpeta
+        # Paso 3: Preguntar si crear carpeta
         folder_config_dialog = FolderConfigDialog(self)
         create_folder = folder_config_dialog.exec() == FolderConfigDialog.DialogCode.Accepted
         
@@ -111,22 +124,8 @@ class MainWindow(QMainWindow):
             # Obtener subcarpetas seleccionadas
             subfolders = folder_config_dialog.get_selected_subfolders()
             
-            # Paso 3: Obtener datos del presupuesto
-            data_dialog = DataInputDialog(self)
-            if data_dialog.exec() != DataInputDialog.DialogCode.Accepted:
-                return  # Usuario canceló
-            
-            data = data_dialog.get_data()
-            if not data:
-                return  # Error de validación
-            
-            # Generar nombre de carpeta y archivo
-            folder_name = generate_filename(
-                data['direccion'],
-                data['numero'],
-                data['descripcion']
-            )
-            folder_name = sanitize_filename(folder_name)
+            # Generar nombre de carpeta y archivo desde el nombre del proyecto
+            folder_name = sanitize_filename(project_name)
             
             # Crear carpeta en el directorio padre del archivo seleccionado
             save_dir = os.path.dirname(save_path)
@@ -144,14 +143,10 @@ class MainWindow(QMainWindow):
             # Actualizar ruta del archivo para guardarlo en la carpeta
             save_path = os.path.join(folder_path, f"{folder_name}.xlsx")
         else:
-            # No crear carpeta, solo obtener datos
-            data_dialog = DataInputDialog(self)
-            if data_dialog.exec() != DataInputDialog.DialogCode.Accepted:
-                return
-            
-            data = data_dialog.get_data()
-            if not data:
-                return
+            # No crear carpeta, usar el nombre del proyecto para el archivo
+            save_dir = os.path.dirname(save_path)
+            file_name = sanitize_filename(project_name)
+            save_path = os.path.join(save_dir, f"{file_name}.xlsx")
         
         # Paso 4: Crear archivo Excel desde plantilla
         template_path = self.template_manager.get_template_path()
@@ -160,13 +155,23 @@ class MainWindow(QMainWindow):
             self.show_error("No se encontró la plantilla.")
             return
         
-        # Preparar datos para el Excel
+        # Preparar datos para el Excel (usar todos los datos del proyecto)
         excel_data = {
-            'nombre_obra': f"{data['direccion']} {data['numero']}",
-            'direccion': data['direccion'],
-            'numero': data['numero'],
-            'codigo_postal': data['codigo_postal'],
-            'descripcion': data['descripcion']
+            # Campos originales (para compatibilidad)
+            'nombre_obra': project_name,
+            'direccion': project_data.get('calle', ''),
+            'numero': project_data.get('num_calle', ''),
+            'codigo_postal': project_data.get('codigo_postal', ''),
+            'descripcion': project_data.get('tipo', ''),
+            # Nuevos campos del proyecto
+            'numero_proyecto': project_data.get('numero', ''),
+            'fecha': project_data.get('fecha', ''),
+            'cliente': project_data.get('cliente', ''),
+            'mediacion': project_data.get('mediacion', ''),
+            'calle': project_data.get('calle', ''),
+            'num_calle': project_data.get('num_calle', ''),
+            'localidad': project_data.get('localidad', ''),
+            'tipo': project_data.get('tipo', '')
         }
         
         if self.excel_manager.create_from_template(template_path, save_path, excel_data):
