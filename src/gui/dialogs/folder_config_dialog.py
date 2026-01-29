@@ -12,7 +12,7 @@ from PyQt6.QtCore import Qt
 class FolderConfigDialog(QDialog):
     """Diálogo para configurar carpeta y subcarpetas."""
     
-    DEFAULT_SUBFOLDERS = ["fotos", "planos", "documentos", "otros"]
+    DEFAULT_SUBFOLDERS = ["FOTOS", "PLANOS", "PROYECTO", "MEDICIONES", "PRESUPUESTOS"]
     
     def __init__(self, parent=None):
         """Inicializa el diálogo."""
@@ -36,7 +36,7 @@ class FolderConfigDialog(QDialog):
         
         self.subfolder_checkboxes = {}
         for subfolder in self.DEFAULT_SUBFOLDERS:
-            checkbox = QCheckBox(subfolder.capitalize())
+            checkbox = QCheckBox(subfolder)
             self.subfolder_checkboxes[subfolder] = checkbox
             subfolders_layout.addWidget(checkbox)
         

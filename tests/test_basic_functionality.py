@@ -189,7 +189,7 @@ class TestFolderCreation:
         file_manager = FileManager()
         
         main_folder = os.path.join(temp_dir, "carpeta_principal")
-        subfolders = ["fotos", "planos", "documentos"]
+        subfolders = ["FOTOS", "PLANOS", "PROYECTO", "MEDICIONES", "PRESUPUESTOS"]
         
         file_manager.create_folder(main_folder)
         file_manager.create_subfolders(main_folder, subfolders)

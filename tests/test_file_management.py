@@ -61,7 +61,7 @@ class TestFolderCreation:
     def test_create_multiple_subfolders(self, temp_dir, file_manager):
         """Test: Validar creación de subcarpetas múltiples."""
         main_folder = os.path.join(temp_dir, "carpeta_principal")
-        subfolders = ["fotos", "planos", "documentos", "otros"]
+        subfolders = ["FOTOS", "PLANOS", "PROYECTO", "MEDICIONES", "PRESUPUESTOS"]
         
         file_manager.create_folder(main_folder)
         file_manager.create_subfolders(main_folder, subfolders)

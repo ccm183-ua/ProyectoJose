@@ -170,12 +170,11 @@ class TestFolderConfigDialog:
         """Test: Validar que el diálogo tiene checkboxes para subcarpetas."""
         dialog = FolderConfigDialog()
         
-        # Debe tener checkboxes para:
-        # - Fotos
-        # - Planos
-        # - Documentos
-        # - Otros
-        assert hasattr(dialog, 'get_selected_subfolders') or hasattr(dialog, 'fotos_checkbox')
+        # Debe tener checkboxes para: FOTOS, PLANOS, PROYECTO, MEDICIONES, PRESUPUESTOS
+        assert hasattr(dialog, 'get_selected_subfolders')
+        assert hasattr(dialog, 'subfolder_checkboxes')
+        expected = {"FOTOS", "PLANOS", "PROYECTO", "MEDICIONES", "PRESUPUESTOS"}
+        assert set(dialog.subfolder_checkboxes.keys()) == expected
     
     def test_folder_config_dialog_custom_subfolders(self, app):
         """Test: Validar que se pueden añadir subcarpetas personalizadas."""
