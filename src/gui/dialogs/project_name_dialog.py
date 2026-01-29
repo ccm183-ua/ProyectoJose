@@ -26,6 +26,11 @@ class ProjectNameDialog(QDialog):
         self.setWindowTitle("Nombre del Proyecto")
         self.setModal(True)
         self.setMinimumWidth(600)
+        # Asegurar contraste: texto oscuro en todo el diálogo (evita herencia de temas)
+        self.setStyleSheet(
+            "QDialog { background-color: #ffffff; } "
+            "QLabel { color: #1a1a1a; } "
+        )
         self.init_ui()
         
         # Intentar cargar automáticamente desde el portapapeles
@@ -51,6 +56,9 @@ class ProjectNameDialog(QDialog):
             "Formato esperado: Nº\tFECHA\tCLIENTE\tMEDIACIÓN\tCALLE\tNUM\tC.P\tLOCALIDAD\tTIPO"
         )
         self.data_text.setMaximumHeight(100)
+        self.data_text.setStyleSheet(
+            "QTextEdit { color: #1a1a1a; background-color: #ffffff; }"
+        )
         layout.addWidget(QLabel("Datos del proyecto:"))
         layout.addWidget(self.data_text)
         
@@ -59,11 +67,14 @@ class ProjectNameDialog(QDialog):
         self.load_button.clicked.connect(self.load_from_clipboard)
         layout.addWidget(self.load_button)
         
-        # Campo para mostrar el nombre del proyecto generado
+        # Campo para mostrar el nombre del proyecto generado (texto oscuro sobre fondo claro)
         layout.addWidget(QLabel("Nombre del proyecto:"))
         self.name_field = QLineEdit()
         self.name_field.setReadOnly(True)
-        self.name_field.setStyleSheet("background-color: #f0f0f0; padding: 8px;")
+        self.name_field.setStyleSheet(
+            "QLineEdit { color: #1a1a1a; background-color: #f0f0f0; padding: 8px; "
+            "selection-color: #ffffff; selection-background-color: #2196f3; }"
+        )
         layout.addWidget(self.name_field)
         
         # Botones
