@@ -29,8 +29,10 @@ def sanitize_filename(filename):
     # Eliminar espacios al inicio y final
     sanitized = sanitized.strip()
     
-    # Reemplazar múltiples espacios/guiones bajos con uno solo
-    sanitized = re.sub(r'[\s_]+', '_', sanitized)
+    # Conservar espacios: solo colapsar múltiples espacios o guiones bajos
+    sanitized = re.sub(r' +', ' ', sanitized)
+    sanitized = re.sub(r'_+', '_', sanitized)
+    sanitized = sanitized.strip()
     
     # Si quedó vacío después de sanitizar, usar nombre por defecto
     if not sanitized:
