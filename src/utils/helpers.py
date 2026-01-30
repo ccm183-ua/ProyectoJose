@@ -74,6 +74,6 @@ def get_template_path():
     # Obtener directorio del proyecto
     current_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.dirname(os.path.dirname(current_dir))
-    template_path = os.path.join(project_root, 'templates', 'budget_template.xlsx')
+    template_path = os.path.join(project_root, 'templates', '122-20 PLANTILLA PRESUPUESTO.xlsx')
     
     return template_path

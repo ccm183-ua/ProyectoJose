@@ -3,9 +3,8 @@ Gestor de archivos Excel.
 """
 
 import os
-from datetime import datetime
+import shutil
 from openpyxl import load_workbook
-from openpyxl.utils import get_column_letter
 from src.core.template_manager import TemplateManager
 
 
@@ -29,114 +28,86 @@ class ExcelManager:
             bool: True si se creó correctamente, False en caso contrario
         """
         try:
-            # Cargar plantilla
-            wb = load_workbook(template_path)
-            ws = wb.active
-            
+            # Crear directorio de salida primero
+            output_dir = os.path.dirname(output_path)
+            if output_dir:
+                os.makedirs(output_dir, exist_ok=True)
+
+            # Copiar plantilla al destino para preservar logo, título y formato; luego solo modificamos celdas
+            shutil.copy2(template_path, output_path)
+            wb = load_workbook(output_path)
+
+            # Usar hoja PRESUP FINAL por nombre (nombre real en la plantilla 122-20)
+            ws = wb["PRESUP FINAL"] if "PRESUP FINAL" in wb.sheetnames else wb.active
+
             # Preparar datos del proyecto
-            # Si tenemos nombre_obra, usarlo; si no, construir desde los campos
             nombre_obra = data.get('nombre_obra', '')
             if not nombre_obra:
                 nombre_obra = f"{data.get('direccion', '')} {data.get('numero', '')}".strip()
-            
-            # Construir dirección completa
+
+            # Solo calle y número para la casilla Dirección (B9); C.P. va aparte en H9
             direccion_parts = []
             if data.get('calle'):
                 direccion_parts.append(data.get('calle'))
             if data.get('num_calle'):
                 direccion_parts.append(f"Nº {data.get('num_calle')}")
-            direccion_completa = ' '.join(direccion_parts)
-            if data.get('codigo_postal'):
-                direccion_completa += f", CP: {data.get('codigo_postal')}"
-            
-            # Si no hay dirección completa, usar campos antiguos
-            if not direccion_completa:
-                direccion_completa = f"{data.get('direccion', '')} {data.get('numero', '')}, CP: {data.get('codigo_postal', '')}".strip()
-            
-            # Buscar y rellenar campos (búsqueda flexible)
-            for row in ws.iter_rows():
-                for cell in row:
-                    if cell.value:
-                        cell_value = str(cell.value).lower()
-                        
-                        # Nombre de la obra
-                        if 'nombre' in cell_value and 'obra' in cell_value:
-                            if cell.column == 1:  # Columna A
-                                ws.cell(row=cell.row, column=2).value = nombre_obra
-                        
-                        # Dirección
-                        if 'dirección' in cell_value or 'direccion' in cell_value:
-                            if cell.column == 1:
-                                ws.cell(row=cell.row, column=2).value = direccion_completa
-                        
-                        # Código postal
-                        if 'código postal' in cell_value or 'codigo postal' in cell_value:
-                            if cell.column == 1:
-                                codigo_postal = data.get('codigo_postal', '') or data.get('codigo_postal', '')
-                                ws.cell(row=cell.row, column=2).value = codigo_postal
-                        
-                        # Descripción / Tipo
-                        if 'descripción' in cell_value or 'descripcion' in cell_value:
-                            if cell.column == 1:
-                                descripcion = data.get('tipo', '') or data.get('descripcion', '')
-                                ws.cell(row=cell.row, column=2).value = descripcion
-                        
-                        # Cliente
-                        if 'cliente' in cell_value:
-                            if cell.column == 1:
-                                ws.cell(row=cell.row, column=2).value = data.get('cliente', '')
-                        
-                        # Localidad
-                        if 'localidad' in cell_value:
-                            if cell.column == 1:
-                                ws.cell(row=cell.row, column=2).value = data.get('localidad', '')
-                        
-                        # Mediación
-                        if 'mediación' in cell_value or 'mediacion' in cell_value:
-                            if cell.column == 1:
-                                ws.cell(row=cell.row, column=2).value = data.get('mediacion', '')
-                        
-                        # Número de proyecto
-                        if ('número' in cell_value or 'numero' in cell_value) and 'proyecto' in cell_value:
-                            if cell.column == 1:
-                                ws.cell(row=cell.row, column=2).value = data.get('numero_proyecto', '')
-                        
-                        # Fecha del proyecto
-                        if 'fecha' in cell_value and ('proyecto' in cell_value or 'obra' in cell_value):
-                            if cell.column == 1:
-                                fecha_proyecto = data.get('fecha', '')
-                                if fecha_proyecto:
-                                    # Convertir DD-MM-YY a DD/MM/YYYY (asumiendo 20YY)
-                                    try:
-                                        parts = fecha_proyecto.split('-')
-                                        if len(parts) == 3:
-                                            day, month, year_short = parts
-                                            year_full = f"20{year_short}"
-                                            fecha_formateada = f"{day}/{month}/{year_full}"
-                                            ws.cell(row=cell.row, column=2).value = fecha_formateada
-                                    except:
-                                        ws.cell(row=cell.row, column=2).value = fecha_proyecto
-                        
-                        # Fecha de creación
-                        if 'fecha' in cell_value and ('creación' in cell_value or 'creacion' in cell_value):
-                            if cell.column == 1:
-                                fecha_actual = datetime.now().strftime('%d/%m/%Y')
-                                ws.cell(row=cell.row, column=2).value = fecha_actual
-                                ws.cell(row=cell.row, column=2).number_format = 'DD/MM/YYYY'
-            
-            # Crear directorio si no existe
-            output_dir = os.path.dirname(output_path)
-            if output_dir:
-                os.makedirs(output_dir, exist_ok=True)
-            
-            # Guardar archivo
+            direccion_solo_calle_numero = ' '.join(direccion_parts)
+            if not direccion_solo_calle_numero:
+                direccion_solo_calle_numero = (data.get('direccion', '') or '').strip()
+                if data.get('numero'):
+                    direccion_solo_calle_numero = f"{direccion_solo_calle_numero} Nº {data.get('numero')}".strip()
+
+            # Plantilla 122-20: rellenar por celdas fijas (hoja PRESUP FINAL)
+            if ws.title == "PRESUP FINAL":
+                self._fill_template_12220(ws, data, nombre_obra, direccion_solo_calle_numero)
+
             wb.save(output_path)
             return True
             
         except Exception as e:
             print(f"Error al crear archivo Excel: {e}")
             return False
-    
+
+    def _fill_template_12220(self, ws, data, nombre_obra, direccion_solo_calle_numero):
+        """
+        Rellena la plantilla 122-20 (hoja PRESUP FINAL) con los datos del proyecto.
+        B9 = solo calle y número (sin C.P.). H9 = C.P. por separado.
+        Correo (B11) y teléfono (H11) se dejan vacíos.
+        """
+        # E5: Presupuesto Nº (como texto para consistencia)
+        numero_pres = data.get('numero_proyecto', '') or data.get('numero', '')
+        ws['E5'] = str(numero_pres).strip() if numero_pres is not None else ''
+        # H5: Fecha (DD-MM-YY → DD/MM/YYYY)
+        fecha = data.get('fecha', '')
+        if fecha:
+            try:
+                parts = str(fecha).strip().split('-')
+                if len(parts) == 3:
+                    day, month, year_short = parts
+                    ws['H5'] = f"{day}/{month}/20{year_short}"
+                else:
+                    ws['H5'] = fecha
+            except Exception:
+                ws['H5'] = fecha
+        else:
+            ws['H5'] = ''
+        # B7: Cliente
+        ws['B7'] = (data.get('cliente', '') or '').strip()
+        # H7: C.I.F. (sin dato por ahora)
+        ws['H7'] = ''
+        # B9: Dirección (solo calle y número, sin C.P.)
+        ws['B9'] = (direccion_solo_calle_numero or '').strip()
+        # H9: C.P. (por separado; como texto para conservar ceros a la izquierda, ej. 03690)
+        cp = data.get('codigo_postal', '')
+        ws['H9'] = str(cp).strip() if cp is not None else ''
+        # B11: Correo (sin dato por ahora)
+        ws['B11'] = ''
+        # H11: Teléfono (sin dato por ahora)
+        ws['H11'] = ''
+        # A14: Obra (tipo o nombre de obra)
+        obra_texto = (data.get('tipo', '') or nombre_obra or '').strip()
+        ws['A14'] = f"Obra: {obra_texto}." if obra_texto else "Obra:"
+
     def load_budget(self, file_path):
         """
         Carga un presupuesto desde un archivo Excel.
