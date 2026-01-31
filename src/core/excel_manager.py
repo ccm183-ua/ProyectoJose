@@ -3,9 +3,32 @@ Gestor de archivos Excel.
 """
 
 import os
+import re
 import shutil
+import tempfile
+import zipfile
+from xml.sax.saxutils import escape as xml_escape
+
 from openpyxl import load_workbook
 from src.core.template_manager import TemplateManager
+
+# Hoja de datos en la plantilla 122-20 (PRESUP FINAL = sheet2)
+SHEET_12220 = "xl/worksheets/sheet2.xml"
+
+
+def _replace_cell_in_sheet_xml(sheet_xml, ref, value):
+    """Sustituye el valor de la celda ref en el XML de la hoja; conserva el estilo (s=...)."""
+    escaped = xml_escape(str(value))
+    # Celda: <c r="E5" s="64"/> o <c r="E5" s="64">...</c>; conservar estilo
+    pattern = r'<c r="' + re.escape(ref) + r'" ([^>]*?)(?:/>|>.*?</c>)'
+    match = re.search(pattern, sheet_xml, re.DOTALL)
+    if not match:
+        return sheet_xml
+    attrs = match.group(1)
+    style = re.search(r's="\d+"', attrs)
+    style_str = (" " + style.group(0)) if style else ""
+    new_cell = f'<c r="{ref}"{style_str} t="inlineStr"><is><t>{escaped}</t></is></c>'
+    return re.sub(pattern, new_cell, sheet_xml, count=1, flags=re.DOTALL)
 
 
 class ExcelManager:
@@ -33,19 +56,13 @@ class ExcelManager:
             if output_dir:
                 os.makedirs(output_dir, exist_ok=True)
 
-            # Copiar plantilla al destino para preservar logo, título y formato; luego solo modificamos celdas
+            # Copiar plantilla al destino (logo, imágenes y formato quedan intactos)
             shutil.copy2(template_path, output_path)
-            wb = load_workbook(output_path)
-
-            # Usar hoja PRESUP FINAL por nombre (nombre real en la plantilla 122-20)
-            ws = wb["PRESUP FINAL"] if "PRESUP FINAL" in wb.sheetnames else wb.active
 
             # Preparar datos del proyecto
             nombre_obra = data.get('nombre_obra', '')
             if not nombre_obra:
                 nombre_obra = f"{data.get('direccion', '')} {data.get('numero', '')}".strip()
-
-            # Solo calle y número para la casilla Dirección (B9); C.P. va aparte en H9
             direccion_parts = []
             if data.get('calle'):
                 direccion_parts.append(data.get('calle'))
@@ -57,56 +74,68 @@ class ExcelManager:
                 if data.get('numero'):
                     direccion_solo_calle_numero = f"{direccion_solo_calle_numero} Nº {data.get('numero')}".strip()
 
-            # Plantilla 122-20: rellenar por celdas fijas (hoja PRESUP FINAL)
-            if ws.title == "PRESUP FINAL":
-                self._fill_template_12220(ws, data, nombre_obra, direccion_solo_calle_numero)
-
-            wb.save(output_path)
+            # Rellenar solo las celdas de datos en el XML de la hoja (sin abrir con openpyxl = logo/título intactos)
+            self._patch_sheet2_cells_12220(output_path, data, nombre_obra, direccion_solo_calle_numero)
             return True
             
         except Exception as e:
             print(f"Error al crear archivo Excel: {e}")
             return False
 
-    def _fill_template_12220(self, ws, data, nombre_obra, direccion_solo_calle_numero):
+    def _patch_sheet2_cells_12220(self, output_path, data, nombre_obra, direccion_solo_calle_numero):
         """
-        Rellena la plantilla 122-20 (hoja PRESUP FINAL) con los datos del proyecto.
-        B9 = solo calle y número (sin C.P.). H9 = C.P. por separado.
-        Correo (B11) y teléfono (H11) se dejan vacíos.
+        Modifica solo el XML de la hoja de datos (sheet2) dentro del xlsx, sin tocar
+        medios (logo, imágenes) ni dibujos. Así el logo y el título quedan intactos.
         """
-        # E5: Presupuesto Nº (como texto para consistencia)
-        numero_pres = data.get('numero_proyecto', '') or data.get('numero', '')
-        ws['E5'] = str(numero_pres).strip() if numero_pres is not None else ''
-        # H5: Fecha (DD-MM-YY → DD/MM/YYYY)
+        # Valores para cada celda (inlineStr para no tocar sharedStrings)
         fecha = data.get('fecha', '')
         if fecha:
             try:
                 parts = str(fecha).strip().split('-')
                 if len(parts) == 3:
-                    day, month, year_short = parts
-                    ws['H5'] = f"{day}/{month}/20{year_short}"
-                else:
-                    ws['H5'] = fecha
+                    fecha = f"{parts[0]}/{parts[1]}/20{parts[2]}"
             except Exception:
-                ws['H5'] = fecha
-        else:
-            ws['H5'] = ''
-        # B7: Cliente
-        ws['B7'] = (data.get('cliente', '') or '').strip()
-        # H7: C.I.F. (sin dato por ahora)
-        ws['H7'] = ''
-        # B9: Dirección (solo calle y número, sin C.P.)
-        ws['B9'] = (direccion_solo_calle_numero or '').strip()
-        # H9: C.P. (por separado; como texto para conservar ceros a la izquierda, ej. 03690)
-        cp = data.get('codigo_postal', '')
-        ws['H9'] = str(cp).strip() if cp is not None else ''
-        # B11: Correo (sin dato por ahora)
-        ws['B11'] = ''
-        # H11: Teléfono (sin dato por ahora)
-        ws['H11'] = ''
-        # A14: Obra (tipo o nombre de obra)
+                pass
         obra_texto = (data.get('tipo', '') or nombre_obra or '').strip()
-        ws['A14'] = f"Obra: {obra_texto}." if obra_texto else "Obra:"
+        obra_final = f"Obra: {obra_texto}." if obra_texto else "Obra:"
+
+        celdas = {
+            "E5": str(data.get('numero_proyecto', '') or data.get('numero', '') or '').strip(),
+            "H5": fecha or '',
+            "B7": (data.get('cliente', '') or '').strip(),
+            "H7": '',
+            "B9": (direccion_solo_calle_numero or '').strip(),
+            "H9": str(data.get('codigo_postal', '') or '').strip(),
+            "B11": '',
+            "H11": '',
+            "A14": obra_final,
+        }
+
+        with zipfile.ZipFile(output_path, "r") as z_in:
+            namelist = z_in.namelist()
+            sheet_content = z_in.read(SHEET_12220).decode("utf-8")
+            otros = {n: z_in.read(n) for n in namelist if n != SHEET_12220}
+
+        for ref, valor in celdas.items():
+            sheet_content = _replace_cell_in_sheet_xml(sheet_content, ref, valor)
+
+        fd, tmp_path = tempfile.mkstemp(suffix=".xlsx")
+        try:
+            os.close(fd)
+            with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as z_out:
+                for name in namelist:
+                    if name == SHEET_12220:
+                        z_out.writestr(name, sheet_content.encode("utf-8"))
+                    else:
+                        z_out.writestr(name, otros[name])
+            shutil.move(tmp_path, output_path)
+        except Exception:
+            if os.path.exists(tmp_path):
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+            raise
 
     def load_budget(self, file_path):
         """
