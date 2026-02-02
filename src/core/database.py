@@ -171,5 +171,5 @@ def open_db_folder() -> bool:
         else:
             subprocess.run(["xdg-open", str(folder)], check=True)
         return True
-    except (subprocess.CalledProcessError, FileNotFoundError):
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
         return False
