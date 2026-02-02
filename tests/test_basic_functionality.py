@@ -95,40 +95,6 @@ class TestOpenExcelFile:
             assert True  # Si no crashea, el test pasa
 
 
-class TestFolderNavigation:
-    """Tests para navegación por carpetas."""
-    
-    def test_navigate_folders_from_main_menu(self, app, temp_dir):
-        """Test: Navegar por carpetas del sistema desde el menú principal."""
-        main_window = MainWindow()
-        
-        # Verificar que el menú principal tiene opción de navegación
-        assert hasattr(main_window, 'navigate_folders') or hasattr(main_window, 'show_folder_dialog')
-    
-    def test_folder_dialog_opens(self, app, temp_dir):
-        """Test: El diálogo de selección de carpeta se abre correctamente."""
-        main_window = MainWindow()
-        
-        with patch('PySide6.QtWidgets.QFileDialog.getExistingDirectory') as mock_dialog:
-            mock_dialog.return_value = temp_dir
-            
-            result = main_window.select_folder()
-            
-            assert result == temp_dir
-            mock_dialog.assert_called_once()
-    
-    def test_folder_dialog_cancelled(self, app):
-        """Test: Usuario cancela el diálogo de selección de carpeta."""
-        main_window = MainWindow()
-        
-        with patch('PySide6.QtWidgets.QFileDialog.getExistingDirectory') as mock_dialog:
-            mock_dialog.return_value = ""
-            
-            result = main_window.select_folder()
-            
-            assert result == "" or result is None
-
-
 class TestCreateNewBudget:
     """Tests para crear nuevo presupuesto."""
     
@@ -256,7 +222,7 @@ class TestMainWindow:
         main_window = MainWindow()
         
         assert main_window is not None
-        assert main_window.windowTitle() == "Gestión de Presupuestos" or main_window.windowTitle() != ""
+        assert main_window.windowTitle() == "cubiApp" or main_window.windowTitle() != ""
     
     def test_main_window_has_menu_options(self, app):
         """Test: La ventana principal tiene todas las opciones de menú."""

@@ -47,3 +47,6 @@ Thumbs.db
 *.xlsx
 !templates/budget_template.xlsx
 test_outputs/
+*.db
+*.sqlite
+*.sqlite3

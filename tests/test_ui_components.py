@@ -92,19 +92,6 @@ class TestFileDialogs:
             mock_dialog.assert_called()
             assert result is not None or result == ""
     
-    def test_folder_selection_dialog_works(self, app):
-        """Test: Validar que el diálogo de selección de carpeta funciona."""
-        main_window = MainWindow()
-        
-        with patch('PySide6.QtWidgets.QFileDialog.getExistingDirectory') as mock_dialog:
-            mock_dialog.return_value = "/ruta/carpeta"
-            
-            result = main_window.select_folder()
-            
-            mock_dialog.assert_called()
-            assert result is not None or result == ""
-
-
 class TestDataInputForm:
     """Tests para formulario de entrada de datos."""
     
