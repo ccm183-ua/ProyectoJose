@@ -1,15 +1,12 @@
 #!/bin/bash
-# Script simple para ejecutar la aplicación (macOS/Linux)
-# La configuración de Qt se hace automáticamente en main.py
+# Ejecutar la aplicación: ./run.sh
 
 cd "$(dirname "$0")"
 
-# Verificar entorno virtual
 if [ ! -d ".venv" ]; then
-    echo "❌ Error: No se encontró el entorno virtual (.venv)"
-    echo "   Ejecuta: python3 -m venv .venv"
+    echo "❌ No se encontró .venv."
+    echo "   Crea uno: python3 -m venv .venv && .venv/bin/pip install -r requirements.txt"
     exit 1
 fi
 
-# Ejecutar aplicación (todo se configura automáticamente)
-.venv/bin/python main.py
+exec .venv/bin/python main.py

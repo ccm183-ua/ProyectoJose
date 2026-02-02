@@ -18,8 +18,8 @@ import tempfile
 import shutil
 from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock
-from PyQt6.QtWidgets import QApplication, QFileDialog
-from PyQt6.QtCore import Qt
+from PySide6.QtWidgets import QApplication, QFileDialog
+from PySide6.QtCore import Qt
 
 from src.gui.main_window import MainWindow
 from src.core.excel_manager import ExcelManager
@@ -63,7 +63,7 @@ class TestOpenExcelFile:
         """Test: Abrir archivo Excel existente desde diálogo de archivos."""
         main_window = MainWindow()
         
-        with patch('PyQt6.QtWidgets.QFileDialog.getOpenFileName') as mock_dialog:
+        with patch('PySide6.QtWidgets.QFileDialog.getOpenFileName') as mock_dialog:
             mock_dialog.return_value = (sample_excel_file, "Excel Files (*.xlsx)")
             
             result = main_window.open_excel_file()
@@ -75,7 +75,7 @@ class TestOpenExcelFile:
         """Test: Usuario cancela el diálogo de abrir archivo."""
         main_window = MainWindow()
         
-        with patch('PyQt6.QtWidgets.QFileDialog.getOpenFileName') as mock_dialog:
+        with patch('PySide6.QtWidgets.QFileDialog.getOpenFileName') as mock_dialog:
             mock_dialog.return_value = ("", "")
             
             result = main_window.open_excel_file()
@@ -86,7 +86,7 @@ class TestOpenExcelFile:
         """Test: Manejo de ruta inválida al abrir archivo."""
         main_window = MainWindow()
         
-        with patch('PyQt6.QtWidgets.QFileDialog.getOpenFileName') as mock_dialog:
+        with patch('PySide6.QtWidgets.QFileDialog.getOpenFileName') as mock_dialog:
             mock_dialog.return_value = ("/ruta/invalida/archivo.xlsx", "Excel Files (*.xlsx)")
             
             # Debe manejar el error sin crashear
@@ -109,7 +109,7 @@ class TestFolderNavigation:
         """Test: El diálogo de selección de carpeta se abre correctamente."""
         main_window = MainWindow()
         
-        with patch('PyQt6.QtWidgets.QFileDialog.getExistingDirectory') as mock_dialog:
+        with patch('PySide6.QtWidgets.QFileDialog.getExistingDirectory') as mock_dialog:
             mock_dialog.return_value = temp_dir
             
             result = main_window.select_folder()
@@ -121,7 +121,7 @@ class TestFolderNavigation:
         """Test: Usuario cancela el diálogo de selección de carpeta."""
         main_window = MainWindow()
         
-        with patch('PyQt6.QtWidgets.QFileDialog.getExistingDirectory') as mock_dialog:
+        with patch('PySide6.QtWidgets.QFileDialog.getExistingDirectory') as mock_dialog:
             mock_dialog.return_value = ""
             
             result = main_window.select_folder()
@@ -151,7 +151,7 @@ class TestCreateNewBudget:
         """Test: Validar que el diálogo de guardado se abre correctamente."""
         main_window = MainWindow()
         
-        with patch('PyQt6.QtWidgets.QFileDialog.getSaveFileName') as mock_dialog:
+        with patch('PySide6.QtWidgets.QFileDialog.getSaveFileName') as mock_dialog:
             mock_dialog.return_value = (os.path.join(temp_dir, "test.xlsx"), "Excel Files (*.xlsx)")
             
             result = main_window.get_save_path()
@@ -163,7 +163,7 @@ class TestCreateNewBudget:
         """Test: Usuario cancela el diálogo de guardado."""
         main_window = MainWindow()
         
-        with patch('PyQt6.QtWidgets.QFileDialog.getSaveFileName') as mock_dialog:
+        with patch('PySide6.QtWidgets.QFileDialog.getSaveFileName') as mock_dialog:
             mock_dialog.return_value = ("", "")
             
             result = main_window.get_save_path()

@@ -2,11 +2,11 @@
 Diálogo para configuración de carpeta y subcarpetas.
 """
 
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QCheckBox,
     QPushButton, QLineEdit, QMessageBox, QGroupBox
 )
-from PyQt6.QtCore import Qt
+from PySide6.QtCore import Qt
 
 
 class FolderConfigDialog(QDialog):

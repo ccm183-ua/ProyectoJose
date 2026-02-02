@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
 Punto de entrada principal de la aplicación de gestión de presupuestos.
+En macOS ejecuta siempre con: ./run.sh
 """
 
 import sys
-from PyQt6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication
 from src.gui.main_window import MainWindow
 
 

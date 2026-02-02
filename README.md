@@ -1,6 +1,6 @@
 # Aplicación de Gestión y Edición de Presupuestos (Excel)
 
-Aplicación de escritorio desarrollada en Python con PyQt6 para la gestión y edición de presupuestos en formato Excel.
+Aplicación de escritorio desarrollada en Python con PySide6 (Qt) para la gestión y edición de presupuestos en formato Excel.
 
 ## 🚀 Características
 
@@ -61,7 +61,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-**Nota:** PyQt6 se instala automáticamente y funciona sin configuración adicional en macOS y Windows.
+**Nota:** PySide6 se instala con `pip install -r requirements.txt` y funciona en macOS y Windows sin configuración adicional.
 
 ## ▶️ Ejecución
 
@@ -89,19 +89,23 @@ python main.py
 
 Asegúrate de usar el script `run.sh` (macOS/Linux) o `run.bat` (Windows), o activa el entorno virtual antes de ejecutar.
 
-### Error al instalar dependencias
+### Error al instalar o al ejecutar (macOS / plugin Qt)
 
-Si tienes problemas, reinstala PyQt6:
+Si ves errores de Qt o "platform plugin", usa un entorno limpio:
 
 ```bash
-# macOS/Linux
-.venv/bin/pip uninstall -y PyQt6 PyQt6-Qt6 PyQt6-sip
-.venv/bin/pip install PyQt6
+# Borrar el entorno virtual anterior
+rm -rf .venv
 
-# Windows
-.venv\Scripts\pip uninstall -y PyQt6 PyQt6-Qt6 PyQt6-sip
-.venv\Scripts\pip install PyQt6
+# Crear uno nuevo e instalar
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+
+# Ejecutar
+./run.sh
 ```
+
+Siempre ejecuta la app con `./run.sh` (no hace falta activar el venv a mano).
 
 ## 📁 Estructura del Proyecto
 

@@ -2,8 +2,8 @@
 Diálogo completo para creación de presupuesto.
 """
 
-from PyQt6.QtWidgets import QDialog, QVBoxLayout, QMessageBox
-from PyQt6.QtCore import Qt
+from PySide6.QtWidgets import QDialog, QVBoxLayout, QMessageBox
+from PySide6.QtCore import Qt
 from src.gui.dialogs.folder_config_dialog import FolderConfigDialog
 from src.gui.dialogs.data_input_dialog import DataInputDialog
 

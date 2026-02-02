@@ -13,9 +13,9 @@ Estos tests cubren:
 
 import pytest
 from unittest.mock import Mock, patch, MagicMock
-from PyQt6.QtWidgets import QApplication, QPushButton, QDialog
-from PyQt6.QtCore import Qt
-from PyQt6.QtTest import QTest
+from PySide6.QtWidgets import QApplication, QPushButton, QDialog
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
 
 from src.gui.main_window import MainWindow
 from src.gui.dialogs.create_budget_dialog import CreateBudgetDialog
@@ -72,7 +72,7 @@ class TestFileDialogs:
         """Test: Validar que el diálogo de selección de archivos funciona."""
         main_window = MainWindow()
         
-        with patch('PyQt6.QtWidgets.QFileDialog.getOpenFileName') as mock_dialog:
+        with patch('PySide6.QtWidgets.QFileDialog.getOpenFileName') as mock_dialog:
             mock_dialog.return_value = ("/ruta/test.xlsx", "Excel Files (*.xlsx)")
             
             result = main_window.open_excel_file()
@@ -84,7 +84,7 @@ class TestFileDialogs:
         """Test: Validar que el diálogo de guardado funciona."""
         main_window = MainWindow()
         
-        with patch('PyQt6.QtWidgets.QFileDialog.getSaveFileName') as mock_dialog:
+        with patch('PySide6.QtWidgets.QFileDialog.getSaveFileName') as mock_dialog:
             mock_dialog.return_value = ("/ruta/test.xlsx", "Excel Files (*.xlsx)")
             
             result = main_window.get_save_path()
@@ -96,7 +96,7 @@ class TestFileDialogs:
         """Test: Validar que el diálogo de selección de carpeta funciona."""
         main_window = MainWindow()
         
-        with patch('PyQt6.QtWidgets.QFileDialog.getExistingDirectory') as mock_dialog:
+        with patch('PySide6.QtWidgets.QFileDialog.getExistingDirectory') as mock_dialog:
             mock_dialog.return_value = "/ruta/carpeta"
             
             result = main_window.select_folder()

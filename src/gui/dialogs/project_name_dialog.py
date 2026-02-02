@@ -2,12 +2,12 @@
 Diálogo para capturar el nombre del proyecto desde el portapapeles.
 """
 
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QTextEdit,
     QPushButton, QMessageBox, QLineEdit
 )
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QGuiApplication
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QGuiApplication
 from src.core.project_parser import ProjectParser
 from src.utils.project_name_generator import ProjectNameGenerator
 

@@ -2,11 +2,11 @@
 Diálogo para entrada de datos del presupuesto.
 """
 
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QMessageBox, QFormLayout
 )
-from PyQt6.QtCore import Qt
+from PySide6.QtCore import Qt
 from src.core.validators import DataValidator
 
 

@@ -2,12 +2,12 @@
 Ventana principal de la aplicación.
 """
 
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QPushButton, QMessageBox,
     QFileDialog, QLabel
 )
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QIcon
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QIcon
 import os
 
 from src.gui.dialogs.create_budget_dialog import CreateBudgetDialog
