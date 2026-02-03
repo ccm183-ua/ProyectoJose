@@ -25,11 +25,12 @@ class DBManagerFrame(wx.Frame):
         sza = wx.BoxSizer(wx.VERTICAL)
         sza.Add(self.list_admin, 1, wx.EXPAND)
         btn_a = wx.BoxSizer(wx.HORIZONTAL)
-        for lbl, handler in [("Actualizar", self._refresh_admin), ("Añadir", self._add_admin), ("Editar", self._edit_admin), ("Eliminar", self._delete_admin)]:
+        for lbl, handler in [("Actualizar", self._refresh_admin), ("Añadir", self._add_admin), ("Editar", self._edit_admin), ("Eliminar", self._delete_admin), ("Ver relación", self._ver_relacion_admin)]:
             b = wx.Button(self.panel_admin, label=lbl)
             b.Bind(wx.EVT_BUTTON, lambda e, h=handler: h())
             btn_a.Add(b, 0, wx.RIGHT, 4)
         sza.Add(btn_a, 0, wx.TOP, 4)
+        self.list_admin.Bind(wx.EVT_LIST_ITEM_ACTIVATED, lambda e: self._ver_relacion_admin())
         self.panel_admin.SetSizer(sza)
         self.notebook.AddPage(self.panel_admin, "Administración")
 
@@ -43,11 +44,12 @@ class DBManagerFrame(wx.Frame):
         szc = wx.BoxSizer(wx.VERTICAL)
         szc.Add(self.list_com, 1, wx.EXPAND)
         btn_c = wx.BoxSizer(wx.HORIZONTAL)
-        for lbl, handler in [("Actualizar", self._refresh_comunidades), ("Añadir", self._add_comunidad), ("Editar", self._edit_comunidad), ("Eliminar", self._delete_comunidad)]:
+        for lbl, handler in [("Actualizar", self._refresh_comunidades), ("Añadir", self._add_comunidad), ("Editar", self._edit_comunidad), ("Eliminar", self._delete_comunidad), ("Ver relación", self._ver_relacion_comunidad)]:
             b = wx.Button(self.panel_com, label=lbl)
             b.Bind(wx.EVT_BUTTON, lambda e, h=handler: h())
             btn_c.Add(b, 0, wx.RIGHT, 4)
         szc.Add(btn_c, 0, wx.TOP, 4)
+        self.list_com.Bind(wx.EVT_LIST_ITEM_ACTIVATED, lambda e: self._ver_relacion_comunidad())
         self.panel_com.SetSizer(szc)
         self.notebook.AddPage(self.panel_com, "Comunidad")
 
@@ -58,14 +60,17 @@ class DBManagerFrame(wx.Frame):
         self.list_cont.AppendColumn("Nombre", width=120)
         self.list_cont.AppendColumn("Teléfono", width=120)
         self.list_cont.AppendColumn("Email", width=180)
+        self.list_cont.AppendColumn("Administraciones", width=180)
+        self.list_cont.AppendColumn("Comunidades", width=180)
         szct = wx.BoxSizer(wx.VERTICAL)
         szct.Add(self.list_cont, 1, wx.EXPAND)
         btn_ct = wx.BoxSizer(wx.HORIZONTAL)
-        for lbl, handler in [("Actualizar", self._refresh_contactos), ("Añadir", self._add_contacto), ("Editar", self._edit_contacto), ("Eliminar", self._delete_contacto)]:
+        for lbl, handler in [("Actualizar", self._refresh_contactos), ("Añadir", self._add_contacto), ("Editar", self._edit_contacto), ("Eliminar", self._delete_contacto), ("Ver relación", self._ver_relacion_contacto)]:
             b = wx.Button(self.panel_cont, label=lbl)
             b.Bind(wx.EVT_BUTTON, lambda e, h=handler: h())
             btn_ct.Add(b, 0, wx.RIGHT, 4)
         szct.Add(btn_ct, 0, wx.TOP, 4)
+        self.list_cont.Bind(wx.EVT_LIST_ITEM_ACTIVATED, lambda e: self._ver_relacion_contacto())
         self.panel_cont.SetSizer(szct)
         self.notebook.AddPage(self.panel_cont, "Contacto")
 
@@ -91,7 +96,99 @@ class DBManagerFrame(wx.Frame):
     def _refresh_contactos(self):
         self.list_cont.DeleteAllItems()
         for r in repo.get_contactos_para_tabla():
-            self.list_cont.Append([str(r["id"]), r["nombre"], r["telefono"], r["email"] or "—"])
+            self.list_cont.Append([
+                str(r["id"]), r["nombre"], r["telefono"], r["email"] or "—",
+                r.get("administraciones", "—") or "—", r.get("comunidades", "—") or "—",
+            ])
+
+    def _ver_relacion_admin(self):
+        idx = self.list_admin.GetFirstSelected()
+        if idx < 0:
+            wx.MessageBox("Selecciona una fila para ver sus contactos.", "Ver relación", wx.OK)
+            return
+        id_ = int(self.list_admin.GetItemText(idx))
+        contactos = repo.get_contactos_por_administracion_id(id_)
+        cols = ["ID", "Nombre", "Teléfono", "Email"]
+        rows = [([str(c["id"]), c["nombre"] or "—", c["telefono"] or "—", c.get("email") or "—"], "contacto", c["id"]) for c in contactos]
+        if not rows:
+            rows = [(["—", "(ningún contacto asignado)", "—", "—"], None, None)]
+        d = VerRelacionDialog(self, "Contactos de esta administración", cols, rows, on_activate=self._ir_a_entidad)
+        d.ShowModal()
+        d.Destroy()
+        self._aplicar_ir_a_entidad()
+
+    def _ver_relacion_comunidad(self):
+        idx = self.list_com.GetFirstSelected()
+        if idx < 0:
+            wx.MessageBox("Selecciona una fila para ver sus contactos.", "Ver relación", wx.OK)
+            return
+        id_ = int(self.list_com.GetItemText(idx))
+        contactos = repo.get_contactos_por_comunidad_id(id_)
+        cols = ["ID", "Nombre", "Teléfono", "Email"]
+        rows = [([str(c["id"]), c["nombre"] or "—", c["telefono"] or "—", c.get("email") or "—"], "contacto", c["id"]) for c in contactos]
+        if not rows:
+            rows = [(["—", "(ningún contacto asignado)", "—", "—"], None, None)]
+        d = VerRelacionDialog(self, "Contactos de esta comunidad", cols, rows, on_activate=self._ir_a_entidad)
+        d.ShowModal()
+        d.Destroy()
+        self._aplicar_ir_a_entidad()
+
+    def _ver_relacion_contacto(self):
+        idx = self.list_cont.GetFirstSelected()
+        if idx < 0:
+            wx.MessageBox("Selecciona una fila para ver administraciones y comunidades.", "Ver relación", wx.OK)
+            return
+        id_ = int(self.list_cont.GetItemText(idx))
+        admin_ids = repo.get_administracion_ids_para_contacto(id_)
+        com_ids = repo.get_comunidad_ids_para_contacto(id_)
+        admins = repo.get_administraciones()
+        coms = repo.get_comunidades()
+        admin_map = {a["id"]: a.get("email") or f"ID {a['id']}" for a in admins}
+        com_map = {c["id"]: c.get("nombre") or f"ID {c['id']}" for c in coms}
+        rows = [(["Administración", admin_map.get(aid, str(aid))], "administracion", aid) for aid in admin_ids]
+        rows += [(["Comunidad", com_map.get(cid, str(cid))], "comunidad", cid) for cid in com_ids]
+        if not rows:
+            d = VerRelacionDialog(self, "Relaciones de este contacto", ["Tipo", "Nombre"], [(["—", "(ninguna asignada)"], None, None)], on_activate=None)
+        else:
+            d = VerRelacionDialog(self, "Relaciones de este contacto", ["Tipo", "Nombre"], rows, on_activate=self._ir_a_entidad)
+        d.ShowModal()
+        d.Destroy()
+        self._aplicar_ir_a_entidad()
+
+    def _ir_a_entidad(self, tipo, id_):
+        """Cierra el diálogo de relación y navega a la pestaña correspondiente seleccionando la fila con ese id."""
+        if tipo is None or id_ is None:
+            return
+        self._relacion_ir_a = (tipo, id_)
+
+    def _aplicar_ir_a_entidad(self):
+        """Aplica la navegación pendiente (llamar después de cerrar el diálogo)."""
+        pendiente = getattr(self, "_relacion_ir_a", None)
+        if not pendiente:
+            return
+        self._relacion_ir_a = None
+        tipo, id_ = pendiente
+        if tipo == "contacto":
+            self.notebook.SetSelection(2)
+            for i in range(self.list_cont.GetItemCount()):
+                if self.list_cont.GetItemText(i) == str(id_):
+                    self.list_cont.Select(i)
+                    self.list_cont.EnsureVisible(i)
+                    break
+        elif tipo == "administracion":
+            self.notebook.SetSelection(0)
+            for i in range(self.list_admin.GetItemCount()):
+                if self.list_admin.GetItemText(i) == str(id_):
+                    self.list_admin.Select(i)
+                    self.list_admin.EnsureVisible(i)
+                    break
+        elif tipo == "comunidad":
+            self.notebook.SetSelection(1)
+            for i in range(self.list_com.GetItemCount()):
+                if self.list_com.GetItemText(i) == str(id_):
+                    self.list_com.Select(i)
+                    self.list_com.EnsureVisible(i)
+                    break
 
     def _add_admin(self):
         d = SimpleDialog(self, "Añadir administración", ["Email", "Teléfono", "Dirección"])
@@ -279,6 +376,46 @@ class DBManagerFrame(wx.Frame):
             wx.MessageBox(err, "Error", wx.OK | wx.ICON_ERROR)
         else:
             self._refresh_contactos()
+
+
+class VerRelacionDialog(wx.Dialog):
+    """Diálogo con tabla estructurada (columnas) y doble clic para navegar a la entidad."""
+    def __init__(self, parent, title, column_headers, rows, on_activate=None):
+        """
+        column_headers: lista de nombres de columnas.
+        rows: lista de (list_cells, tipo, id_) por fila. list_cells tiene el mismo len que column_headers.
+              tipo/id_ pueden ser None si la fila no es navegable.
+        on_activate: callback(tipo, id_) al hacer doble clic en una fila navegable.
+        """
+        super().__init__(parent, title=title, size=(520, 340))
+        self._on_activate = on_activate
+        self._item_data = []  # [(tipo, id_), ...] por índice de fila
+        panel = wx.Panel(self)
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        self._list = wx.ListCtrl(panel, style=wx.LC_REPORT)
+        widths = [80, 140, 120, 160] if len(column_headers) == 4 else [120, 320]
+        for i, h in enumerate(column_headers):
+            w = widths[i] if i < len(widths) else 150
+            self._list.AppendColumn(h, width=w)
+        for cells, tipo, id_ in rows:
+            idx = self._list.Append(cells)
+            self._item_data.append((tipo, id_))
+        sizer.Add(self._list, 1, wx.EXPAND | wx.ALL, 8)
+        hint = wx.StaticText(panel, label="Doble clic en una fila para ir a esa entidad en la base de datos.")
+        sizer.Add(hint, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        btn = wx.Button(panel, wx.ID_OK, "Cerrar")
+        sizer.Add(btn, 0, wx.ALIGN_RIGHT | wx.ALL, 8)
+        panel.SetSizer(sizer)
+        self._list.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self._on_activated)
+
+    def _on_activated(self, evt):
+        idx = evt.GetIndex()
+        if idx < 0 or idx >= len(self._item_data):
+            return
+        tipo, id_ = self._item_data[idx]
+        if self._on_activate and tipo is not None and id_ is not None:
+            self._on_activate(tipo, id_)
+            self.EndModal(wx.ID_OK)
 
 
 class SimpleDialog(wx.Dialog):
