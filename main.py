@@ -1,45 +1,74 @@
 #!/usr/bin/env python3
 """
-Punto de entrada principal de la aplicación cubiApp.
-En macOS ejecuta siempre con: ./run.sh
+Punto de entrada principal de cubiApp (app de escritorio con wxPython).
 """
 
-import os
-import sys
+import io
 from pathlib import Path
 
-# En macOS, forzar ruta de plugins de Qt para que encuentre "cocoa" (antes de cargar Qt)
-if sys.platform == "darwin":
+import wx
+from src.gui.main_frame_wx import MainFrame
+
+
+def _pil_to_wx_icon(pil_image, size):
+    """Convierte PIL Image a wx.Icon vía PNG en memoria."""
     try:
-        import PySide6
-        plugin_dir = Path(PySide6.__file__).resolve().parent / "Qt" / "plugins" / "platforms"
-        if plugin_dir.is_dir():
-            os.environ.setdefault("QT_QPA_PLATFORM_PLUGIN_PATH", str(plugin_dir))
+        pil = pil_image.convert("RGBA").resize((size, size))
+        buf = io.BytesIO()
+        pil.save(buf, format="PNG")
+        buf.seek(0)
+        img = wx.ImageFromStream(buf, wx.BITMAP_TYPE_PNG)
+        if not img.IsOk():
+            return None
+        bmp = wx.Bitmap(img)
+        if not bmp.IsOk():
+            return None
+        icon = wx.Icon()
+        icon.CopyFromBitmap(bmp)
+        return icon
+    except Exception:
+        return None
+
+
+def _set_icon_safe(frame, base):
+    """Carga el icono con Pillow y lo asigna al frame."""
+    try:
+        if hasattr(wx, "PNGHandler"):
+            wx.Image.AddHandler(wx.PNGHandler())
     except Exception:
         pass
-
-from PySide6.QtWidgets import QApplication
-from PySide6.QtGui import QIcon
-from src.gui.main_window import MainWindow
+    for name in ("resources/logo.png", "resources/icon.png", "logo.png", "icon.png"):
+        p = base / name
+        if not p.exists():
+            continue
+        try:
+            from PIL import Image
+            pil = Image.open(str(p))
+        except Exception:
+            continue
+        if hasattr(wx, "IconBundle"):
+            bundle = wx.IconBundle()
+            for size in (16, 32, 48):
+                icon = _pil_to_wx_icon(pil, size)
+                if icon:
+                    bundle.AddIcon(icon)
+            if bundle.GetIconCount() > 0 and hasattr(frame, "SetIcons"):
+                frame.SetIcons(bundle)
+                return
+        icon = _pil_to_wx_icon(pil, 32)
+        if icon and hasattr(frame, "SetIcon"):
+            frame.SetIcon(icon)
+            return
+    return None
 
 
 def main():
-    """Función principal que inicia la aplicación."""
-    app = QApplication(sys.argv)
-    app.setApplicationName("cubiApp")
-
-    # Icono de la app: guarda tu logo como icon.png o logo.png en la raíz o en resources/
+    app = wx.App()
     base = Path(__file__).resolve().parent
-    for name in ("icon.png", "logo.png", "icon.ico", "icon.icns", "resources/icon.png", "resources/logo.png"):
-        path = base / name
-        if path.exists():
-            app.setWindowIcon(QIcon(str(path)))
-            break
-
-    window = MainWindow()
-    window.show()
-
-    sys.exit(app.exec())
+    frame = MainFrame(None, title="cubiApp")
+    frame.Show()
+    _set_icon_safe(frame, base)
+    app.MainLoop()
 
 
 if __name__ == "__main__":

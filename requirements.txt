@@ -1,13 +1,12 @@
-# Dependencias principales
-PySide6>=6.6.0
+# Dependencias principales (app de escritorio con wxPython)
+wxPython>=4.2.0
 openpyxl==3.1.2
 Pillow>=10.0.0
 pandas==2.1.4
 python-dateutil==2.8.2
 
-# Testing
+# Testing (pytest-qt quitado: la app usa wxPython)
 pytest==7.4.3
-pytest-qt==4.2.0
 pytest-cov==4.1.0
 
 # Utilidades
