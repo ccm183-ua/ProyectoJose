@@ -18,7 +18,7 @@ from src.gui import theme
 
 class MainFrame(wx.Frame):
     def __init__(self, parent, title="cubiApp", **kwargs):
-        super().__init__(parent, title=title, size=(500, 450), 
+        super().__init__(parent, title=title, size=(520, 520), 
                          style=wx.DEFAULT_FRAME_STYLE, **kwargs)
         self.excel_manager = ExcelManager()
         self.file_manager = FileManager()
@@ -30,71 +30,64 @@ class MainFrame(wx.Frame):
     def _build_ui(self):
         # Panel principal
         panel = wx.Panel(self)
-        theme.apply_theme_to_panel(panel)
-        theme.apply_theme_to_frame(self)
+        panel.SetBackgroundColour(theme.BG_PRIMARY)
+        theme.style_frame(self)
         
         main_sizer = wx.BoxSizer(wx.VERTICAL)
         
-        # Header con título
-        header_panel = wx.Panel(panel)
-        header_panel.SetBackgroundColour(theme.BG_PRIMARY)
+        # === HEADER ===
+        header = wx.Panel(panel)
+        header.SetBackgroundColour(theme.BG_PRIMARY)
         header_sizer = wx.BoxSizer(wx.VERTICAL)
         
-        # Título principal
-        title = wx.StaticText(header_panel, label="cubiApp")
-        title.SetFont(theme.get_font_title(28))
-        title.SetForegroundColour(theme.TEXT_PRIMARY)
-        header_sizer.Add(title, 0, wx.ALIGN_CENTER_HORIZONTAL | wx.TOP, 50)
+        # Logo/Título
+        title = theme.create_title(header, "cubiApp", "display")
+        header_sizer.Add(title, 0, wx.ALIGN_CENTER_HORIZONTAL | wx.TOP, 60)
         
         # Subtítulo
-        subtitle = wx.StaticText(header_panel, label="Gestión de presupuestos")
-        subtitle.SetFont(theme.get_font_subtitle(13))
-        subtitle.SetForegroundColour(theme.TEXT_SECONDARY)
+        subtitle = theme.create_subtitle(header, "Gestión de presupuestos")
         header_sizer.Add(subtitle, 0, wx.ALIGN_CENTER_HORIZONTAL | wx.TOP, 8)
         
-        header_panel.SetSizer(header_sizer)
-        main_sizer.Add(header_panel, 0, wx.EXPAND)
+        header.SetSizer(header_sizer)
+        main_sizer.Add(header, 0, wx.EXPAND)
         
-        # Espaciador
-        main_sizer.AddSpacer(40)
+        main_sizer.AddSpacer(50)
         
-        # Contenedor de botones
-        btn_panel = wx.Panel(panel)
-        btn_panel.SetBackgroundColour(theme.BG_PRIMARY)
+        # === BOTONES ===
+        btn_container = wx.Panel(panel)
+        btn_container.SetBackgroundColour(theme.BG_PRIMARY)
         btn_sizer = wx.BoxSizer(wx.VERTICAL)
         
-        # Botón crear (primario - destacado)
-        btn_create = wx.Button(btn_panel, label="+ Crear nuevo presupuesto", size=(300, 48))
-        btn_create.SetFont(theme.get_font_medium(11))
+        # Botón crear (primario) - Botón nativo estilizado
+        btn_create = wx.Button(btn_container, label="+ Crear nuevo presupuesto", size=(320, 50))
+        btn_create.SetFont(theme.get_font_medium(12))
         btn_create.SetBackgroundColour(theme.ACCENT_PRIMARY)
-        btn_create.SetForegroundColour(wx.WHITE)
+        btn_create.SetForegroundColour(theme.TEXT_INVERSE)
         btn_create.Bind(wx.EVT_BUTTON, lambda e: self._create_budget())
-        btn_sizer.Add(btn_create, 0, wx.ALIGN_CENTER | wx.BOTTOM, 16)
+        btn_sizer.Add(btn_create, 0, wx.ALIGN_CENTER | wx.BOTTOM, theme.SPACE_LG)
         
-        # Botón abrir (secundario)
-        btn_open = wx.Button(btn_panel, label="Abrir presupuesto existente", size=(300, 44))
-        btn_open.SetFont(theme.get_font_normal(11))
+        # Botón abrir - Botón nativo estilizado
+        btn_open = wx.Button(btn_container, label="Abrir presupuesto existente", size=(320, 46))
+        btn_open.SetFont(theme.font_base())
         btn_open.SetBackgroundColour(theme.BG_SECONDARY)
         btn_open.SetForegroundColour(theme.TEXT_PRIMARY)
         btn_open.Bind(wx.EVT_BUTTON, lambda e: self._open_excel())
-        btn_sizer.Add(btn_open, 0, wx.ALIGN_CENTER | wx.BOTTOM, 12)
+        btn_sizer.Add(btn_open, 0, wx.ALIGN_CENTER | wx.BOTTOM, theme.SPACE_MD)
 
-        # Botón base de datos (terciario)
-        btn_db = wx.Button(btn_panel, label="Gestionar base de datos", size=(300, 44))
-        btn_db.SetFont(theme.get_font_normal(11))
+        # Botón base de datos - Botón nativo estilizado
+        btn_db = wx.Button(btn_container, label="Gestionar base de datos", size=(320, 46))
+        btn_db.SetFont(theme.font_base())
         btn_db.SetBackgroundColour(theme.BG_SECONDARY)
         btn_db.SetForegroundColour(theme.TEXT_PRIMARY)
         btn_db.Bind(wx.EVT_BUTTON, lambda e: self._open_db_manager())
         btn_sizer.Add(btn_db, 0, wx.ALIGN_CENTER)
         
-        btn_panel.SetSizer(btn_sizer)
-        main_sizer.Add(btn_panel, 1, wx.EXPAND)
+        btn_container.SetSizer(btn_sizer)
+        main_sizer.Add(btn_container, 1, wx.EXPAND)
         
-        # Footer con versión
-        footer = wx.StaticText(panel, label="v1.0")
-        footer.SetFont(theme.get_font_normal(9))
-        footer.SetForegroundColour(theme.TEXT_MUTED)
-        main_sizer.Add(footer, 0, wx.ALIGN_CENTER | wx.BOTTOM, 20)
+        # === FOOTER ===
+        footer = theme.create_caption(panel, "versión 1.0")
+        main_sizer.Add(footer, 0, wx.ALIGN_CENTER | wx.BOTTOM, theme.SPACE_XL)
         
         panel.SetSizer(main_sizer)
         self._create_menu()

@@ -9,64 +9,76 @@ from src.gui import theme
 
 class DBManagerFrame(wx.Frame):
     def __init__(self, parent):
-        super().__init__(parent, title="Base de Datos - cubiApp", size=(1000, 650))
-        theme.apply_theme_to_frame(self)
+        super().__init__(parent, title="Base de Datos - cubiApp", size=(1050, 700))
+        theme.style_frame(self)
         self._build_ui()
         self._refresh_all()
         self.Centre()
+
+    def _create_toolbar_button(self, parent, label, handler, primary=False):
+        """Crea un botón de toolbar."""
+        btn = wx.Button(parent, label=label, size=(-1, 38))
+        btn.SetFont(theme.font_base())
+        if primary:
+            btn.SetBackgroundColour(theme.ACCENT_PRIMARY)
+            btn.SetForegroundColour(theme.TEXT_INVERSE)
+        else:
+            btn.SetBackgroundColour(theme.BG_CARD)
+            btn.SetForegroundColour(theme.TEXT_PRIMARY)
+        btn.Bind(wx.EVT_BUTTON, lambda e, h=handler: h())
+        return btn
 
     def _build_ui(self):
         main_panel = wx.Panel(self)
         main_panel.SetBackgroundColour(theme.BG_PRIMARY)
         main_sizer = wx.BoxSizer(wx.VERTICAL)
         
-        # Header
+        # === HEADER ===
         header = wx.Panel(main_panel)
         header.SetBackgroundColour(theme.BG_PRIMARY)
         header_sizer = wx.BoxSizer(wx.VERTICAL)
         
-        title = wx.StaticText(header, label="Base de Datos")
-        title.SetFont(theme.get_font_title(24))
-        title.SetForegroundColour(theme.TEXT_PRIMARY)
-        header_sizer.Add(title, 0, wx.LEFT | wx.TOP, 24)
+        title = theme.create_title(header, "Base de Datos", "2xl")
+        header_sizer.Add(title, 0, wx.LEFT | wx.TOP, theme.SPACE_XL)
         
-        subtitle = wx.StaticText(header, label="Gestiona administraciones, comunidades y contactos")
-        subtitle.SetFont(theme.get_font_subtitle(12))
-        subtitle.SetForegroundColour(theme.TEXT_SECONDARY)
-        header_sizer.Add(subtitle, 0, wx.LEFT | wx.TOP | wx.BOTTOM, 24)
+        subtitle = theme.create_text(header, "Gestiona administraciones, comunidades y contactos")
+        header_sizer.Add(subtitle, 0, wx.LEFT | wx.TOP, theme.SPACE_XL)
+        header_sizer.AddSpacer(theme.SPACE_LG)
         
         header.SetSizer(header_sizer)
         main_sizer.Add(header, 0, wx.EXPAND)
         
-        # Notebook con pestañas
+        # === NOTEBOOK ===
         self.notebook = wx.Notebook(main_panel)
         self.notebook.SetBackgroundColour(theme.BG_SECONDARY)
-        self.notebook.SetFont(theme.get_font_medium(10))
+        self.notebook.SetFont(theme.font_base())
         
-        # === Pestaña Administración ===
+        # === PESTAÑA ADMINISTRACIONES ===
         self.panel_admin = wx.Panel(self.notebook)
         self.panel_admin.SetBackgroundColour(theme.BG_PRIMARY)
         sza = wx.BoxSizer(wx.VERTICAL)
         
-        self.list_admin = wx.ListCtrl(self.panel_admin, style=wx.LC_REPORT | wx.LC_SINGLE_SEL | wx.BORDER_NONE)
-        self.list_admin.SetBackgroundColour(theme.BG_CARD)
-        self.list_admin.SetFont(theme.get_font_normal(10))
-        for col, w in [("ID", 50), ("Email", 220), ("Teléfono", 140), ("Dirección", 220), ("Contactos", 240)]:
+        self.list_admin = wx.ListCtrl(self.panel_admin, style=wx.LC_REPORT | wx.LC_SINGLE_SEL | wx.BORDER_SIMPLE)
+        theme.style_listctrl(self.list_admin)
+        for col, w in [("ID", 60), ("Email", 240), ("Teléfono", 150), ("Dirección", 240), ("Contactos", 250)]:
             self.list_admin.AppendColumn(col, width=w)
-        sza.Add(self.list_admin, 1, wx.EXPAND | wx.ALL, 16)
+        sza.Add(self.list_admin, 1, wx.EXPAND | wx.ALL, theme.SPACE_LG)
         
+        # Toolbar
         toolbar_a = wx.Panel(self.panel_admin)
         toolbar_a.SetBackgroundColour(theme.BG_SECONDARY)
         tb_sza = wx.BoxSizer(wx.HORIZONTAL)
-        tb_sza.AddSpacer(12)
-        for label, handler, primary in [("+ Añadir", self._add_admin, True), ("Editar", self._edit_admin, False), ("Eliminar", self._delete_admin, False), ("Ver relación", self._ver_relacion_admin, False)]:
-            btn = wx.Button(toolbar_a, label=label, size=(-1, 36))
-            btn.SetFont(theme.get_font_normal(10))
-            if primary:
-                btn.SetBackgroundColour(theme.ACCENT_PRIMARY)
-                btn.SetForegroundColour(wx.WHITE)
-            btn.Bind(wx.EVT_BUTTON, lambda e, h=handler: h())
-            tb_sza.Add(btn, 0, wx.ALL, 8)
+        tb_sza.AddSpacer(theme.SPACE_LG)
+        
+        for label, handler, primary in [
+            ("+ Añadir", self._add_admin, True),
+            ("Editar", self._edit_admin, False),
+            ("Eliminar", self._delete_admin, False),
+            ("Ver relación", self._ver_relacion_admin, False)
+        ]:
+            btn = self._create_toolbar_button(toolbar_a, label, handler, primary)
+            tb_sza.Add(btn, 0, wx.ALL, theme.SPACE_SM)
+        
         toolbar_a.SetSizer(tb_sza)
         sza.Add(toolbar_a, 0, wx.EXPAND)
         
@@ -74,30 +86,31 @@ class DBManagerFrame(wx.Frame):
         self.list_admin.Bind(wx.EVT_LIST_ITEM_ACTIVATED, lambda e: self._edit_admin())
         self.notebook.AddPage(self.panel_admin, "  Administraciones  ")
 
-        # === Pestaña Comunidad ===
+        # === PESTAÑA COMUNIDADES ===
         self.panel_com = wx.Panel(self.notebook)
         self.panel_com.SetBackgroundColour(theme.BG_PRIMARY)
         szc = wx.BoxSizer(wx.VERTICAL)
         
-        self.list_com = wx.ListCtrl(self.panel_com, style=wx.LC_REPORT | wx.LC_SINGLE_SEL | wx.BORDER_NONE)
-        self.list_com.SetBackgroundColour(theme.BG_CARD)
-        self.list_com.SetFont(theme.get_font_normal(10))
-        for col, w in [("ID", 50), ("Nombre", 200), ("Administración", 200), ("Contactos", 260)]:
+        self.list_com = wx.ListCtrl(self.panel_com, style=wx.LC_REPORT | wx.LC_SINGLE_SEL | wx.BORDER_SIMPLE)
+        theme.style_listctrl(self.list_com)
+        for col, w in [("ID", 60), ("Nombre", 220), ("Administración", 220), ("Contactos", 280)]:
             self.list_com.AppendColumn(col, width=w)
-        szc.Add(self.list_com, 1, wx.EXPAND | wx.ALL, 16)
+        szc.Add(self.list_com, 1, wx.EXPAND | wx.ALL, theme.SPACE_LG)
         
         toolbar_c = wx.Panel(self.panel_com)
         toolbar_c.SetBackgroundColour(theme.BG_SECONDARY)
         tb_szc = wx.BoxSizer(wx.HORIZONTAL)
-        tb_szc.AddSpacer(12)
-        for label, handler, primary in [("+ Añadir", self._add_comunidad, True), ("Editar", self._edit_comunidad, False), ("Eliminar", self._delete_comunidad, False), ("Ver relación", self._ver_relacion_comunidad, False)]:
-            btn = wx.Button(toolbar_c, label=label, size=(-1, 36))
-            btn.SetFont(theme.get_font_normal(10))
-            if primary:
-                btn.SetBackgroundColour(theme.ACCENT_PRIMARY)
-                btn.SetForegroundColour(wx.WHITE)
-            btn.Bind(wx.EVT_BUTTON, lambda e, h=handler: h())
-            tb_szc.Add(btn, 0, wx.ALL, 8)
+        tb_szc.AddSpacer(theme.SPACE_LG)
+        
+        for label, handler, primary in [
+            ("+ Añadir", self._add_comunidad, True),
+            ("Editar", self._edit_comunidad, False),
+            ("Eliminar", self._delete_comunidad, False),
+            ("Ver relación", self._ver_relacion_comunidad, False)
+        ]:
+            btn = self._create_toolbar_button(toolbar_c, label, handler, primary)
+            tb_szc.Add(btn, 0, wx.ALL, theme.SPACE_SM)
+        
         toolbar_c.SetSizer(tb_szc)
         szc.Add(toolbar_c, 0, wx.EXPAND)
         
@@ -105,30 +118,31 @@ class DBManagerFrame(wx.Frame):
         self.list_com.Bind(wx.EVT_LIST_ITEM_ACTIVATED, lambda e: self._edit_comunidad())
         self.notebook.AddPage(self.panel_com, "  Comunidades  ")
 
-        # === Pestaña Contacto ===
+        # === PESTAÑA CONTACTOS ===
         self.panel_cont = wx.Panel(self.notebook)
         self.panel_cont.SetBackgroundColour(theme.BG_PRIMARY)
         szct = wx.BoxSizer(wx.VERTICAL)
         
-        self.list_cont = wx.ListCtrl(self.panel_cont, style=wx.LC_REPORT | wx.LC_SINGLE_SEL | wx.BORDER_NONE)
-        self.list_cont.SetBackgroundColour(theme.BG_CARD)
-        self.list_cont.SetFont(theme.get_font_normal(10))
-        for col, w in [("ID", 50), ("Nombre", 150), ("Teléfono", 130), ("Email", 200), ("Administraciones", 180), ("Comunidades", 180)]:
+        self.list_cont = wx.ListCtrl(self.panel_cont, style=wx.LC_REPORT | wx.LC_SINGLE_SEL | wx.BORDER_SIMPLE)
+        theme.style_listctrl(self.list_cont)
+        for col, w in [("ID", 60), ("Nombre", 160), ("Teléfono", 140), ("Email", 200), ("Administraciones", 200), ("Comunidades", 200)]:
             self.list_cont.AppendColumn(col, width=w)
-        szct.Add(self.list_cont, 1, wx.EXPAND | wx.ALL, 16)
+        szct.Add(self.list_cont, 1, wx.EXPAND | wx.ALL, theme.SPACE_LG)
         
         toolbar_ct = wx.Panel(self.panel_cont)
         toolbar_ct.SetBackgroundColour(theme.BG_SECONDARY)
         tb_szct = wx.BoxSizer(wx.HORIZONTAL)
-        tb_szct.AddSpacer(12)
-        for label, handler, primary in [("+ Añadir", self._add_contacto, True), ("Editar", self._edit_contacto, False), ("Eliminar", self._delete_contacto, False), ("Ver relación", self._ver_relacion_contacto, False)]:
-            btn = wx.Button(toolbar_ct, label=label, size=(-1, 36))
-            btn.SetFont(theme.get_font_normal(10))
-            if primary:
-                btn.SetBackgroundColour(theme.ACCENT_PRIMARY)
-                btn.SetForegroundColour(wx.WHITE)
-            btn.Bind(wx.EVT_BUTTON, lambda e, h=handler: h())
-            tb_szct.Add(btn, 0, wx.ALL, 8)
+        tb_szct.AddSpacer(theme.SPACE_LG)
+        
+        for label, handler, primary in [
+            ("+ Añadir", self._add_contacto, True),
+            ("Editar", self._edit_contacto, False),
+            ("Eliminar", self._delete_contacto, False),
+            ("Ver relación", self._ver_relacion_contacto, False)
+        ]:
+            btn = self._create_toolbar_button(toolbar_ct, label, handler, primary)
+            tb_szct.Add(btn, 0, wx.ALL, theme.SPACE_SM)
+        
         toolbar_ct.SetSizer(tb_szct)
         szct.Add(toolbar_ct, 0, wx.EXPAND)
         
@@ -136,7 +150,7 @@ class DBManagerFrame(wx.Frame):
         self.list_cont.Bind(wx.EVT_LIST_ITEM_ACTIVATED, lambda e: self._edit_contacto())
         self.notebook.AddPage(self.panel_cont, "  Contactos  ")
 
-        main_sizer.Add(self.notebook, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 16)
+        main_sizer.Add(self.notebook, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, theme.SPACE_LG)
         main_panel.SetSizer(main_sizer)
 
     def _refresh_all(self):
@@ -443,7 +457,7 @@ class VerRelacionDialog(wx.Dialog):
     """Diálogo para ver relaciones entre entidades."""
     def __init__(self, parent, title, column_headers, rows, on_activate=None):
         super().__init__(parent, title=title, style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
-        self.SetBackgroundColour(theme.BG_PRIMARY)
+        theme.style_dialog(self)
         self._on_activate = on_activate
         self._item_data = []
         
@@ -452,46 +466,40 @@ class VerRelacionDialog(wx.Dialog):
         sizer = wx.BoxSizer(wx.VERTICAL)
         
         # Header
-        header_title = wx.StaticText(panel, label=title)
-        header_title.SetFont(theme.get_font_bold(14))
-        header_title.SetForegroundColour(theme.TEXT_PRIMARY)
-        sizer.Add(header_title, 0, wx.ALL, 20)
+        header_title = theme.create_title(panel, title, "xl")
+        sizer.Add(header_title, 0, wx.ALL, theme.SPACE_XL)
         
         # Lista
-        self._list = wx.ListCtrl(panel, style=wx.LC_REPORT | wx.LC_SINGLE_SEL | wx.BORDER_NONE)
-        self._list.SetBackgroundColour(theme.BG_CARD)
-        self._list.SetForegroundColour(theme.TEXT_PRIMARY)
-        self._list.SetFont(theme.get_font_normal(10))
+        self._list = wx.ListCtrl(panel, style=wx.LC_REPORT | wx.LC_SINGLE_SEL | wx.BORDER_SIMPLE)
+        theme.style_listctrl(self._list)
         
-        widths = [70, 180, 150, 180] if len(column_headers) == 4 else [150, 380]
+        widths = [70, 200, 160, 200] if len(column_headers) == 4 else [160, 400]
         for i, h in enumerate(column_headers):
-            w = widths[i] if i < len(widths) else 150
+            w = widths[i] if i < len(widths) else 160
             self._list.AppendColumn(h, width=w)
         for cells, tipo, id_ in rows:
             self._list.Append(cells)
             self._item_data.append((tipo, id_))
-        sizer.Add(self._list, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 20)
+        sizer.Add(self._list, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, theme.SPACE_XL)
         
         # Hint
-        hint = wx.StaticText(panel, label="Doble clic para navegar a la entidad")
-        hint.SetFont(theme.get_font_normal(9))
-        hint.SetForegroundColour(theme.TEXT_MUTED)
-        sizer.Add(hint, 0, wx.LEFT | wx.TOP, 20)
+        hint = theme.create_caption(panel, "Doble clic para navegar a la entidad")
+        sizer.Add(hint, 0, wx.LEFT | wx.TOP, theme.SPACE_XL)
         
         # Botón cerrar
         btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
-        btn = wx.Button(panel, wx.ID_OK, "Cerrar", size=(100, 38))
-        btn.SetFont(theme.get_font_normal(10))
+        btn = wx.Button(panel, wx.ID_OK, "Cerrar", size=(110, 40))
+        btn.SetFont(theme.font_base())
         btn_sizer.Add(btn, 0)
-        sizer.Add(btn_sizer, 0, wx.ALIGN_RIGHT | wx.ALL, 20)
+        sizer.Add(btn_sizer, 0, wx.ALIGN_RIGHT | wx.ALL, theme.SPACE_XL)
         
         panel.SetSizer(sizer)
         main_sizer = wx.BoxSizer(wx.VERTICAL)
         main_sizer.Add(panel, 1, wx.EXPAND)
         self.SetSizer(main_sizer)
         
-        self.SetMinSize((520, 380))
-        self.SetSize((600, 450))
+        self.SetMinSize((560, 420))
+        self.SetSize((640, 500))
         self.CenterOnParent()
         self._list.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self._on_activated)
 
@@ -509,7 +517,7 @@ class SimpleDialog(wx.Dialog):
     """Diálogo de formulario con diseño limpio."""
     def __init__(self, parent, title, field_labels, initial=None, choices=None):
         super().__init__(parent, title=title, style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
-        self.SetBackgroundColour(theme.BG_PRIMARY)
+        theme.style_dialog(self)
         self._labels = field_labels
         self._initial = initial or {}
         self._choices = choices or {}
@@ -520,57 +528,51 @@ class SimpleDialog(wx.Dialog):
         main_sizer = wx.BoxSizer(wx.VERTICAL)
         
         # Título
-        title_label = wx.StaticText(panel, label=title)
-        title_label.SetFont(theme.get_font_bold(14))
-        title_label.SetForegroundColour(theme.TEXT_PRIMARY)
-        main_sizer.Add(title_label, 0, wx.LEFT | wx.TOP, 24)
-        main_sizer.AddSpacer(20)
+        title_label = theme.create_title(panel, title, "xl")
+        main_sizer.Add(title_label, 0, wx.LEFT | wx.TOP, theme.SPACE_XL)
+        main_sizer.AddSpacer(theme.SPACE_LG)
         
         # Campos del formulario
-        form_sizer = wx.FlexGridSizer(cols=2, vgap=16, hgap=16)
+        form_sizer = wx.FlexGridSizer(cols=2, vgap=theme.SPACE_MD, hgap=theme.SPACE_LG)
         form_sizer.AddGrowableCol(1, 1)
         
         for lbl in field_labels:
             # Label
-            label = wx.StaticText(panel, label=lbl)
-            label.SetFont(theme.get_font_normal(10))
-            label.SetForegroundColour(theme.TEXT_SECONDARY)
+            label = theme.create_text(panel, lbl)
             form_sizer.Add(label, 0, wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_RIGHT)
             
             # Control
             if lbl in self._choices:
                 c = wx.ComboBox(panel, value=self._initial.get(lbl, ""), 
                                choices=self._choices[lbl], style=wx.CB_READONLY)
-                c.SetFont(theme.get_font_normal(10))
+                c.SetFont(theme.font_base())
             else:
-                c = wx.TextCtrl(panel, value=self._initial.get(lbl, ""), size=(-1, 32))
-                c.SetBackgroundColour(theme.BG_CARD)
-                c.SetForegroundColour(theme.TEXT_PRIMARY)
-                c.SetFont(theme.get_font_normal(10))
+                c = wx.TextCtrl(panel, value=self._initial.get(lbl, ""), size=(-1, 36))
+                theme.style_textctrl(c)
             self._ctrls[lbl] = c
             form_sizer.Add(c, 1, wx.EXPAND)
         
-        main_sizer.Add(form_sizer, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 24)
+        main_sizer.Add(form_sizer, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, theme.SPACE_XL)
         main_sizer.AddStretchSpacer()
         
         # Separador
-        main_sizer.Add(wx.StaticLine(panel), 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 24)
+        main_sizer.Add(theme.create_divider(panel), 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, theme.SPACE_XL)
         
         # Botones
         btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
-        btn_cancel = wx.Button(panel, wx.ID_CANCEL, "Cancelar", size=(110, 40))
-        btn_cancel.SetFont(theme.get_font_normal(10))
+        btn_cancel = wx.Button(panel, wx.ID_CANCEL, "Cancelar", size=(120, 42))
+        btn_cancel.SetFont(theme.font_base())
         btn_cancel.SetBackgroundColour(theme.BG_SECONDARY)
         btn_cancel.SetForegroundColour(theme.TEXT_PRIMARY)
         
-        btn_ok = wx.Button(panel, wx.ID_OK, "Guardar", size=(110, 40))
-        btn_ok.SetFont(theme.get_font_medium(10))
+        btn_ok = wx.Button(panel, wx.ID_OK, "Guardar", size=(120, 42))
+        btn_ok.SetFont(theme.get_font_medium())
         btn_ok.SetBackgroundColour(theme.ACCENT_PRIMARY)
-        btn_ok.SetForegroundColour(wx.WHITE)
+        btn_ok.SetForegroundColour(theme.TEXT_INVERSE)
         
-        btn_sizer.Add(btn_cancel, 0, wx.RIGHT, 12)
+        btn_sizer.Add(btn_cancel, 0, wx.RIGHT, theme.SPACE_MD)
         btn_sizer.Add(btn_ok, 0)
-        main_sizer.Add(btn_sizer, 0, wx.ALIGN_RIGHT | wx.ALL, 20)
+        main_sizer.Add(btn_sizer, 0, wx.ALIGN_RIGHT | wx.ALL, theme.SPACE_XL)
         
         panel.SetSizer(main_sizer)
         
@@ -578,8 +580,8 @@ class SimpleDialog(wx.Dialog):
         dialog_sizer.Add(panel, 1, wx.EXPAND)
         self.SetSizer(dialog_sizer)
         
-        self.SetMinSize((450, 280))
-        self.SetSize((480, max(320, 100 + len(field_labels) * 50)))
+        self.SetMinSize((480, 300))
+        self.SetSize((520, max(350, 120 + len(field_labels) * 55)))
         self.CenterOnParent()
 
     def get_values(self):
