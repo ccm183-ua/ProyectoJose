@@ -5,12 +5,14 @@ Diálogos wxPython para cubiApp.
 import wx
 from src.core.project_parser import ProjectParser
 from src.utils.project_name_generator import ProjectNameGenerator
+from src.gui import theme
 
 
 class ProjectNameDialogWx(wx.Dialog):
     """Diálogo para pegar una línea del Excel y obtener nombre del proyecto."""
     def __init__(self, parent):
-        super().__init__(parent, title="Nombre del proyecto", size=(620, 380))
+        super().__init__(parent, title="Nuevo Presupuesto", style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
+        theme.apply_theme_to_dialog(self)
         self.parser = ProjectParser()
         self.name_generator = ProjectNameGenerator()
         self.project_data = None
@@ -20,33 +22,69 @@ class ProjectNameDialogWx(wx.Dialog):
 
     def _build_ui(self):
         panel = wx.Panel(self)
+        theme.apply_theme_to_panel(panel)
         sizer = wx.BoxSizer(wx.VERTICAL)
+        
+        # Título
+        title = theme.create_styled_title(panel, "Crear Presupuesto")
+        sizer.Add(title, 0, wx.ALL, 20)
+        
+        # Instrucciones
         inst = wx.StaticText(panel, label="Copia una fila completa (columnas A-I) desde tu Excel de presupuestos "
                                           "y pégalo en el campo de abajo, o haz clic en 'Cargar desde Portapapeles'.")
-        inst.Wrap(560)
-        sizer.Add(inst, 0, wx.ALL, 8)
-        sizer.Add(wx.StaticText(panel, label="Datos del proyecto:"), 0, wx.LEFT | wx.TOP, 8)
-        self._data_text = wx.TextCtrl(panel, style=wx.TE_MULTILINE, size=(580, 80))
+        inst.SetForegroundColour(theme.TEXT_SECONDARY)
+        inst.Wrap(540)
+        sizer.Add(inst, 0, wx.LEFT | wx.RIGHT, 20)
+        
+        # Label datos
+        lbl_datos = wx.StaticText(panel, label="Datos del proyecto:")
+        lbl_datos.SetFont(theme.get_font_bold(10))
+        sizer.Add(lbl_datos, 0, wx.LEFT | wx.TOP, 20)
+        
+        self._data_text = wx.TextCtrl(panel, style=wx.TE_MULTILINE, size=(-1, 80))
+        theme.style_textctrl(self._data_text)
         try:
-            self._data_text.SetHint("Pega aquí los datos del Excel (Ctrl+V). Formato: Nº\tFECHA\tCLIENTE\tMEDIACIÓN\tCALLE\tNUM\tC.P\tLOCALIDAD\tTIPO")
+            self._data_text.SetHint("Pega aquí los datos del Excel (Ctrl+V)")
         except AttributeError:
             pass
         self._data_text.Bind(wx.EVT_TEXT, lambda e: self._validate_data())
-        sizer.Add(self._data_text, 0, wx.ALL, 8)
-        btn_load = wx.Button(panel, label="Cargar desde Portapapeles")
+        sizer.Add(self._data_text, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 20)
+        
+        btn_load = wx.Button(panel, label="Cargar desde Portapapeles", size=(200, 36))
         btn_load.Bind(wx.EVT_BUTTON, lambda e: self._load_from_clipboard())
-        sizer.Add(btn_load, 0, wx.LEFT, 8)
-        sizer.Add(wx.StaticText(panel, label="Nombre del proyecto:"), 0, wx.LEFT | wx.TOP, 12)
-        self._name_field = wx.TextCtrl(panel, style=wx.TE_READONLY, size=(580, -1))
-        sizer.Add(self._name_field, 0, wx.ALL, 8)
-        btn_sizer = wx.StdDialogButtonSizer()
-        btn_sizer.AddButton(wx.Button(panel, wx.ID_CANCEL, "Cancelar"))
-        btn_ok = wx.Button(panel, wx.ID_OK, "Validar y Continuar")
+        sizer.Add(btn_load, 0, wx.LEFT | wx.TOP, 20)
+        
+        # Label nombre
+        lbl_nombre = wx.StaticText(panel, label="Nombre del proyecto:")
+        lbl_nombre.SetFont(theme.get_font_bold(10))
+        sizer.Add(lbl_nombre, 0, wx.LEFT | wx.TOP, 20)
+        
+        self._name_field = wx.TextCtrl(panel, style=wx.TE_READONLY, size=(-1, 32))
+        self._name_field.SetBackgroundColour(theme.BG_SECONDARY)
+        sizer.Add(self._name_field, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 20)
+        
+        # Separador
+        sizer.Add(wx.StaticLine(panel), 0, wx.EXPAND | wx.ALL, 20)
+        
+        # Botones
+        btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        btn_cancel = wx.Button(panel, wx.ID_CANCEL, "Cancelar", size=(120, 40))
+        btn_ok = wx.Button(panel, wx.ID_OK, "Crear Presupuesto", size=(150, 40))
+        theme.style_button_primary(btn_ok)
         btn_ok.SetDefault()
-        btn_sizer.AddButton(btn_ok)
-        btn_sizer.Realize()
-        sizer.Add(btn_sizer, 0, wx.ALL | wx.ALIGN_RIGHT, 10)
+        btn_sizer.Add(btn_cancel, 0, wx.RIGHT, 10)
+        btn_sizer.Add(btn_ok, 0)
+        sizer.Add(btn_sizer, 0, wx.ALIGN_RIGHT | wx.RIGHT | wx.BOTTOM, 20)
+        
         panel.SetSizer(sizer)
+        
+        dialog_sizer = wx.BoxSizer(wx.VERTICAL)
+        dialog_sizer.Add(panel, 1, wx.EXPAND)
+        self.SetSizer(dialog_sizer)
+        
+        self.SetMinSize((580, 450))
+        self.SetSize((620, 500))
+        self.CenterOnParent()
         self.Bind(wx.EVT_BUTTON, self._on_validate_ok, id=wx.ID_OK)
 
     def _load_from_clipboard(self):
