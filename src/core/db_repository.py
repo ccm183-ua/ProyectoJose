@@ -56,28 +56,31 @@ def _ejecutar(conn, *args, **kwargs):
 # ---------------------------------------------------------------------------
 
 def get_administraciones() -> List[Dict]:
-    """Lista todas las administraciones. Cada elemento es un dict con id, email, telefono, direccion."""
+    """Lista todas las administraciones. Cada elemento es un dict con id, nombre, email, telefono, direccion."""
     conn = database.connect()
     try:
         cur = conn.execute(
-            "SELECT id, email, telefono, direccion FROM administracion ORDER BY id"
+            "SELECT id, nombre, email, telefono, direccion FROM administracion ORDER BY id"
         )
         rows = cur.fetchall()
         return [
-            {"id": r[0], "email": r[1] or "", "telefono": r[2] or "", "direccion": r[3] or ""}
+            {"id": r[0], "nombre": r[1] or "", "email": r[2] or "", "telefono": r[3] or "", "direccion": r[4] or ""}
             for r in rows
         ]
     finally:
         conn.close()
 
 
-def create_administracion(email: str = "", telefono: str = "", direccion: str = "") -> Tuple[Optional[int], Optional[str]]:
-    """Crea una administración. Devuelve (id, None) o (None, mensaje_error)."""
+def create_administracion(nombre: str, email: str = "", telefono: str = "", direccion: str = "") -> Tuple[Optional[int], Optional[str]]:
+    """Crea una administración. nombre es obligatorio. Devuelve (id, None) o (None, mensaje_error)."""
+    nombre = nombre.strip()
+    if not nombre:
+        return (None, "El nombre de la administración es obligatorio.")
     conn = database.connect()
     try:
         conn.execute(
-            "INSERT INTO administracion (email, telefono, direccion) VALUES (?, ?, ?)",
-            (email.strip() or None, telefono.strip() or None, direccion.strip() or None),
+            "INSERT INTO administracion (nombre, email, telefono, direccion) VALUES (?, ?, ?, ?)",
+            (nombre, email.strip() or None, telefono.strip() or None, direccion.strip() or None),
         )
         conn.commit()
         cur = conn.execute("SELECT last_insert_rowid()")
@@ -92,14 +95,17 @@ def create_administracion(email: str = "", telefono: str = "", direccion: str = 
         conn.close()
 
 
-def update_administracion(id_: int, email: str = "", telefono: str = "", direccion: str = "") -> Optional[str]:
-    """Actualiza una administración. Devuelve None si ok, o mensaje de error."""
+def update_administracion(id_: int, nombre: str, email: str = "", telefono: str = "", direccion: str = "") -> Optional[str]:
+    """Actualiza una administración. nombre es obligatorio. Devuelve None si ok, o mensaje de error."""
+    nombre = nombre.strip()
+    if not nombre:
+        return "El nombre de la administración es obligatorio."
     conn = database.connect()
     try:
         err = _ejecutar(
             conn,
-            "UPDATE administracion SET email=?, telefono=?, direccion=? WHERE id=?",
-            (email.strip() or None, telefono.strip() or None, direccion.strip() or None, id_),
+            "UPDATE administracion SET nombre=?, email=?, telefono=?, direccion=? WHERE id=?",
+            (nombre, email.strip() or None, telefono.strip() or None, direccion.strip() or None, id_),
         )
         return err
     finally:
@@ -121,7 +127,7 @@ def get_administraciones_para_tabla() -> List[Dict]:
     conn = database.connect()
     try:
         cur = conn.execute("""
-            SELECT a.id, a.email, a.telefono, a.direccion,
+            SELECT a.id, a.nombre, a.email, a.telefono, a.direccion,
                    COALESCE(GROUP_CONCAT(c.nombre), '') AS contactos
             FROM administracion a
             LEFT JOIN administracion_contacto ac ON ac.administracion_id = a.id
@@ -133,10 +139,11 @@ def get_administraciones_para_tabla() -> List[Dict]:
         return [
             {
                 "id": r[0],
-                "email": r[1] or "",
-                "telefono": r[2] or "",
-                "direccion": r[3] or "",
-                "contactos": (r[4] or "").strip() or "—",
+                "nombre": r[1] or "",
+                "email": r[2] or "",
+                "telefono": r[3] or "",
+                "direccion": r[4] or "",
+                "contactos": (r[5] or "").strip() or "—",
             }
             for r in rows
         ]
@@ -154,7 +161,7 @@ def get_comunidades() -> List[Dict]:
     try:
         cur = conn.execute("""
             SELECT c.id, c.nombre, c.direccion, c.email, c.telefono, c.administracion_id,
-                   a.email AS admin_email
+                   COALESCE(a.nombre, a.email) AS admin_nombre
             FROM comunidad c
             LEFT JOIN administracion a ON a.id = c.administracion_id
             ORDER BY c.nombre
@@ -168,7 +175,7 @@ def get_comunidades() -> List[Dict]:
                 "email": r[3] or "",
                 "telefono": r[4] or "",
                 "administracion_id": r[5],
-                "nombre_administracion": (r[6] or "(sin correo)") if r[6] else "(sin asignar)",
+                "nombre_administracion": r[6] or "(sin asignar)",
             }
             for r in rows
         ]
@@ -246,7 +253,7 @@ def get_comunidades_para_tabla() -> List[Dict]:
     try:
         cur = conn.execute("""
             SELECT c.id, c.nombre, c.direccion, c.email, c.telefono, c.administracion_id,
-                   COALESCE(a.email, '(sin asignar)') AS nombre_administracion,
+                   COALESCE(a.nombre, a.email, '(sin asignar)') AS nombre_administracion,
                    COALESCE(GROUP_CONCAT(ct.nombre), '') AS contactos
             FROM comunidad c
             LEFT JOIN administracion a ON a.id = c.administracion_id
@@ -306,7 +313,7 @@ def get_contactos_para_tabla() -> List[Dict]:
     try:
         cur = conn.execute("""
             SELECT co.id, co.nombre, co.telefono, co.telefono2, co.email, co.notas,
-                   (SELECT GROUP_CONCAT(a.email) FROM administracion_contacto ac
+                   (SELECT GROUP_CONCAT(COALESCE(a.nombre, a.email)) FROM administracion_contacto ac
                     JOIN administracion a ON a.id = ac.administracion_id WHERE ac.contacto_id = co.id) AS admins,
                    (SELECT GROUP_CONCAT(c.nombre) FROM comunidad_contacto cc
                     JOIN comunidad c ON c.id = cc.comunidad_id WHERE cc.contacto_id = co.id) AS coms
@@ -410,13 +417,13 @@ def get_administracion_por_id(id_: int) -> Optional[Dict]:
     conn = database.connect()
     try:
         cur = conn.execute(
-            "SELECT id, email, telefono, direccion FROM administracion WHERE id=?",
+            "SELECT id, nombre, email, telefono, direccion FROM administracion WHERE id=?",
             (id_,),
         )
         r = cur.fetchone()
         if not r:
             return None
-        return {"id": r[0], "email": r[1] or "", "telefono": r[2] or "", "direccion": r[3] or ""}
+        return {"id": r[0], "nombre": r[1] or "", "email": r[2] or "", "telefono": r[3] or "", "direccion": r[4] or ""}
     finally:
         conn.close()
 
@@ -445,11 +452,11 @@ def get_comunidad_por_id(id_: int) -> Optional[Dict]:
 
 
 def get_contactos_por_administracion_id(administracion_id: int) -> List[Dict]:
-    """Lista contactos asociados a una administración (id, nombre, telefono, email)."""
+    """Lista contactos asociados a una administración (id, nombre, telefono, telefono2, email, notas)."""
     conn = database.connect()
     try:
         cur = conn.execute("""
-            SELECT c.id, c.nombre, c.telefono, c.email
+            SELECT c.id, c.nombre, c.telefono, c.telefono2, c.email, c.notas
             FROM contacto c
             JOIN administracion_contacto ac ON ac.contacto_id = c.id
             WHERE ac.administracion_id = ?
@@ -457,7 +464,14 @@ def get_contactos_por_administracion_id(administracion_id: int) -> List[Dict]:
         """, (administracion_id,))
         rows = cur.fetchall()
         return [
-            {"id": r[0], "nombre": r[1] or "", "telefono": r[2] or "", "email": r[3] or ""}
+            {
+                "id": r[0],
+                "nombre": r[1] or "",
+                "telefono": r[2] or "",
+                "telefono2": r[3] or "",
+                "email": r[4] or "",
+                "notas": r[5] or "",
+            }
             for r in rows
         ]
     finally:
@@ -465,11 +479,11 @@ def get_contactos_por_administracion_id(administracion_id: int) -> List[Dict]:
 
 
 def get_contactos_por_comunidad_id(comunidad_id: int) -> List[Dict]:
-    """Lista contactos asociados a una comunidad (id, nombre, telefono, email)."""
+    """Lista contactos asociados a una comunidad (id, nombre, telefono, telefono2, email, notas)."""
     conn = database.connect()
     try:
         cur = conn.execute("""
-            SELECT c.id, c.nombre, c.telefono, c.email
+            SELECT c.id, c.nombre, c.telefono, c.telefono2, c.email, c.notas
             FROM contacto c
             JOIN comunidad_contacto cc ON cc.contacto_id = c.id
             WHERE cc.comunidad_id = ?
@@ -477,7 +491,14 @@ def get_contactos_por_comunidad_id(comunidad_id: int) -> List[Dict]:
         """, (comunidad_id,))
         rows = cur.fetchall()
         return [
-            {"id": r[0], "nombre": r[1] or "", "telefono": r[2] or "", "email": r[3] or ""}
+            {
+                "id": r[0],
+                "nombre": r[1] or "",
+                "telefono": r[2] or "",
+                "telefono2": r[3] or "",
+                "email": r[4] or "",
+                "notas": r[5] or "",
+            }
             for r in rows
         ]
     finally:

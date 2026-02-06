@@ -23,7 +23,7 @@ def get_db_path() -> Path:
 
     Orden de decisión:
     1. Variable de entorno CUBIAPP_DB_PATH (ruta absoluta al .db).
-    2. Por defecto: ~/Documents/cubiApp/datos.db
+    2. Por defecto: datos.db en la raíz del proyecto.
 
     Returns:
         Path absoluto al fichero .db
@@ -31,8 +31,9 @@ def get_db_path() -> Path:
     env_path = os.environ.get("CUBIAPP_DB_PATH")
     if env_path and os.path.isabs(env_path):
         return Path(env_path)
-    home = Path.home()
-    return home / "Documents" / "cubiApp" / "datos.db"
+    # Ruta relativa a la raíz del proyecto (donde está src/)
+    project_root = Path(__file__).resolve().parent.parent.parent
+    return project_root / "datos.db"
 
 
 def ensure_db_directory(path: Path) -> None:
@@ -72,30 +73,42 @@ def connect(read_only: bool = False) -> sqlite3.Connection:
     return conn
 
 
+def _migrate_administracion_nombre(conn: sqlite3.Connection) -> None:
+    """Añade la columna nombre a administracion si no existe (BDs creadas antes del cambio)."""
+    cur = conn.execute("PRAGMA table_info(administracion)")
+    columns = [row[1] for row in cur.fetchall()]
+    if "nombre" not in columns:
+        conn.execute("ALTER TABLE administracion ADD COLUMN nombre TEXT NOT NULL DEFAULT ''")
+        conn.commit()
+
+
 def init_schema(conn: sqlite3.Connection) -> None:
     """
     Crea las tablas si no existen. No modifica tablas ya existentes.
 
     Si el fichero fue reemplazado por otro .db que ya tiene estas tablas,
     no hace nada. Si fue reemplazado por un .db vacío, crea las tablas.
+    Ejecuta migraciones para añadir columnas nuevas a tablas existentes.
     """
     conn.executescript(_SCHEMA_SQL)
     conn.commit()
+    _migrate_administracion_nombre(conn)
 
 
 # ---------------------------------------------------------------------------
 # Esquema según especificación:
 # - Contacto: id, nombre NOT NULL, telefono NOT NULL (c.alt), telefono2, email, notas (resto nullable)
 # - Comunidad: id, nombre NOT NULL UNIQUE (identificador), direccion, email, telefono, administracion_id
-# - Administración: id, email (c.alt), telefono, direccion (todo nullable; sin riesgo integridad)
+# - Administración: id, nombre NOT NULL, email (c.alt), telefono, direccion (resto nullable)
 # Relaciones: Administración N:M Contacto, Comunidad N:M Contacto,
 #             Comunidad N:1 Administración (comunidad obligada a tener una)
 # ---------------------------------------------------------------------------
 
 _SCHEMA_SQL = """
--- Administración (sin FKs; todo nullable)
+-- Administración (nombre obligatorio; resto nullable)
 CREATE TABLE IF NOT EXISTS administracion (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nombre TEXT NOT NULL,
     email TEXT UNIQUE,
     telefono TEXT,
     direccion TEXT

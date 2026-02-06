@@ -9,8 +9,12 @@ from src.gui import theme
 
 class DBManagerFrame(wx.Frame):
     def __init__(self, parent):
-        super().__init__(parent, title="Base de Datos - cubiApp", size=(1050, 700))
+        super().__init__(parent, title="Base de Datos - cubiApp", size=(1100, 750))
         theme.style_frame(self)
+        # Datos completos para poder filtrar en memoria
+        self._admin_rows = []
+        self._com_rows = []
+        self._cont_rows = []
         self._build_ui()
         self._refresh_all()
         self.Centre()
@@ -27,6 +31,28 @@ class DBManagerFrame(wx.Frame):
             btn.SetForegroundColour(theme.TEXT_PRIMARY)
         btn.Bind(wx.EVT_BUTTON, lambda e, h=handler: h())
         return btn
+
+    def _create_search_box(self, parent, hint, on_change):
+        """Crea un buscador con estilo."""
+        search_panel = wx.Panel(parent)
+        search_panel.SetBackgroundColour(theme.BG_PRIMARY)
+        sz = wx.BoxSizer(wx.HORIZONTAL)
+        
+        label = theme.create_text(search_panel, "Buscar:")
+        sz.Add(label, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, theme.SPACE_SM)
+        
+        search = wx.TextCtrl(search_panel, style=wx.TE_PROCESS_ENTER, size=(-1, 32))
+        theme.style_textctrl(search)
+        try:
+            search.SetHint(hint)
+        except AttributeError:
+            pass
+        search.Bind(wx.EVT_TEXT, on_change)
+        search.Bind(wx.EVT_TEXT_ENTER, on_change)
+        sz.Add(search, 1, wx.EXPAND)
+        
+        search_panel.SetSizer(sz)
+        return search_panel, search
 
     def _build_ui(self):
         main_panel = wx.Panel(self)
@@ -58,11 +84,17 @@ class DBManagerFrame(wx.Frame):
         self.panel_admin.SetBackgroundColour(theme.BG_PRIMARY)
         sza = wx.BoxSizer(wx.VERTICAL)
         
+        # Buscador Administración
+        search_panel_a, self.search_admin = self._create_search_box(
+            self.panel_admin, "Nombre, email, teléfono, dirección o contactos", self._on_search_admin
+        )
+        sza.Add(search_panel_a, 0, wx.EXPAND | wx.ALL, theme.SPACE_MD)
+        
         self.list_admin = wx.ListCtrl(self.panel_admin, style=wx.LC_REPORT | wx.LC_SINGLE_SEL | wx.BORDER_SIMPLE)
         theme.style_listctrl(self.list_admin)
-        for col, w in [("ID", 60), ("Email", 240), ("Teléfono", 150), ("Dirección", 240), ("Contactos", 250)]:
+        for col, w in [("ID", 50), ("Nombre", 180), ("Dirección", 180), ("Email", 180), ("Teléfono", 120), ("Contactos", 200)]:
             self.list_admin.AppendColumn(col, width=w)
-        sza.Add(self.list_admin, 1, wx.EXPAND | wx.ALL, theme.SPACE_LG)
+        sza.Add(self.list_admin, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, theme.SPACE_LG)
         
         # Toolbar
         toolbar_a = wx.Panel(self.panel_admin)
@@ -91,11 +123,17 @@ class DBManagerFrame(wx.Frame):
         self.panel_com.SetBackgroundColour(theme.BG_PRIMARY)
         szc = wx.BoxSizer(wx.VERTICAL)
         
+        # Buscador Comunidad
+        search_panel_c, self.search_com = self._create_search_box(
+            self.panel_com, "Nombre, dirección, email, teléfono, administración o contactos", self._on_search_com
+        )
+        szc.Add(search_panel_c, 0, wx.EXPAND | wx.ALL, theme.SPACE_MD)
+        
         self.list_com = wx.ListCtrl(self.panel_com, style=wx.LC_REPORT | wx.LC_SINGLE_SEL | wx.BORDER_SIMPLE)
         theme.style_listctrl(self.list_com)
-        for col, w in [("ID", 60), ("Nombre", 220), ("Administración", 220), ("Contactos", 280)]:
+        for col, w in [("ID", 50), ("Nombre", 160), ("Dirección", 160), ("Email", 160), ("Teléfono", 110), ("Administración", 150), ("Contactos", 180)]:
             self.list_com.AppendColumn(col, width=w)
-        szc.Add(self.list_com, 1, wx.EXPAND | wx.ALL, theme.SPACE_LG)
+        szc.Add(self.list_com, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, theme.SPACE_LG)
         
         toolbar_c = wx.Panel(self.panel_com)
         toolbar_c.SetBackgroundColour(theme.BG_SECONDARY)
@@ -123,11 +161,17 @@ class DBManagerFrame(wx.Frame):
         self.panel_cont.SetBackgroundColour(theme.BG_PRIMARY)
         szct = wx.BoxSizer(wx.VERTICAL)
         
+        # Buscador Contacto
+        search_panel_ct, self.search_cont = self._create_search_box(
+            self.panel_cont, "Nombre, teléfono, email, administraciones o comunidades", self._on_search_cont
+        )
+        szct.Add(search_panel_ct, 0, wx.EXPAND | wx.ALL, theme.SPACE_MD)
+        
         self.list_cont = wx.ListCtrl(self.panel_cont, style=wx.LC_REPORT | wx.LC_SINGLE_SEL | wx.BORDER_SIMPLE)
         theme.style_listctrl(self.list_cont)
-        for col, w in [("ID", 60), ("Nombre", 160), ("Teléfono", 140), ("Email", 200), ("Administraciones", 200), ("Comunidades", 200)]:
+        for col, w in [("ID", 50), ("Nombre", 140), ("Teléfono", 110), ("Teléfono 2", 110), ("Email", 160), ("Administraciones", 160), ("Comunidades", 160), ("Notas", 160)]:
             self.list_cont.AppendColumn(col, width=w)
-        szct.Add(self.list_cont, 1, wx.EXPAND | wx.ALL, theme.SPACE_LG)
+        szct.Add(self.list_cont, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, theme.SPACE_LG)
         
         toolbar_ct = wx.Panel(self.panel_cont)
         toolbar_ct.SetBackgroundColour(theme.BG_SECONDARY)
@@ -159,22 +203,86 @@ class DBManagerFrame(wx.Frame):
         self._refresh_contactos()
 
     def _refresh_admin(self):
-        self.list_admin.DeleteAllItems()
-        for r in repo.get_administraciones_para_tabla():
-            self.list_admin.Append([str(r["id"]), r["email"] or "—", r["telefono"] or "—", r["direccion"] or "—", r["contactos"]])
+        self._admin_rows = repo.get_administraciones_para_tabla()
+        self._populate_admin_list()
 
     def _refresh_comunidades(self):
-        self.list_com.DeleteAllItems()
-        for r in repo.get_comunidades_para_tabla():
-            self.list_com.Append([str(r["id"]), r["nombre"], r["nombre_administracion"], r["contactos"]])
+        self._com_rows = repo.get_comunidades_para_tabla()
+        self._populate_com_list()
 
     def _refresh_contactos(self):
-        self.list_cont.DeleteAllItems()
-        for r in repo.get_contactos_para_tabla():
-            self.list_cont.Append([
-                str(r["id"]), r["nombre"], r["telefono"], r["email"] or "—",
-                r.get("administraciones", "—") or "—", r.get("comunidades", "—") or "—",
+        self._cont_rows = repo.get_contactos_para_tabla()
+        self._populate_cont_list()
+
+    # ---------------- Filtro / buscadores ----------------
+
+    def _filter_rows(self, rows, keys, query):
+        q = (query or "").strip().lower()
+        if not q:
+            return rows
+        out = []
+        for r in rows:
+            for k in keys:
+                v = str((r.get(k, "") if isinstance(r, dict) else "") or "").lower()
+                if q in v:
+                    out.append(r)
+                    break
+        return out
+
+    def _populate_admin_list(self):
+        self.list_admin.DeleteAllItems()
+        rows = self._admin_rows or []
+        query = self.search_admin.GetValue() if hasattr(self, "search_admin") else ""
+        rows = self._filter_rows(rows, ["nombre", "email", "telefono", "direccion", "contactos"], query)
+        for r in rows:
+            self.list_admin.Append([
+                str(r["id"]), r["nombre"] or "—",
+                r["direccion"] or "—", r["email"] or "—", r["telefono"] or "—",
+                r["contactos"],
             ])
+
+    def _populate_com_list(self):
+        self.list_com.DeleteAllItems()
+        rows = self._com_rows or []
+        query = self.search_com.GetValue() if hasattr(self, "search_com") else ""
+        rows = self._filter_rows(
+            rows,
+            ["nombre", "direccion", "telefono", "email", "nombre_administracion", "contactos"],
+            query,
+        )
+        for r in rows:
+            self.list_com.Append([
+                str(r["id"]), r["nombre"],
+                r.get("direccion", "") or "—", r.get("email", "") or "—", r.get("telefono", "") or "—",
+                r["nombre_administracion"], r["contactos"],
+            ])
+
+    def _populate_cont_list(self):
+        self.list_cont.DeleteAllItems()
+        rows = self._cont_rows or []
+        query = self.search_cont.GetValue() if hasattr(self, "search_cont") else ""
+        rows = self._filter_rows(
+            rows,
+            ["nombre", "telefono", "telefono2", "email", "notas", "administraciones", "comunidades"],
+            query,
+        )
+        for r in rows:
+            self.list_cont.Append([
+                str(r["id"]), r["nombre"],
+                r["telefono"], r.get("telefono2", "") or "—",
+                r["email"] or "—",
+                r.get("administraciones", "—") or "—", r.get("comunidades", "—") or "—",
+                r.get("notas", "") or "—",
+            ])
+
+    def _on_search_admin(self, event):
+        self._populate_admin_list()
+
+    def _on_search_com(self, event):
+        self._populate_com_list()
+
+    def _on_search_cont(self, event):
+        self._populate_cont_list()
 
     def _ver_relacion_admin(self):
         idx = self.list_admin.GetFirstSelected()
@@ -183,10 +291,14 @@ class DBManagerFrame(wx.Frame):
             return
         id_ = int(self.list_admin.GetItemText(idx))
         contactos = repo.get_contactos_por_administracion_id(id_)
-        cols = ["ID", "Nombre", "Teléfono", "Email"]
-        rows = [([str(c["id"]), c["nombre"] or "—", c["telefono"] or "—", c.get("email") or "—"], "contacto", c["id"]) for c in contactos]
+        cols = ["ID", "Nombre", "Teléfono", "Teléfono 2", "Email"]
+        rows = [(
+            [str(c["id"]), c["nombre"] or "—", c["telefono"] or "—", c.get("telefono2", "") or "—", c.get("email") or "—"],
+            "contacto",
+            c["id"],
+        ) for c in contactos]
         if not rows:
-            rows = [(["—", "(ningún contacto asignado)", "—", "—"], None, None)]
+            rows = [(["—", "(ningún contacto asignado)", "—", "—", "—"], None, None)]
         d = VerRelacionDialog(self, "Contactos de esta administración", cols, rows, on_activate=self._ir_a_entidad)
         d.ShowModal()
         d.Destroy()
@@ -199,10 +311,14 @@ class DBManagerFrame(wx.Frame):
             return
         id_ = int(self.list_com.GetItemText(idx))
         contactos = repo.get_contactos_por_comunidad_id(id_)
-        cols = ["ID", "Nombre", "Teléfono", "Email"]
-        rows = [([str(c["id"]), c["nombre"] or "—", c["telefono"] or "—", c.get("email") or "—"], "contacto", c["id"]) for c in contactos]
+        cols = ["ID", "Nombre", "Teléfono", "Teléfono 2", "Email"]
+        rows = [(
+            [str(c["id"]), c["nombre"] or "—", c["telefono"] or "—", c.get("telefono2", "") or "—", c.get("email") or "—"],
+            "contacto",
+            c["id"],
+        ) for c in contactos]
         if not rows:
-            rows = [(["—", "(ningún contacto asignado)", "—", "—"], None, None)]
+            rows = [(["—", "(ningún contacto asignado)", "—", "—", "—"], None, None)]
         d = VerRelacionDialog(self, "Contactos de esta comunidad", cols, rows, on_activate=self._ir_a_entidad)
         d.ShowModal()
         d.Destroy()
@@ -218,7 +334,7 @@ class DBManagerFrame(wx.Frame):
         com_ids = repo.get_comunidad_ids_para_contacto(id_)
         admins = repo.get_administraciones()
         coms = repo.get_comunidades()
-        admin_map = {a["id"]: a.get("email") or f"ID {a['id']}" for a in admins}
+        admin_map = {a["id"]: (a.get("nombre") or a.get("email")) or f"ID {a['id']}" for a in admins}
         com_map = {c["id"]: c.get("nombre") or f"ID {c['id']}" for c in coms}
         rows = [(["Administración", admin_map.get(aid, str(aid))], "administracion", aid) for aid in admin_ids]
         rows += [(["Comunidad", com_map.get(cid, str(cid))], "comunidad", cid) for cid in com_ids]
@@ -265,14 +381,22 @@ class DBManagerFrame(wx.Frame):
                     self.list_com.EnsureVisible(i)
                     break
 
+    def _admin_display(self, a):
+        """Texto para mostrar en lista/combobox de administración (nombre es clave, no se repite)."""
+        return a.get("nombre") or a.get("email") or f"ID {a['id']}"
+
     def _add_admin(self):
-        d = SimpleDialog(self, "Añadir administración", ["Email", "Teléfono", "Dirección"])
+        d = SimpleDialog(self, "Añadir administración", ["Nombre *", "Email", "Teléfono", "Dirección"])
         if d.ShowModal() != wx.ID_OK:
             d.Destroy()
             return
         vals = d.get_values()
         d.Destroy()
-        id_, err = repo.create_administracion(vals.get("Email", ""), vals.get("Teléfono", ""), vals.get("Dirección", ""))
+        nombre = (vals.get("Nombre *", "") or "").strip()
+        if not nombre:
+            wx.MessageBox("El nombre es obligatorio.", "Error", wx.OK | wx.ICON_ERROR)
+            return
+        id_, err = repo.create_administracion(nombre, vals.get("Email", ""), vals.get("Teléfono", ""), vals.get("Dirección", ""))
         if err:
             wx.MessageBox(err, "Error", wx.OK | wx.ICON_ERROR)
         else:
@@ -288,13 +412,17 @@ class DBManagerFrame(wx.Frame):
         r = repo.get_administracion_por_id(id_)
         if not r:
             return
-        d = SimpleDialog(self, "Editar administración", ["Email", "Teléfono", "Dirección"], initial={"Email": r["email"], "Teléfono": r["telefono"], "Dirección": r["direccion"]})
+        d = SimpleDialog(self, "Editar administración", ["Nombre *", "Email", "Teléfono", "Dirección"], initial={"Nombre *": r["nombre"], "Email": r["email"], "Teléfono": r["telefono"], "Dirección": r["direccion"]})
         if d.ShowModal() != wx.ID_OK:
             d.Destroy()
             return
         vals = d.get_values()
         d.Destroy()
-        err = repo.update_administracion(id_, vals.get("Email", ""), vals.get("Teléfono", ""), vals.get("Dirección", ""))
+        nombre = (vals.get("Nombre *") or "").strip()
+        if not nombre:
+            wx.MessageBox("El nombre es obligatorio.", "Error", wx.OK | wx.ICON_ERROR)
+            return
+        err = repo.update_administracion(id_, nombre, vals.get("Email", ""), vals.get("Teléfono", ""), vals.get("Dirección", ""))
         if err:
             wx.MessageBox(err, "Error", wx.OK | wx.ICON_ERROR)
         else:
@@ -320,8 +448,8 @@ class DBManagerFrame(wx.Frame):
         if not admins:
             wx.MessageBox("Crea antes al menos una administración.", "Añadir comunidad", wx.OK)
             return
-        labels = ["Nombre *", "Administración (ID)", "Dirección", "Email", "Teléfono"]
-        choices = {"Administración (ID)": [str(a["id"]) for a in admins]}
+        labels = ["Nombre *", "Administración", "Dirección", "Email", "Teléfono"]
+        choices = {"Administración": [self._admin_display(a) for a in admins]}
         d = SimpleDialog(self, "Añadir comunidad", labels, choices=choices)
         if d.ShowModal() != wx.ID_OK:
             d.Destroy()
@@ -332,10 +460,9 @@ class DBManagerFrame(wx.Frame):
         if not nombre:
             wx.MessageBox("El nombre es obligatorio.", "Error", wx.OK | wx.ICON_ERROR)
             return
-        try:
-            admin_id = int(vals.get("Administración (ID)", 0) or (admins[0]["id"] if admins else 0))
-        except ValueError:
-            admin_id = admins[0]["id"] if admins else 0
+        sel = vals.get("Administración", "")
+        admin = next((a for a in admins if self._admin_display(a) == sel), admins[0] if admins else None)
+        admin_id = admin["id"] if admin else (admins[0]["id"] if admins else 0)
         id_, err = repo.create_comunidad(nombre, admin_id, vals.get("Dirección", ""), vals.get("Email", ""), vals.get("Teléfono", ""))
         if err:
             wx.MessageBox(err, "Error", wx.OK | wx.ICON_ERROR)
@@ -353,9 +480,11 @@ class DBManagerFrame(wx.Frame):
         if not r:
             return
         admins = repo.get_administraciones()
-        labels = ["Nombre *", "Administración (ID)", "Dirección", "Email", "Teléfono"]
-        choices = {"Administración (ID)": [str(a["id"]) for a in admins]}
-        initial = {"Nombre *": r["nombre"], "Administración (ID)": str(r["administracion_id"]), "Dirección": r.get("direccion", ""), "Email": r.get("email", ""), "Teléfono": r.get("telefono", "")}
+        labels = ["Nombre *", "Administración", "Dirección", "Email", "Teléfono"]
+        choices = {"Administración": [self._admin_display(a) for a in admins]}
+        current_admin = next((a for a in admins if a["id"] == r["administracion_id"]), None)
+        initial_admin = self._admin_display(current_admin) if current_admin else (choices["Administración"][0] if choices["Administración"] else "")
+        initial = {"Nombre *": r["nombre"], "Administración": initial_admin, "Dirección": r.get("direccion", ""), "Email": r.get("email", ""), "Teléfono": r.get("telefono", "")}
         d = SimpleDialog(self, "Editar comunidad", labels, initial=initial, choices=choices)
         if d.ShowModal() != wx.ID_OK:
             d.Destroy()
@@ -366,10 +495,9 @@ class DBManagerFrame(wx.Frame):
         if not nombre:
             wx.MessageBox("El nombre es obligatorio.", "Error", wx.OK | wx.ICON_ERROR)
             return
-        try:
-            admin_id = int(vals.get("Administración (ID)", 0))
-        except ValueError:
-            admin_id = r["administracion_id"]
+        sel = vals.get("Administración", "")
+        admin = next((a for a in admins if self._admin_display(a) == sel), current_admin)
+        admin_id = admin["id"] if admin else r["administracion_id"]
         err = repo.update_comunidad(id_, nombre, admin_id, vals.get("Dirección", ""), vals.get("Email", ""), vals.get("Teléfono", ""))
         if err:
             wx.MessageBox(err, "Error", wx.OK | wx.ICON_ERROR)
@@ -392,23 +520,30 @@ class DBManagerFrame(wx.Frame):
             self._refresh_comunidades()
 
     def _add_contacto(self):
-        d = SimpleDialog(self, "Añadir contacto", ["Nombre *", "Teléfono *", "Teléfono 2", "Email", "Notas"])
+        d = ContactoDialog(self, "Añadir contacto", initial={})
         if d.ShowModal() != wx.ID_OK:
             d.Destroy()
             return
         vals = d.get_values()
         d.Destroy()
-        nombre = (vals.get("Nombre *") or "").strip()
-        telefono = (vals.get("Teléfono *") or "").strip()
+        nombre = (vals.get("nombre") or "").strip()
+        telefono = (vals.get("telefono") or "").strip()
         if not nombre or not telefono:
             wx.MessageBox("Nombre y teléfono son obligatorios.", "Error", wx.OK | wx.ICON_ERROR)
             return
-        id_, err = repo.create_contacto(nombre, telefono, vals.get("Teléfono 2", ""), vals.get("Email", ""), vals.get("Notas", ""))
+        id_, err = repo.create_contacto(nombre, telefono, vals.get("telefono2", ""), vals.get("email", ""), vals.get("notas", ""))
+        if err:
+            wx.MessageBox(err, "Error", wx.OK | wx.ICON_ERROR)
+            return
+        err = repo.set_administracion_contacto(id_, vals.get("administracion_ids", []))
         if err:
             wx.MessageBox(err, "Error", wx.OK | wx.ICON_ERROR)
         else:
-            self._refresh_contactos()
-            wx.MessageBox("Contacto creado.", "OK", wx.OK)
+            err2 = repo.set_comunidad_contacto(id_, vals.get("comunidad_ids", []))
+            if err2:
+                wx.MessageBox(err2, "Error", wx.OK | wx.ICON_ERROR)
+        self._refresh_contactos()
+        wx.MessageBox("Contacto creado.", "OK", wx.OK)
 
     def _edit_contacto(self):
         idx = self.list_cont.GetFirstSelected()
@@ -420,23 +555,36 @@ class DBManagerFrame(wx.Frame):
         r = next((c for c in contactos if c["id"] == id_), None)
         if not r:
             return
-        d = SimpleDialog(self, "Editar contacto", ["Nombre *", "Teléfono *", "Teléfono 2", "Email", "Notas"], initial={"Nombre *": r["nombre"], "Teléfono *": r["telefono"], "Teléfono 2": r.get("telefono2", ""), "Email": r.get("email", ""), "Notas": r.get("notas", "")})
+        initial = {
+            "nombre": r["nombre"], "telefono": r["telefono"], "telefono2": r.get("telefono2", ""),
+            "email": r.get("email", ""), "notas": r.get("notas", ""),
+            "administracion_ids": repo.get_administracion_ids_para_contacto(id_),
+            "comunidad_ids": repo.get_comunidad_ids_para_contacto(id_),
+        }
+        d = ContactoDialog(self, "Editar contacto", initial=initial)
         if d.ShowModal() != wx.ID_OK:
             d.Destroy()
             return
         vals = d.get_values()
         d.Destroy()
-        nombre = (vals.get("Nombre *") or "").strip()
-        telefono = (vals.get("Teléfono *") or "").strip()
+        nombre = (vals.get("nombre") or "").strip()
+        telefono = (vals.get("telefono") or "").strip()
         if not nombre or not telefono:
             wx.MessageBox("Nombre y teléfono son obligatorios.", "Error", wx.OK | wx.ICON_ERROR)
             return
-        err = repo.update_contacto(id_, nombre, telefono, vals.get("Teléfono 2", ""), vals.get("Email", ""), vals.get("Notas", ""))
+        err = repo.update_contacto(id_, nombre, telefono, vals.get("telefono2", ""), vals.get("email", ""), vals.get("notas", ""))
+        if err:
+            wx.MessageBox(err, "Error", wx.OK | wx.ICON_ERROR)
+            return
+        err = repo.set_administracion_contacto(id_, vals.get("administracion_ids", []))
         if err:
             wx.MessageBox(err, "Error", wx.OK | wx.ICON_ERROR)
         else:
-            self._refresh_contactos()
-            wx.MessageBox("Guardado.", "OK", wx.OK)
+            err2 = repo.set_comunidad_contacto(id_, vals.get("comunidad_ids", []))
+            if err2:
+                wx.MessageBox(err2, "Error", wx.OK | wx.ICON_ERROR)
+        self._refresh_contactos()
+        wx.MessageBox("Guardado.", "OK", wx.OK)
 
     def _delete_contacto(self):
         idx = self.list_cont.GetFirstSelected()
@@ -473,7 +621,12 @@ class VerRelacionDialog(wx.Dialog):
         self._list = wx.ListCtrl(panel, style=wx.LC_REPORT | wx.LC_SINGLE_SEL | wx.BORDER_SIMPLE)
         theme.style_listctrl(self._list)
         
-        widths = [70, 200, 160, 200] if len(column_headers) == 4 else [160, 400]
+        if len(column_headers) == 5:
+            widths = [60, 160, 110, 110, 160]
+        elif len(column_headers) == 4:
+            widths = [70, 200, 160, 200]
+        else:
+            widths = [160, 400]
         for i, h in enumerate(column_headers):
             w = widths[i] if i < len(widths) else 160
             self._list.AppendColumn(h, width=w)
@@ -499,7 +652,7 @@ class VerRelacionDialog(wx.Dialog):
         self.SetSizer(main_sizer)
         
         self.SetMinSize((560, 420))
-        self.SetSize((640, 500))
+        self.SetSize((680, 520))
         self.CenterOnParent()
         self._list.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self._on_activated)
 
@@ -511,6 +664,202 @@ class VerRelacionDialog(wx.Dialog):
         if self._on_activate and tipo is not None and id_ is not None:
             self._on_activate(tipo, id_)
             self.EndModal(wx.ID_OK)
+
+
+class ContactoDialog(wx.Dialog):
+    """Diálogo para añadir/editar contacto con asignación a administraciones y comunidades."""
+    def __init__(self, parent, title, initial=None):
+        super().__init__(parent, title=title, style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
+        theme.style_dialog(self)
+        self.SetMinSize((500, 480))
+        initial = initial or {}
+        self._admins = repo.get_administraciones()
+        self._comunidades = repo.get_comunidades()
+        self._admin_display = lambda a: a.get("nombre") or a.get("email") or f"ID {a['id']}"
+
+        panel = wx.ScrolledWindow(self, style=wx.VSCROLL)
+        panel.SetScrollRate(0, 10)
+        panel.SetBackgroundColour(theme.BG_PRIMARY)
+        main = wx.BoxSizer(wx.VERTICAL)
+        
+        # Título
+        title_label = theme.create_title(panel, title, "xl")
+        main.Add(title_label, 0, wx.LEFT | wx.TOP, theme.SPACE_XL)
+        main.AddSpacer(theme.SPACE_LG)
+        
+        # Formulario
+        grid = wx.FlexGridSizer(cols=2, vgap=theme.SPACE_MD, hgap=theme.SPACE_LG)
+        grid.AddGrowableCol(1, 1)
+        fields = ["Nombre *", "Teléfono *", "Teléfono 2", "Email", "Notas"]
+        self._ctrls = {}
+        for lbl in fields:
+            label = theme.create_text(panel, lbl)
+            grid.Add(label, 0, wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_RIGHT)
+            default = ""
+            if lbl == "Nombre *": default = initial.get("nombre", "")
+            elif lbl == "Teléfono *": default = initial.get("telefono", "")
+            elif lbl == "Teléfono 2": default = initial.get("telefono2", "")
+            elif lbl == "Email": default = initial.get("email", "")
+            elif lbl == "Notas": default = initial.get("notas", "")
+            c = wx.TextCtrl(panel, value=default, size=(-1, 36))
+            theme.style_textctrl(c)
+            self._ctrls[lbl] = c
+            grid.Add(c, 1, wx.EXPAND)
+        main.Add(grid, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, theme.SPACE_XL)
+
+        main.AddSpacer(theme.SPACE_LG)
+        
+        # Filtro + desplegable de administración
+        admin_label = theme.create_text(panel, "Administración (opcional):")
+        main.Add(admin_label, 0, wx.LEFT | wx.RIGHT, theme.SPACE_XL)
+        self._admin_filter = wx.TextCtrl(panel, style=wx.TE_PROCESS_ENTER, size=(-1, 32))
+        theme.style_textctrl(self._admin_filter)
+        try:
+            self._admin_filter.SetHint("Buscar administración por nombre o email")
+        except AttributeError:
+            pass
+        self._admin_filter.Bind(wx.EVT_TEXT, self._on_admin_filter_change)
+        main.Add(self._admin_filter, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, theme.SPACE_XL)
+        self._combo_admin = wx.ComboBox(panel, style=wx.CB_DROPDOWN | wx.CB_READONLY)
+        self._combo_admin.SetFont(theme.font_base())
+        main.Add(self._combo_admin, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, theme.SPACE_XL)
+
+        main.AddSpacer(theme.SPACE_MD)
+        
+        # Filtro + desplegable de comunidad
+        com_label = theme.create_text(panel, "Comunidad (opcional):")
+        main.Add(com_label, 0, wx.LEFT | wx.RIGHT, theme.SPACE_XL)
+        self._com_filter = wx.TextCtrl(panel, style=wx.TE_PROCESS_ENTER, size=(-1, 32))
+        theme.style_textctrl(self._com_filter)
+        try:
+            self._com_filter.SetHint("Buscar comunidad por nombre")
+        except AttributeError:
+            pass
+        self._com_filter.Bind(wx.EVT_TEXT, self._on_com_filter_change)
+        main.Add(self._com_filter, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, theme.SPACE_XL)
+        self._combo_com = wx.ComboBox(panel, style=wx.CB_DROPDOWN | wx.CB_READONLY)
+        self._combo_com.SetFont(theme.font_base())
+        main.Add(self._combo_com, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, theme.SPACE_XL)
+
+        # Mapas de índices visibles
+        self._admin_combo_map = []
+        self._com_combo_map = []
+        admin_ids_ini = initial.get("administracion_ids", [])
+        com_ids_ini = initial.get("comunidad_ids", [])
+        pre_admin = admin_ids_ini[0] if len(admin_ids_ini) == 1 else None
+        pre_com = com_ids_ini[0] if len(com_ids_ini) == 1 else None
+        self._refresh_admin_combo(pre_admin)
+        self._refresh_com_combo(pre_com)
+
+        main.AddStretchSpacer()
+        
+        # Separador
+        main.Add(theme.create_divider(panel), 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, theme.SPACE_XL)
+        
+        # Botones
+        btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        btn_cancel = wx.Button(panel, wx.ID_CANCEL, "Cancelar", size=(120, 42))
+        btn_cancel.SetFont(theme.font_base())
+        btn_cancel.SetBackgroundColour(theme.BG_SECONDARY)
+        btn_cancel.SetForegroundColour(theme.TEXT_PRIMARY)
+        
+        btn_ok = wx.Button(panel, wx.ID_OK, "Guardar", size=(120, 42))
+        btn_ok.SetFont(theme.get_font_medium())
+        btn_ok.SetBackgroundColour(theme.ACCENT_PRIMARY)
+        btn_ok.SetForegroundColour(theme.TEXT_INVERSE)
+        
+        btn_sizer.Add(btn_cancel, 0, wx.RIGHT, theme.SPACE_MD)
+        btn_sizer.Add(btn_ok, 0)
+        main.Add(btn_sizer, 0, wx.ALIGN_RIGHT | wx.ALL, theme.SPACE_XL)
+        
+        panel.SetSizer(main)
+
+        root = wx.BoxSizer(wx.VERTICAL)
+        root.Add(panel, 1, wx.EXPAND)
+        self.SetSizer(root)
+        
+        self.SetSize((560, 580))
+        self.CenterOnParent()
+
+    def get_values(self):
+        vals = {
+            "nombre": self._ctrls["Nombre *"].GetValue().strip(),
+            "telefono": self._ctrls["Teléfono *"].GetValue().strip(),
+            "telefono2": self._ctrls["Teléfono 2"].GetValue().strip(),
+            "email": self._ctrls["Email"].GetValue().strip(),
+            "notas": self._ctrls["Notas"].GetValue().strip(),
+        }
+        # Resolver administración seleccionada
+        a_sel = self._combo_admin.GetSelection()
+        if a_sel <= 0 or not self._admin_combo_map:
+            vals["administracion_ids"] = []
+        else:
+            idx = self._admin_combo_map[a_sel - 1]
+            vals["administracion_ids"] = [self._admins[idx]["id"]]
+        # Resolver comunidad seleccionada
+        c_sel = self._combo_com.GetSelection()
+        if c_sel <= 0 or not self._com_combo_map:
+            vals["comunidad_ids"] = []
+        else:
+            idx = self._com_combo_map[c_sel - 1]
+            vals["comunidad_ids"] = [self._comunidades[idx]["id"]]
+        return vals
+
+    def _refresh_admin_combo(self, preselect_id=None):
+        if preselect_id is None and self._admin_combo_map:
+            cur = self._combo_admin.GetSelection()
+            if cur > 0 and cur - 1 < len(self._admin_combo_map):
+                preselect_id = self._admins[self._admin_combo_map[cur - 1]]["id"]
+        self._combo_admin.Clear()
+        self._admin_combo_map = []
+        self._combo_admin.Append("(ninguna)")
+        q = (self._admin_filter.GetValue() if hasattr(self, "_admin_filter") else "").strip().lower()
+        for idx, a in enumerate(self._admins):
+            disp = self._admin_display(a).strip()
+            if q and q not in disp.lower():
+                continue
+            self._admin_combo_map.append(idx)
+            self._combo_admin.Append(disp)
+        if preselect_id is not None:
+            for i, idx in enumerate(self._admin_combo_map, start=1):
+                if self._admins[idx]["id"] == preselect_id:
+                    self._combo_admin.SetSelection(i)
+                    break
+            else:
+                self._combo_admin.SetSelection(0)
+        else:
+            self._combo_admin.SetSelection(0)
+
+    def _refresh_com_combo(self, preselect_id=None):
+        if preselect_id is None and self._com_combo_map:
+            cur = self._combo_com.GetSelection()
+            if cur > 0 and cur - 1 < len(self._com_combo_map):
+                preselect_id = self._comunidades[self._com_combo_map[cur - 1]]["id"]
+        self._combo_com.Clear()
+        self._com_combo_map = []
+        self._combo_com.Append("(ninguna)")
+        q = (self._com_filter.GetValue() if hasattr(self, "_com_filter") else "").strip().lower()
+        for idx, c in enumerate(self._comunidades):
+            nombre = (c.get("nombre") or f"ID {c['id']}").strip()
+            if q and q not in nombre.lower():
+                continue
+            self._com_combo_map.append(idx)
+            self._combo_com.Append(nombre)
+        if preselect_id is not None:
+            for i, idx in enumerate(self._com_combo_map, start=1):
+                if self._comunidades[idx]["id"] == preselect_id:
+                    self._combo_com.SetSelection(i)
+                    break
+            else:
+                self._combo_com.SetSelection(0)
+        else:
+            self._combo_com.SetSelection(0)
+
+    def _on_admin_filter_change(self, event):
+        self._refresh_admin_combo()
+
+    def _on_com_filter_change(self, event):
+        self._refresh_com_combo()
 
 
 class SimpleDialog(wx.Dialog):
@@ -537,11 +886,9 @@ class SimpleDialog(wx.Dialog):
         form_sizer.AddGrowableCol(1, 1)
         
         for lbl in field_labels:
-            # Label
             label = theme.create_text(panel, lbl)
             form_sizer.Add(label, 0, wx.ALIGN_CENTER_VERTICAL | wx.ALIGN_RIGHT)
             
-            # Control
             if lbl in self._choices:
                 c = wx.ComboBox(panel, value=self._initial.get(lbl, ""), 
                                choices=self._choices[lbl], style=wx.CB_READONLY)

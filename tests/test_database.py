@@ -122,15 +122,16 @@ class TestConnect:
     def test_no_borra_datos_existentes_al_reconectar(self, db_env):
         conn1 = database.connect()
         conn1.execute(
-            "INSERT INTO administracion (email, telefono) VALUES (?, ?)",
-            ("admin@test.com", "600000000"),
+            "INSERT INTO administracion (nombre, email, telefono) VALUES (?, ?, ?)",
+            ("Admin Test", "admin@test.com", "600000000"),
         )
         conn1.commit()
         conn1.close()
         conn2 = database.connect()
         try:
-            cur = conn2.execute("SELECT email FROM administracion")
-            assert cur.fetchone()[0] == "admin@test.com"
+            cur = conn2.execute("SELECT nombre, email FROM administracion")
+            row = cur.fetchone()
+            assert row[0] == "Admin Test" and row[1] == "admin@test.com"
         finally:
             conn2.close()
 
@@ -199,7 +200,7 @@ class TestNotNullComunidad:
 
     def test_insert_sin_nombre_falla(self, conn):
         conn.execute(
-            "INSERT INTO administracion (id) VALUES (1)"
+            "INSERT INTO administracion (id, nombre) VALUES (1, 'A')"
         )
         conn.commit()
         with pytest.raises(sqlite3.IntegrityError):
@@ -251,7 +252,7 @@ class TestUniqueComunidad:
     """Comunidad: nombre UNIQUE."""
 
     def test_dos_comunidades_mismo_nombre_falla(self, conn):
-        conn.execute("INSERT INTO administracion (id) VALUES (1)")
+        conn.execute("INSERT INTO administracion (id, nombre) VALUES (1, 'A')")
         conn.commit()
         conn.execute(
             "INSERT INTO comunidad (nombre, administracion_id) VALUES (?, ?)",
@@ -271,14 +272,14 @@ class TestUniqueAdministracion:
 
     def test_dos_administraciones_mismo_email_falla(self, conn):
         conn.execute(
-            "INSERT INTO administracion (email) VALUES (?)",
-            ("admin@test.com",),
+            "INSERT INTO administracion (nombre, email) VALUES (?, ?)",
+            ("A", "admin@test.com"),
         )
         conn.commit()
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute(
-                "INSERT INTO administracion (email) VALUES (?)",
-                ("admin@test.com",),
+                "INSERT INTO administracion (nombre, email) VALUES (?, ?)",
+                ("B", "admin@test.com"),
             )
             conn.commit()
 
@@ -304,7 +305,7 @@ class TestForeignKeyEnlace:
             conn.commit()
 
     def test_administracion_contacto_contacto_invalido_falla(self, conn):
-        conn.execute("INSERT INTO administracion (id) VALUES (1)")
+        conn.execute("INSERT INTO administracion (id, nombre) VALUES (1, 'A')")
         conn.commit()
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute(
@@ -327,7 +328,7 @@ class TestForeignKeyEnlace:
             conn.commit()
 
     def test_enlaces_validos_ok(self, conn):
-        conn.execute("INSERT INTO administracion (id) VALUES (1)")
+        conn.execute("INSERT INTO administracion (id, nombre) VALUES (1, 'A')")
         conn.execute(
             "INSERT INTO contacto (nombre, telefono) VALUES (?, ?)",
             ("Juan", "600555555"),
@@ -358,7 +359,7 @@ class TestOnDeleteRestrict:
     """No se puede borrar una administración si alguna comunidad la referencia."""
 
     def test_borrar_administracion_con_comunidad_falla(self, conn):
-        conn.execute("INSERT INTO administracion (id) VALUES (1)")
+        conn.execute("INSERT INTO administracion (id, nombre) VALUES (1, 'A')")
         conn.execute(
             "INSERT INTO comunidad (nombre, administracion_id) VALUES (?, ?)",
             ("Edificio Este", 1),
@@ -369,7 +370,7 @@ class TestOnDeleteRestrict:
             conn.commit()
 
     def test_borrar_administracion_sin_comunidad_ok(self, conn):
-        conn.execute("INSERT INTO administracion (id) VALUES (1)")
+        conn.execute("INSERT INTO administracion (id, nombre) VALUES (1, 'A')")
         conn.commit()
         conn.execute("DELETE FROM administracion WHERE id = 1")
         conn.commit()
@@ -381,7 +382,7 @@ class TestOnDeleteCascade:
     """Al borrar contacto o comunidad se borran los enlaces en las tablas N:M."""
 
     def test_borrar_contacto_borra_enlaces(self, conn):
-        conn.execute("INSERT INTO administracion (id) VALUES (1)")
+        conn.execute("INSERT INTO administracion (id, nombre) VALUES (1, 'A')")
         conn.execute(
             "INSERT INTO contacto (nombre, telefono) VALUES (?, ?)",
             ("Juan", "600666666"),
@@ -396,7 +397,7 @@ class TestOnDeleteCascade:
         assert cur.fetchone()[0] == 0
 
     def test_borrar_comunidad_borra_enlaces_comunidad_contacto(self, conn):
-        conn.execute("INSERT INTO administracion (id) VALUES (1)")
+        conn.execute("INSERT INTO administracion (id, nombre) VALUES (1, 'A')")
         conn.execute(
             "INSERT INTO comunidad (nombre, administracion_id) VALUES (?, ?)",
             ("Edificio Oeste", 1),
