@@ -53,7 +53,7 @@ def get_system_font():
     if sys.platform == "win32":
         return "Segoe UI"
     elif sys.platform == "darwin":
-        return "-apple-system"
+        return "Helvetica Neue"  # -apple-system no funciona con wxPython
     return "Ubuntu"
 
 FONT_FAMILY = get_system_font()
