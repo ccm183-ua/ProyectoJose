@@ -64,8 +64,20 @@ class DBManagerFrame(wx.Frame):
         header.SetBackgroundColour(theme.BG_PRIMARY)
         header_sizer = wx.BoxSizer(wx.VERTICAL)
         
+        # Fila superior: título + botón actualizar
+        top_row = wx.BoxSizer(wx.HORIZONTAL)
         title = theme.create_title(header, "Base de Datos", "2xl")
-        header_sizer.Add(title, 0, wx.LEFT | wx.TOP, theme.SPACE_XL)
+        top_row.Add(title, 1, wx.ALIGN_CENTER_VERTICAL)
+        
+        btn_refresh = wx.Button(header, label="\u27F3 Actualizar", size=(-1, 36))
+        btn_refresh.SetFont(theme.font_base())
+        btn_refresh.SetBackgroundColour(theme.BG_CARD)
+        btn_refresh.SetForegroundColour(theme.TEXT_PRIMARY)
+        btn_refresh.SetToolTip("Recargar todas las tablas desde la base de datos")
+        btn_refresh.Bind(wx.EVT_BUTTON, lambda e: self._refresh_all())
+        top_row.Add(btn_refresh, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, theme.SPACE_XL)
+        
+        header_sizer.Add(top_row, 0, wx.EXPAND | wx.LEFT | wx.TOP, theme.SPACE_XL)
         
         subtitle = theme.create_text(header, "Gestiona administraciones, comunidades y contactos")
         header_sizer.Add(subtitle, 0, wx.LEFT | wx.TOP, theme.SPACE_XL)
@@ -115,7 +127,7 @@ class DBManagerFrame(wx.Frame):
         sza.Add(toolbar_a, 0, wx.EXPAND)
         
         self.panel_admin.SetSizer(sza)
-        self.list_admin.Bind(wx.EVT_LIST_ITEM_ACTIVATED, lambda e: self._edit_admin())
+        self.list_admin.Bind(wx.EVT_LIST_ITEM_ACTIVATED, lambda e: self._ver_relacion_admin())
         self.notebook.AddPage(self.panel_admin, "  Administraciones  ")
 
         # === PESTAÑA COMUNIDADES ===
@@ -153,7 +165,7 @@ class DBManagerFrame(wx.Frame):
         szc.Add(toolbar_c, 0, wx.EXPAND)
         
         self.panel_com.SetSizer(szc)
-        self.list_com.Bind(wx.EVT_LIST_ITEM_ACTIVATED, lambda e: self._edit_comunidad())
+        self.list_com.Bind(wx.EVT_LIST_ITEM_ACTIVATED, lambda e: self._ver_relacion_comunidad())
         self.notebook.AddPage(self.panel_com, "  Comunidades  ")
 
         # === PESTAÑA CONTACTOS ===
@@ -191,7 +203,7 @@ class DBManagerFrame(wx.Frame):
         szct.Add(toolbar_ct, 0, wx.EXPAND)
         
         self.panel_cont.SetSizer(szct)
-        self.list_cont.Bind(wx.EVT_LIST_ITEM_ACTIVATED, lambda e: self._edit_contacto())
+        self.list_cont.Bind(wx.EVT_LIST_ITEM_ACTIVATED, lambda e: self._ver_relacion_contacto())
         self.notebook.AddPage(self.panel_cont, "  Contactos  ")
 
         main_sizer.Add(self.notebook, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, theme.SPACE_LG)
@@ -400,7 +412,7 @@ class DBManagerFrame(wx.Frame):
         if err:
             wx.MessageBox(err, "Error", wx.OK | wx.ICON_ERROR)
         else:
-            self._refresh_admin()
+            self._refresh_all()
             wx.MessageBox("Administración creada.", "OK", wx.OK)
 
     def _edit_admin(self):
@@ -426,7 +438,7 @@ class DBManagerFrame(wx.Frame):
         if err:
             wx.MessageBox(err, "Error", wx.OK | wx.ICON_ERROR)
         else:
-            self._refresh_admin()
+            self._refresh_all()
             wx.MessageBox("Guardado.", "OK", wx.OK)
 
     def _delete_admin(self):
@@ -441,7 +453,7 @@ class DBManagerFrame(wx.Frame):
         if err:
             wx.MessageBox(err, "Error", wx.OK | wx.ICON_ERROR)
         else:
-            self._refresh_admin()
+            self._refresh_all()
 
     def _add_comunidad(self):
         admins = repo.get_administraciones()
@@ -467,7 +479,7 @@ class DBManagerFrame(wx.Frame):
         if err:
             wx.MessageBox(err, "Error", wx.OK | wx.ICON_ERROR)
         else:
-            self._refresh_comunidades()
+            self._refresh_all()
             wx.MessageBox("Comunidad creada.", "OK", wx.OK)
 
     def _edit_comunidad(self):
@@ -502,7 +514,7 @@ class DBManagerFrame(wx.Frame):
         if err:
             wx.MessageBox(err, "Error", wx.OK | wx.ICON_ERROR)
         else:
-            self._refresh_comunidades()
+            self._refresh_all()
             wx.MessageBox("Guardado.", "OK", wx.OK)
 
     def _delete_comunidad(self):
@@ -517,7 +529,7 @@ class DBManagerFrame(wx.Frame):
         if err:
             wx.MessageBox(err, "Error", wx.OK | wx.ICON_ERROR)
         else:
-            self._refresh_comunidades()
+            self._refresh_all()
 
     def _add_contacto(self):
         d = ContactoDialog(self, "Añadir contacto", initial={})
@@ -542,7 +554,7 @@ class DBManagerFrame(wx.Frame):
             err2 = repo.set_comunidad_contacto(id_, vals.get("comunidad_ids", []))
             if err2:
                 wx.MessageBox(err2, "Error", wx.OK | wx.ICON_ERROR)
-        self._refresh_contactos()
+        self._refresh_all()
         wx.MessageBox("Contacto creado.", "OK", wx.OK)
 
     def _edit_contacto(self):
@@ -583,7 +595,7 @@ class DBManagerFrame(wx.Frame):
             err2 = repo.set_comunidad_contacto(id_, vals.get("comunidad_ids", []))
             if err2:
                 wx.MessageBox(err2, "Error", wx.OK | wx.ICON_ERROR)
-        self._refresh_contactos()
+        self._refresh_all()
         wx.MessageBox("Guardado.", "OK", wx.OK)
 
     def _delete_contacto(self):
@@ -598,7 +610,7 @@ class DBManagerFrame(wx.Frame):
         if err:
             wx.MessageBox(err, "Error", wx.OK | wx.ICON_ERROR)
         else:
-            self._refresh_contactos()
+            self._refresh_all()
 
 
 class VerRelacionDialog(wx.Dialog):
@@ -671,14 +683,12 @@ class ContactoDialog(wx.Dialog):
     def __init__(self, parent, title, initial=None):
         super().__init__(parent, title=title, style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         theme.style_dialog(self)
-        self.SetMinSize((500, 480))
         initial = initial or {}
         self._admins = repo.get_administraciones()
         self._comunidades = repo.get_comunidades()
         self._admin_display = lambda a: a.get("nombre") or a.get("email") or f"ID {a['id']}"
 
-        panel = wx.ScrolledWindow(self, style=wx.VSCROLL)
-        panel.SetScrollRate(0, 10)
+        panel = wx.Panel(self)
         panel.SetBackgroundColour(theme.BG_PRIMARY)
         main = wx.BoxSizer(wx.VERTICAL)
         
@@ -751,8 +761,6 @@ class ContactoDialog(wx.Dialog):
         self._refresh_admin_combo(pre_admin)
         self._refresh_com_combo(pre_com)
 
-        main.AddStretchSpacer()
-        
         # Separador
         main.Add(theme.create_divider(panel), 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, theme.SPACE_XL)
         
@@ -778,7 +786,16 @@ class ContactoDialog(wx.Dialog):
         root.Add(panel, 1, wx.EXPAND)
         self.SetSizer(root)
         
-        self.SetSize((560, 580))
+        # Auto-dimensionar al contenido, limitado a la pantalla
+        self.Fit()
+        w, h = self.GetSize()
+        w = max(w, 560)
+        display = wx.Display(wx.Display.GetFromWindow(self) if wx.Display.GetFromWindow(self) >= 0 else 0)
+        screen_w, screen_h = display.GetClientArea().GetSize()
+        w = min(w, screen_w - 40)
+        h = min(h, screen_h - 40)
+        self.SetSize((w, h))
+        self.SetMinSize((500, 400))
         self.CenterOnParent()
 
     def get_values(self):
@@ -900,7 +917,6 @@ class SimpleDialog(wx.Dialog):
             form_sizer.Add(c, 1, wx.EXPAND)
         
         main_sizer.Add(form_sizer, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, theme.SPACE_XL)
-        main_sizer.AddStretchSpacer()
         
         # Separador
         main_sizer.Add(theme.create_divider(panel), 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, theme.SPACE_XL)
@@ -927,8 +943,16 @@ class SimpleDialog(wx.Dialog):
         dialog_sizer.Add(panel, 1, wx.EXPAND)
         self.SetSizer(dialog_sizer)
         
+        # Auto-dimensionar al contenido, limitado a la pantalla
+        self.Fit()
+        w, h = self.GetSize()
+        w = max(w, 520)
+        display = wx.Display(wx.Display.GetFromWindow(self) if wx.Display.GetFromWindow(self) >= 0 else 0)
+        screen_w, screen_h = display.GetClientArea().GetSize()
+        w = min(w, screen_w - 40)
+        h = min(h, screen_h - 40)
+        self.SetSize((w, h))
         self.SetMinSize((480, 300))
-        self.SetSize((520, max(350, 120 + len(field_labels) * 55)))
         self.CenterOnParent()
 
     def get_values(self):

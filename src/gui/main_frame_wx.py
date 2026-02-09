@@ -122,12 +122,26 @@ class MainFrame(wx.Frame):
     def _open_db_manager(self):
         try:
             from src.gui.db_manager_wx import DBManagerFrame
-            if self._db_frame is None or not self._db_frame.IsShown():
-                self._db_frame = DBManagerFrame(self)
+            # Comprobar si el frame anterior fue destruido (C++ deleted)
+            try:
+                if self._db_frame is not None and self._db_frame.IsShown():
+                    self._db_frame.Raise()
+                    return
+            except RuntimeError:
+                # El objeto C++ ya fue destruido; crear uno nuevo
+                self._db_frame = None
+
+            self._db_frame = DBManagerFrame(self)
+            self._db_frame.Bind(wx.EVT_CLOSE, self._on_db_frame_closed)
             self._db_frame.Show()
             self._db_frame.Raise()
         except Exception as ex:
             wx.MessageBox(f"Error al abrir la base de datos: {ex}", "Error", wx.OK | wx.ICON_ERROR)
+
+    def _on_db_frame_closed(self, event):
+        """Limpiar la referencia cuando se cierra la ventana de BD."""
+        self._db_frame = None
+        event.Skip()
 
     def _open_db_folder(self):
         try:
