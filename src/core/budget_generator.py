@@ -128,9 +128,15 @@ class BudgetGenerator:
         """
         partidas = []
         for base in partidas_base:
+            concepto_raw = base.get('concepto', '')
+            titulo = concepto_raw.upper()
+            if not titulo.endswith('.'):
+                titulo += '.'
             partidas.append({
-                'concepto': base.get('concepto', ''),
-                'cantidad': 1,  # Cantidad por defecto
+                'titulo': titulo,
+                'descripcion': '',
+                'concepto': titulo,
+                'cantidad': base.get('cantidad_ref', 1),
                 'unidad': base.get('unidad', 'ud'),
                 'precio_unitario': base.get('precio_ref', 0.0),
             })

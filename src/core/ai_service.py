@@ -198,10 +198,38 @@ class AIService:
         for raw in partidas_raw:
             if not isinstance(raw, dict):
                 continue
-            if 'concepto' not in raw:
-                continue  # concepto es obligatorio
+
+            # Formato nuevo: titulo + descripcion (separados)
+            titulo = str(raw.get('titulo', '')).strip()
+            descripcion = str(raw.get('descripcion', '')).strip()
+
+            # Formato antiguo: solo concepto (backward compat)
+            concepto = str(raw.get('concepto', '')).strip()
+
+            # Si tiene titulo, usarlo como formato principal
+            if titulo:
+                # Asegurar mayúsculas en el título
+                titulo = titulo.upper()
+                if not titulo.endswith('.'):
+                    titulo += '.'
+            elif concepto:
+                # Fallback: si solo hay concepto, intentar extraer titulo
+                titulo = concepto.upper()
+                if not titulo.endswith('.'):
+                    titulo += '.'
+            else:
+                continue  # Sin titulo ni concepto, saltar
+
+            # Construir concepto combinado para visualización simple
+            if descripcion:
+                concepto_combinado = f"{titulo}\n{descripcion}"
+            else:
+                concepto_combinado = titulo
+
             partida = {
-                'concepto': str(raw.get('concepto', '')),
+                'titulo': titulo,
+                'descripcion': descripcion,
+                'concepto': concepto_combinado,
                 'cantidad': self._safe_number(raw.get('cantidad'), default=1),
                 'unidad': str(raw.get('unidad', 'ud')),
                 'precio_unitario': self._safe_number(raw.get('precio_unitario'), default=0.0),

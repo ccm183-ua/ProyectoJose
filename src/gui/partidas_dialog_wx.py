@@ -182,8 +182,18 @@ class SuggestedPartidasDialog(wx.Dialog):
             precio = partida.get('precio_unitario', 0)
             importe = cantidad * precio
 
+            # Mostrar titulo + descripcion si existen, o concepto como fallback
+            titulo = partida.get('titulo', '')
+            descripcion = partida.get('descripcion', '')
+            if titulo and descripcion:
+                display_text = f"{titulo} - {descripcion}"
+            elif titulo:
+                display_text = titulo
+            else:
+                display_text = str(partida.get('concepto', ''))
+
             idx = self._list.InsertItem(i, "✓")
-            self._list.SetItem(idx, 1, str(partida.get('concepto', '')))
+            self._list.SetItem(idx, 1, display_text)
             self._list.SetItem(idx, 2, str(cantidad))
             self._list.SetItem(idx, 3, str(partida.get('unidad', 'ud')))
             self._list.SetItem(idx, 4, f"{precio:.2f} €")

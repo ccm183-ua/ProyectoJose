@@ -194,6 +194,41 @@ class ExcelManager:
             print(f"Error al insertar partidas: {e}")
             return False
 
+    @staticmethod
+    def _estimate_row_height(titulo, descripcion, chars_per_line=55, line_height=14.5):
+        """
+        Estima la altura de fila necesaria para el texto de una partida.
+
+        Calcula el número de líneas que ocupará el texto en la celda combinada
+        C:F (ancho aprox. ~55 caracteres en Calibri 10pt) y devuelve la altura
+        en puntos Excel.
+
+        Args:
+            titulo: Texto del título (1 línea).
+            descripcion: Texto de la descripción (puede ocupar varias líneas).
+            chars_per_line: Caracteres aproximados que caben por línea.
+            line_height: Altura en puntos por línea de texto.
+
+        Returns:
+            Altura de fila como string (en puntos).
+        """
+        # Línea 1: título (siempre 1 línea)
+        lines = 1
+
+        # Líneas de descripción
+        if descripcion:
+            desc_len = len(descripcion)
+            desc_lines = max(1, -(-desc_len // chars_per_line))  # Redondeo hacia arriba
+            lines += desc_lines
+
+        # Altura = líneas * alto_por_línea + padding superior e inferior
+        height = lines * line_height + 8
+
+        # Mínimo 30, máximo razonable 200
+        height = max(30, min(200, height))
+
+        return str(round(height, 1))
+
     def _replace_partidas_in_xml(self, sheet_xml, partidas):
         """
         Reemplaza las filas de partidas de ejemplo (17-26) con las partidas reales.
@@ -233,7 +268,6 @@ class ExcelManager:
 
         for idx, partida in enumerate(partidas):
             num = f"1.{idx + 1}"
-            concepto = xml_escape(str(partida.get('concepto', '')))
             unidad = xml_escape(str(partida.get('unidad', 'ud')))
             cantidad = partida.get('cantidad', 1)
             precio = partida.get('precio_unitario', 0)
@@ -248,12 +282,45 @@ class ExcelManager:
             except (ValueError, TypeError):
                 precio = 0.0
 
-            # Fila de datos (usa inlineStr para textos, valores numéricos para números)
+            # Construir celda C con rich text: título en negrita + descripción normal
+            titulo = xml_escape(str(partida.get('titulo', '')))
+            descripcion = xml_escape(str(partida.get('descripcion', '')))
+
+            if titulo and descripcion:
+                # Rich text con dos runs: negrita + normal
+                celda_c = (
+                    f'<c r="C{current_row}" s="47" t="inlineStr"><is>'
+                    f'<r><rPr><b/><sz val="10"/><rFont val="Calibri"/></rPr>'
+                    f'<t>{titulo}</t></r>'
+                    f'<r><rPr><sz val="10"/><rFont val="Calibri"/></rPr>'
+                    f'<t xml:space="preserve">&#10;{descripcion}</t></r>'
+                    f'</is></c>'
+                )
+                row_height = self._estimate_row_height(titulo, descripcion)
+            elif titulo:
+                # Solo título en negrita
+                celda_c = (
+                    f'<c r="C{current_row}" s="47" t="inlineStr"><is>'
+                    f'<r><rPr><b/><sz val="10"/><rFont val="Calibri"/></rPr>'
+                    f'<t>{titulo}</t></r>'
+                    f'</is></c>'
+                )
+                row_height = self._estimate_row_height(titulo, '')
+            else:
+                # Fallback: concepto simple
+                concepto = xml_escape(str(partida.get('concepto', '')))
+                celda_c = (
+                    f'<c r="C{current_row}" s="47" t="inlineStr">'
+                    f'<is><t>{concepto}</t></is></c>'
+                )
+                row_height = self._estimate_row_height(concepto, '')
+
+            # Fila de datos
             data_row = (
-                f'<row r="{current_row}" spans="1:9" ht="42" customHeight="1">'
+                f'<row r="{current_row}" spans="1:9" ht="{row_height}" customHeight="1">'
                 f'<c r="A{current_row}" s="33" t="inlineStr"><is><t>{num}</t></is></c>'
                 f'<c r="B{current_row}" s="33" t="inlineStr"><is><t>{unidad}</t></is></c>'
-                f'<c r="C{current_row}" s="47" t="inlineStr"><is><t>{concepto}</t></is></c>'
+                f'{celda_c}'
                 f'<c r="D{current_row}" s="47"/>'
                 f'<c r="E{current_row}" s="47"/>'
                 f'<c r="F{current_row}" s="48"/>'

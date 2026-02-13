@@ -56,7 +56,9 @@ class TestParseResponse:
         partidas = service.parse_response(valid_ai_response)
         assert isinstance(partidas, list)
         assert len(partidas) == 3
-        assert partidas[0]['concepto'] == "Desmontaje de bajante existente"
+        # Con el nuevo formato, concepto se convierte a MAYÚSCULAS con punto
+        assert partidas[0]['titulo'] == "DESMONTAJE DE BAJANTE EXISTENTE."
+        assert "DESMONTAJE" in partidas[0]['concepto']
         assert partidas[0]['cantidad'] == 12
         assert partidas[0]['unidad'] == "ml"
         assert partidas[0]['precio_unitario'] == 18.50
@@ -130,7 +132,7 @@ class TestGeneratePartidas:
             assert error is None
             assert isinstance(partidas, list)
             assert len(partidas) == 3
-            assert partidas[0]['concepto'] == "Desmontaje de bajante existente"
+            assert "DESMONTAJE" in partidas[0]['concepto']
 
     def test_generate_partidas_api_error(self, service):
         """Error de API devuelve lista vacía y mensaje de error."""

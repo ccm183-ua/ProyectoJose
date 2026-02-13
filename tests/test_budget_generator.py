@@ -117,9 +117,9 @@ class TestFallbackOffline:
         # Debe usar las partidas_base de la plantilla como fallback
         assert len(result['partidas']) > 0
         assert result['source'] == 'offline'
-        # Las partidas del fallback deben venir de la plantilla
+        # Las partidas del fallback deben venir de la plantilla (ahora en MAYÚSCULAS)
         conceptos = [p['concepto'] for p in result['partidas']]
-        assert "Desmontaje de bajante existente" in conceptos
+        assert any("DESMONTAJE" in c for c in conceptos)
 
     def test_fallback_offline_no_template(self, sample_datos_proyecto):
         """Sin conexión + sin plantilla: devuelve error descriptivo."""

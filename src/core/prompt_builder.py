@@ -16,12 +16,21 @@ SYSTEM_PROMPT = (
     "Tu trabajo es generar partidas presupuestarias detalladas con precios "
     "orientativos de mercado actuales para obras de construcción.\n\n"
     "Cada partida debe incluir:\n"
-    "- concepto: descripción clara y técnica de la partida\n"
+    "- titulo: nombre MUY BREVE de la acción (2-5 palabras máximo) EN MAYÚSCULAS "
+    "(ej: 'ALICATADO.', 'DESMONTAJE BAJANTE.', 'PINTURA INTERIOR.', 'FONTANERÍA.')\n"
+    "- descripcion: explicación detallada de la partida, materiales, "
+    "método y alcance del trabajo\n"
     "- cantidad: cantidad estimada (número)\n"
     "- unidad: unidad de medida (m2, ml, ud, kg, etc.)\n"
     "- precio_unitario: precio unitario en euros (número)\n\n"
     "Responde ÚNICAMENTE con un objeto JSON válido con la siguiente estructura:\n"
-    '{"partidas": [{"concepto": "...", "cantidad": 1, "unidad": "m2", "precio_unitario": 45.00}]}\n\n'
+    '{"partidas": [{"titulo": "ALICATADO.", '
+    '"descripcion": "Suministro y colocación de alicatado cerámico en '
+    'paredes de cocina, incluyendo material, mortero cola y rejuntado.", '
+    '"cantidad": 1, "unidad": "m2", "precio_unitario": 45.00}]}\n\n'
+    "IMPORTANTE: El campo 'titulo' debe ser MUY BREVE (2-5 palabras), SIEMPRE "
+    "en MAYÚSCULAS y terminar en punto. El campo 'descripcion' es un texto "
+    "normal explicativo con el detalle técnico completo.\n\n"
     "No incluyas texto adicional fuera del JSON. "
     "Los precios deben ser orientativos pero realistas para el mercado español actual."
 )
