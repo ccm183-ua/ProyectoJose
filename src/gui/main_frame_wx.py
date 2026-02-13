@@ -112,6 +112,14 @@ class MainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, lambda e: self._open_db_folder(), item_folder)
         menubar.Append(m_bd, "Base de &datos")
 
+        # Configuración
+        m_config = wx.Menu()
+        item_ai = m_config.Append(wx.ID_ANY, "Configuración IA (API Key)...")
+        self.Bind(wx.EVT_MENU, lambda e: self._open_ai_settings(), item_ai)
+        item_templates = m_config.Append(wx.ID_ANY, "Gestionar plantillas...")
+        self.Bind(wx.EVT_MENU, lambda e: self._open_template_manager(), item_templates)
+        menubar.Append(m_config, "&Configuración")
+
         m_ayuda = wx.Menu()
         m_ayuda.Append(wx.ID_ABOUT, "Acerca de...")
         self.Bind(wx.EVT_MENU, lambda e: wx.MessageBox("cubiApp\n\nAbre o crea presupuestos desde plantilla Excel.", "Acerca de", wx.OK), id=wx.ID_ABOUT)
@@ -234,7 +242,101 @@ class MainFrame(wx.Frame):
             "localidad": project_data.get("localidad", ""),
             "tipo": project_data.get("tipo", ""),
         }
-        if self.excel_manager.create_from_template(template_path, save_path, excel_data):
-            wx.MessageBox(f"Presupuesto creado:\n{save_path}", "Éxito", wx.OK)
-        else:
+        if not self.excel_manager.create_from_template(template_path, save_path, excel_data):
             wx.MessageBox("Error al crear el presupuesto.", "Error", wx.OK | wx.ICON_ERROR)
+            return
+
+        # --- NUEVO: Flujo de generación de partidas con IA ---
+        self._offer_ai_partidas(save_path, project_data)
+
+    def _offer_ai_partidas(self, excel_path, project_data):
+        """
+        Ofrece al usuario generar partidas con IA tras crear el presupuesto.
+
+        Args:
+            excel_path: Ruta del Excel recién creado.
+            project_data: Datos del proyecto (localidad, cliente, etc.).
+        """
+        from src.gui.ai_budget_dialog_wx import AIBudgetDialog
+        from src.gui.partidas_dialog_wx import SuggestedPartidasDialog
+
+        # Paso 1: Diálogo de configuración IA
+        ai_dlg = AIBudgetDialog(self, datos_proyecto=project_data)
+        if ai_dlg.ShowModal() != wx.ID_OK:
+            ai_dlg.Destroy()
+            wx.MessageBox(
+                f"Presupuesto creado (sin partidas IA):\n{excel_path}",
+                "Éxito", wx.OK,
+            )
+            return
+
+        result = ai_dlg.get_result()
+        ai_dlg.Destroy()
+
+        if not result or not result.get('partidas'):
+            wx.MessageBox(
+                f"Presupuesto creado (sin partidas IA):\n{excel_path}",
+                "Éxito", wx.OK,
+            )
+            return
+
+        # Paso 2: Diálogo de revisión de partidas
+        partidas_dlg = SuggestedPartidasDialog(self, result)
+        if partidas_dlg.ShowModal() != wx.ID_OK:
+            partidas_dlg.Destroy()
+            wx.MessageBox(
+                f"Presupuesto creado (sin partidas IA):\n{excel_path}",
+                "Éxito", wx.OK,
+            )
+            return
+
+        selected = partidas_dlg.get_selected_partidas()
+        partidas_dlg.Destroy()
+
+        # Paso 3: Insertar partidas seleccionadas en el Excel via XML
+        if selected:
+            if self.excel_manager.insert_partidas_via_xml(excel_path, selected):
+                wx.MessageBox(
+                    f"Presupuesto creado con {len(selected)} partidas:\n{excel_path}",
+                    "Éxito", wx.OK,
+                )
+            else:
+                wx.MessageBox(
+                    f"Presupuesto creado pero hubo un error al insertar las partidas.\n{excel_path}",
+                    "Aviso", wx.OK | wx.ICON_WARNING,
+                )
+        else:
+            wx.MessageBox(
+                f"Presupuesto creado (sin partidas):\n{excel_path}",
+                "Éxito", wx.OK,
+            )
+
+    def _open_template_manager(self):
+        """Abre el diálogo de gestión de plantillas de presupuesto."""
+        from src.gui.template_manager_dialog import TemplateManagerDialog
+        dlg = TemplateManagerDialog(self)
+        dlg.ShowModal()
+        dlg.Destroy()
+
+    def _open_ai_settings(self):
+        """Abre el diálogo de configuración de API key para la IA."""
+        from src.core.settings import Settings
+        settings = Settings()
+        current_key = settings.get_api_key() or ""
+
+        dlg = wx.TextEntryDialog(
+            self,
+            "Introduce tu API key de Google Gemini.\n"
+            "Puedes obtenerla gratis en: https://aistudio.google.com/apikey\n\n"
+            "La clave se guardará de forma local y segura.",
+            "Configuración IA - API Key",
+            value=current_key,
+        )
+        if dlg.ShowModal() == wx.ID_OK:
+            new_key = dlg.GetValue().strip()
+            settings.save_api_key(new_key)
+            if new_key:
+                wx.MessageBox("API key guardada correctamente.", "Configuración IA", wx.OK)
+            else:
+                wx.MessageBox("API key eliminada.", "Configuración IA", wx.OK)
+        dlg.Destroy()

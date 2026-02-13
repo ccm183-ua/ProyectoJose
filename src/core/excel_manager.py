@@ -137,6 +137,316 @@ class ExcelManager:
                     pass
             raise
 
+    def insert_partidas_via_xml(self, file_path, partidas):
+        """
+        Inserta partidas en el Excel usando manipulación XML directa en sheet2.
+
+        Reemplaza las partidas de ejemplo de la plantilla (filas 17-26) con las
+        partidas proporcionadas, manteniendo estilos y formato del template.
+
+        Estructura de columnas en la plantilla:
+            A = Número (1.1, 1.2...)
+            B = Unidad (m2, ud, ml...)
+            C-F = Descripción (celdas C:F combinadas)
+            G = Cantidad
+            H = Precio unitario
+            I = Total (fórmula =G*H)
+
+        Args:
+            file_path: Ruta del archivo Excel ya creado desde plantilla.
+            partidas: Lista de dicts con concepto, cantidad, unidad, precio_unitario.
+
+        Returns:
+            bool: True si se insertaron correctamente.
+        """
+        if not partidas:
+            return True  # Nada que insertar
+
+        try:
+            with zipfile.ZipFile(file_path, "r") as z_in:
+                namelist = z_in.namelist()
+                sheet_content = z_in.read(SHEET_12220).decode("utf-8")
+                otros = {n: z_in.read(n) for n in namelist if n != SHEET_12220}
+
+            sheet_content = self._replace_partidas_in_xml(sheet_content, partidas)
+
+            fd, tmp_path = tempfile.mkstemp(suffix=".xlsx")
+            try:
+                os.close(fd)
+                with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as z_out:
+                    for name in namelist:
+                        if name == SHEET_12220:
+                            z_out.writestr(name, sheet_content.encode("utf-8"))
+                        else:
+                            z_out.writestr(name, otros[name])
+                shutil.move(tmp_path, file_path)
+            except Exception:
+                if os.path.exists(tmp_path):
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
+                raise
+
+            return True
+
+        except Exception as e:
+            print(f"Error al insertar partidas: {e}")
+            return False
+
+    def _replace_partidas_in_xml(self, sheet_xml, partidas):
+        """
+        Reemplaza las filas de partidas de ejemplo (17-26) con las partidas reales.
+
+        La plantilla tiene filas de datos en 17, 19, 21, 23, 25 (impares)
+        y filas separadoras vacías en 18, 20, 22, 24, 26 (pares).
+        Fila 27 tiene el subtotal con =SUM(I17:I26).
+
+        Este método:
+        1. Elimina todas las filas entre 17 y 26 (datos + separadores de ejemplo)
+        2. Genera nuevas filas de datos y separadores para cada partida
+        3. Genera una fila de subtotal con la fórmula SUM correcta
+        4. Renumera las filas posteriores (27+) para que encajen
+
+        Estilos de la plantilla (atributo s= de cada celda):
+        - Fila de datos: A=s33, B=s33, C=s47(merged), D=s47, E=s47, F=s48, G=s14, H=s14, I=s14
+        - Fila separadora: A=s33, B=s33, C=s25, D=s23, E=s23, F=s24, G=s14, H=s14, I=s14
+        - Fila subtotal: A=s7, B=s34, C=s49(merged), D-G=s50, H=s6, I=s13
+
+        Args:
+            sheet_xml: Contenido XML de sheet2.
+            partidas: Lista de partidas a insertar.
+
+        Returns:
+            XML modificado con las partidas insertadas.
+        """
+        # --- Paso 1: Identificar la zona de partidas (filas 17-26) y eliminarla ---
+        # Eliminar filas 17 a 26 del XML
+        for row_num in range(17, 27):
+            pattern = r'<row r="' + str(row_num) + r'"[^>]*>.*?</row>'
+            sheet_xml = re.sub(pattern, '', sheet_xml, flags=re.DOTALL)
+
+        # --- Paso 2: Generar las nuevas filas de datos + separadores ---
+        new_rows_xml = []
+        first_data_row = 17
+        current_row = first_data_row
+
+        for idx, partida in enumerate(partidas):
+            num = f"1.{idx + 1}"
+            concepto = xml_escape(str(partida.get('concepto', '')))
+            unidad = xml_escape(str(partida.get('unidad', 'ud')))
+            cantidad = partida.get('cantidad', 1)
+            precio = partida.get('precio_unitario', 0)
+
+            # Asegurar valores numéricos
+            try:
+                cantidad = float(cantidad)
+            except (ValueError, TypeError):
+                cantidad = 1.0
+            try:
+                precio = float(precio)
+            except (ValueError, TypeError):
+                precio = 0.0
+
+            # Fila de datos (usa inlineStr para textos, valores numéricos para números)
+            data_row = (
+                f'<row r="{current_row}" spans="1:9" ht="42" customHeight="1">'
+                f'<c r="A{current_row}" s="33" t="inlineStr"><is><t>{num}</t></is></c>'
+                f'<c r="B{current_row}" s="33" t="inlineStr"><is><t>{unidad}</t></is></c>'
+                f'<c r="C{current_row}" s="47" t="inlineStr"><is><t>{concepto}</t></is></c>'
+                f'<c r="D{current_row}" s="47"/>'
+                f'<c r="E{current_row}" s="47"/>'
+                f'<c r="F{current_row}" s="48"/>'
+                f'<c r="G{current_row}" s="14"><v>{cantidad}</v></c>'
+                f'<c r="H{current_row}" s="14"><v>{precio}</v></c>'
+                f'<c r="I{current_row}" s="14"><f>G{current_row}*H{current_row}</f></c>'
+                f'</row>'
+            )
+            new_rows_xml.append(data_row)
+            current_row += 1
+
+            # Fila separadora vacía
+            spacer_row = (
+                f'<row r="{current_row}" spans="1:9" ht="15">'
+                f'<c r="A{current_row}" s="33"/>'
+                f'<c r="B{current_row}" s="33"/>'
+                f'<c r="C{current_row}" s="25"/>'
+                f'<c r="D{current_row}" s="23"/>'
+                f'<c r="E{current_row}" s="23"/>'
+                f'<c r="F{current_row}" s="24"/>'
+                f'<c r="G{current_row}" s="14"/>'
+                f'<c r="H{current_row}" s="14"/>'
+                f'<c r="I{current_row}" s="14"/>'
+                f'</row>'
+            )
+            new_rows_xml.append(spacer_row)
+            current_row += 1
+
+        last_data_row = current_row - 1  # Última fila (separador de la última partida)
+
+        # --- Paso 3: Fila de subtotal ---
+        subtotal_row_num = current_row
+        # Rango de la SUM: desde la primera fila de datos hasta la última fila antes del subtotal
+        subtotal_label = xml_escape("Total presupuesto parcial nº 1 ACTUACIONES.")
+        subtotal_row = (
+            f'<row r="{subtotal_row_num}" spans="1:9" ht="15">'
+            f'<c r="A{subtotal_row_num}" s="7"/>'
+            f'<c r="B{subtotal_row_num}" s="34"/>'
+            f'<c r="C{subtotal_row_num}" s="49" t="inlineStr"><is><t>{subtotal_label}</t></is></c>'
+            f'<c r="D{subtotal_row_num}" s="50"/>'
+            f'<c r="E{subtotal_row_num}" s="50"/>'
+            f'<c r="F{subtotal_row_num}" s="50"/>'
+            f'<c r="G{subtotal_row_num}" s="50"/>'
+            f'<c r="H{subtotal_row_num}" s="6"/>'
+            f'<c r="I{subtotal_row_num}" s="13">'
+            f'<f>SUM(I{first_data_row}:I{last_data_row})</f></c>'
+            f'</row>'
+        )
+        new_rows_xml.append(subtotal_row)
+
+        # --- Paso 4: Eliminar fila 27 original (subtotal viejo) ---
+        pattern_27 = r'<row r="27"[^>]*>.*?</row>'
+        sheet_xml = re.sub(pattern_27, '', sheet_xml, flags=re.DOTALL)
+
+        # --- Paso 5: Renumerar filas 28+ para que sigan después del nuevo subtotal ---
+        # Las filas originales 28-57 deben desplazarse según la diferencia
+        # Original: subtotal en fila 27, ahora en subtotal_row_num
+        offset = subtotal_row_num - 27  # Cuántas filas se desplaza todo
+
+        if offset != 0:
+            sheet_xml = self._renumber_rows(sheet_xml, start_from=28, offset=offset)
+
+        # --- Paso 6: Actualizar mergeCells para la zona de datos ---
+        # Eliminar merges de las filas de ejemplo (C17:F17, C19:F19, etc. y C27:G27)
+        for row_num in range(17, 28):
+            sheet_xml = re.sub(
+                r'<mergeCell ref="[A-Z]+' + str(row_num) + r':[A-Z]+' + str(row_num) + r'"/>',
+                '', sheet_xml
+            )
+
+        # Añadir nuevos merges para las filas de datos (C:F combinadas)
+        new_merges = []
+        row = first_data_row
+        for idx in range(len(partidas)):
+            new_merges.append(f'<mergeCell ref="C{row}:F{row}"/>')
+            row += 2  # Saltar separador
+
+        # Merge para la fila de subtotal (C:G)
+        new_merges.append(f'<mergeCell ref="C{subtotal_row_num}:G{subtotal_row_num}"/>')
+
+        # Actualizar merges de filas renumeradas (39+offset, etc.)
+        if offset != 0:
+            sheet_xml = self._renumber_merges(sheet_xml, start_from=28, offset=offset)
+
+        # Insertar nuevos merges
+        merge_insert = ''.join(new_merges)
+        sheet_xml = sheet_xml.replace('</mergeCells>', merge_insert + '</mergeCells>')
+
+        # --- Paso 7: Actualizar fórmulas en la zona de resumen ---
+        # I43 referencia a I27 (subtotal) → ahora es I{subtotal_row_num}
+        new_subtotal = subtotal_row_num + offset if offset != 0 else subtotal_row_num
+        # Actualizar referencia en la celda I43+offset (que apunta a I27 original)
+        resumen_row = 43 + offset
+        sheet_xml = self._update_formula_ref(sheet_xml, resumen_row, 'I', f'I{subtotal_row_num}')
+
+        # --- Paso 8: Insertar las nuevas filas en el XML ---
+        # Insertamos justo antes de la primera fila que quede después del subtotal
+        next_original_row = 28 + offset
+        insert_point_pattern = r'(<row r="' + str(next_original_row) + r'")'
+        insert_point = re.search(insert_point_pattern, sheet_xml)
+
+        all_new_rows = '\n'.join(new_rows_xml)
+        if insert_point:
+            sheet_xml = sheet_xml[:insert_point.start()] + all_new_rows + '\n' + sheet_xml[insert_point.start():]
+        else:
+            # Si no encontramos la fila siguiente, insertar antes de </sheetData>
+            sheet_xml = sheet_xml.replace('</sheetData>', all_new_rows + '\n</sheetData>')
+
+        # --- Paso 9: Actualizar dimension ---
+        last_row = 57 + offset
+        sheet_xml = re.sub(
+            r'<dimension ref="[^"]+"/>',
+            f'<dimension ref="A1:R{last_row}"/>',
+            sheet_xml
+        )
+
+        return sheet_xml
+
+    def _renumber_rows(self, sheet_xml, start_from, offset):
+        """Renumera filas y sus referencias de celda desde start_from aplicando offset."""
+        if offset == 0:
+            return sheet_xml
+
+        # Procesar de mayor a menor para evitar conflictos
+        # Encontrar todas las filas con r >= start_from
+        rows_found = re.findall(r'<row r="(\d+)"', sheet_xml)
+        rows_to_renumber = sorted(
+            [int(r) for r in rows_found if int(r) >= start_from],
+            reverse=True
+        )
+
+        for old_row in rows_to_renumber:
+            new_row = old_row + offset
+
+            # Renumerar el atributo r de la fila
+            sheet_xml = sheet_xml.replace(
+                f'<row r="{old_row}"',
+                f'<row r="{new_row}"'
+            )
+
+            # Renumerar referencias de celdas dentro de esa fila (A28 → A28+offset, etc.)
+            for col in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L',
+                        'M', 'N', 'O', 'P', 'Q', 'R']:
+                sheet_xml = sheet_xml.replace(
+                    f'r="{col}{old_row}"',
+                    f'r="{col}{new_row}"'
+                )
+
+            # Renumerar fórmulas que referencian filas originales
+            # Ej: =I27 → =I{27+offset}, =SUM(I43:I44) → =SUM(I{43+o}:I{44+o})
+            # Solo dentro de <f>...</f> tags - esto es complejo, hacerlo caso por caso
+
+        return sheet_xml
+
+    def _renumber_merges(self, sheet_xml, start_from, offset):
+        """Renumera mergeCell refs que involucran filas >= start_from."""
+        if offset == 0:
+            return sheet_xml
+
+        def _replace_merge(match):
+            ref = match.group(1)
+            # Parse "A39:I39" → cols + rows
+            parts = ref.split(':')
+            if len(parts) != 2:
+                return match.group(0)
+            start_ref, end_ref = parts
+            start_col = re.match(r'([A-Z]+)', start_ref).group(1)
+            start_row = int(re.search(r'(\d+)', start_ref).group(1))
+            end_col = re.match(r'([A-Z]+)', end_ref).group(1)
+            end_row = int(re.search(r'(\d+)', end_ref).group(1))
+
+            if start_row >= start_from:
+                start_row += offset
+                end_row += offset
+                return f'<mergeCell ref="{start_col}{start_row}:{end_col}{end_row}"/>'
+            return match.group(0)
+
+        sheet_xml = re.sub(r'<mergeCell ref="([^"]+)"/>', _replace_merge, sheet_xml)
+        return sheet_xml
+
+    def _update_formula_ref(self, sheet_xml, row, col, new_formula):
+        """Actualiza la fórmula de una celda específica."""
+        # Buscar la celda y reemplazar su fórmula
+        pattern = (
+            r'(<c r="' + col + str(row) + r'"[^>]*>)'
+            r'(?:<f>[^<]*</f>)?'
+        )
+        match = re.search(pattern, sheet_xml)
+        if match:
+            replacement = match.group(1) + f'<f>{new_formula}</f>'
+            sheet_xml = sheet_xml[:match.start()] + replacement + sheet_xml[match.end():]
+        return sheet_xml
+
     def load_budget(self, file_path):
         """
         Carga un presupuesto desde un archivo Excel.

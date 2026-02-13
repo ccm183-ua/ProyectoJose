@@ -5,6 +5,9 @@ Pillow>=10.0.0
 pandas==2.1.4
 python-dateutil==2.8.2
 
+# IA - Generación de partidas con Google Gemini
+google-genai>=1.0.0
+
 # Testing (pytest-qt quitado: la app usa wxPython)
 pytest==7.4.3
 pytest-cov==4.1.0

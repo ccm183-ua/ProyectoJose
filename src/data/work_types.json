@@ -1,0 +1,109 @@
+{
+  "plantillas": [
+    {
+      "nombre": "Reparación de bajante",
+      "categoria": "fontanería",
+      "descripcion": "Reparación o sustitución de bajantes en edificio de viviendas.",
+      "contexto_ia": "Reparación o sustitución completa de bajantes en edificio de viviendas. Incluye trabajos de fontanería, albañilería para acceder a la bajante empotrada o vista, y reposición de acabados afectados. Materiales típicos: PVC serie B, codos, abrazaderas, manguitos. Considerar acceso por patios de luces, número de plantas y tipo de bajante (fecales, pluviales).",
+      "partidas_base": [
+        {"concepto": "Desmontaje de bajante existente", "unidad": "ml", "precio_ref": 18.50},
+        {"concepto": "Suministro e instalación de bajante PVC serie B diám. 110mm", "unidad": "ml", "precio_ref": 32.00},
+        {"concepto": "Suministro e instalación de bajante PVC serie B diám. 125mm", "unidad": "ml", "precio_ref": 36.00},
+        {"concepto": "Codo PVC 45 grados diám. 110mm", "unidad": "ud", "precio_ref": 12.50},
+        {"concepto": "Manguito de unión PVC diám. 110mm", "unidad": "ud", "precio_ref": 8.00},
+        {"concepto": "Abrazadera de sujeción para bajante", "unidad": "ud", "precio_ref": 6.50},
+        {"concepto": "Apertura y cierre de rozas en tabiquería", "unidad": "ml", "precio_ref": 25.00},
+        {"concepto": "Reposición de alicatado en zona afectada", "unidad": "m2", "precio_ref": 45.00},
+        {"concepto": "Reposición de enlucido de yeso en zona afectada", "unidad": "m2", "precio_ref": 18.00},
+        {"concepto": "Transporte y retirada de escombros a vertedero autorizado", "unidad": "ud", "precio_ref": 180.00}
+      ]
+    },
+    {
+      "nombre": "Rehabilitación de fachada",
+      "categoria": "rehabilitación",
+      "descripcion": "Rehabilitación de fachada de edificio residencial.",
+      "contexto_ia": "Rehabilitación integral de fachada de edificio residencial. Incluye montaje de andamios homologados, saneado de paramentos deteriorados, reparación de grietas y fisuras, tratamiento de humedades, impermeabilización y acabado final con pintura o monocapa. Considerar elementos singulares: cornisas, molduras, balcones, vierteaguas. Normativa de seguridad en altura.",
+      "partidas_base": [
+        {"concepto": "Montaje y desmontaje de andamio tubular homologado", "unidad": "m2", "precio_ref": 12.00},
+        {"concepto": "Licencia de ocupación de vía pública para andamio", "unidad": "ud", "precio_ref": 350.00},
+        {"concepto": "Red de protección y señalización de seguridad", "unidad": "m2", "precio_ref": 3.50},
+        {"concepto": "Saneado y picado de revestimiento en mal estado", "unidad": "m2", "precio_ref": 8.50},
+        {"concepto": "Reparación de grietas y fisuras con mortero elástico", "unidad": "ml", "precio_ref": 15.00},
+        {"concepto": "Enfoscado maestreado con mortero de cemento", "unidad": "m2", "precio_ref": 22.00},
+        {"concepto": "Impermeabilización con revestimiento elástico", "unidad": "m2", "precio_ref": 16.00},
+        {"concepto": "Pintura plástica para exteriores 2 manos", "unidad": "m2", "precio_ref": 9.50},
+        {"concepto": "Reparación de cornisas y molduras", "unidad": "ml", "precio_ref": 35.00},
+        {"concepto": "Reparación de vierteaguas", "unidad": "ml", "precio_ref": 28.00},
+        {"concepto": "Transporte y retirada de escombros a vertedero autorizado", "unidad": "ud", "precio_ref": 250.00}
+      ]
+    },
+    {
+      "nombre": "Impermeabilización de cubierta",
+      "categoria": "cubiertas",
+      "descripcion": "Impermeabilización o reparación de cubierta plana o inclinada.",
+      "contexto_ia": "Impermeabilización de cubierta en edificio de viviendas. Puede ser cubierta plana transitable, no transitable o inclinada. Incluye levantamiento de pavimento existente si aplica, regularización de pendientes, aplicación de lámina impermeabilizante, remates en puntos singulares (sumideros, chimeneas, petos) y reposición de acabado. Considerar acceso a cubierta y medidas de seguridad en altura.",
+      "partidas_base": [
+        {"concepto": "Levantamiento de pavimento existente en cubierta", "unidad": "m2", "precio_ref": 8.00},
+        {"concepto": "Regularización de pendientes con mortero aligerado", "unidad": "m2", "precio_ref": 14.00},
+        {"concepto": "Imprimación asfáltica sobre soporte", "unidad": "m2", "precio_ref": 4.50},
+        {"concepto": "Lámina impermeabilizante de betún modificado con poliéster", "unidad": "m2", "precio_ref": 18.00},
+        {"concepto": "Remate de impermeabilización en puntos singulares (sumideros, petos)", "unidad": "ml", "precio_ref": 22.00},
+        {"concepto": "Aislamiento térmico con poliestireno extruido 50mm", "unidad": "m2", "precio_ref": 12.00},
+        {"concepto": "Solado de baldosa cerámica en cubierta transitable", "unidad": "m2", "precio_ref": 35.00},
+        {"concepto": "Protección con grava sobre lámina (cubierta no transitable)", "unidad": "m2", "precio_ref": 8.50},
+        {"concepto": "Transporte y retirada de escombros a vertedero autorizado", "unidad": "ud", "precio_ref": 220.00}
+      ]
+    },
+    {
+      "nombre": "Reforma integral de vivienda",
+      "categoria": "reforma",
+      "descripcion": "Reforma completa de vivienda incluyendo todos los oficios.",
+      "contexto_ia": "Reforma integral de vivienda particular. Incluye demoliciones selectivas, albañilería, fontanería completa (agua fría, caliente, desagües), electricidad (nuevo cuadro, cableado, mecanismos), carpintería interior (puertas, armarios), revestimientos (solados, alicatados), falsos techos, pintura y limpieza final. Considerar el estado de las instalaciones existentes, la distribución deseada y la calidad de acabados.",
+      "partidas_base": [
+        {"concepto": "Demolición de tabiquería interior", "unidad": "m2", "precio_ref": 12.00},
+        {"concepto": "Levantamiento de solados y alicatados existentes", "unidad": "m2", "precio_ref": 10.00},
+        {"concepto": "Tabiquería de ladrillo hueco doble", "unidad": "m2", "precio_ref": 25.00},
+        {"concepto": "Instalación de fontanería completa (agua fría y caliente)", "unidad": "ud", "precio_ref": 2800.00},
+        {"concepto": "Instalación eléctrica completa (cuadro + puntos)", "unidad": "ud", "precio_ref": 3200.00},
+        {"concepto": "Solado de gres porcelánico", "unidad": "m2", "precio_ref": 38.00},
+        {"concepto": "Alicatado de azulejo en baño/cocina", "unidad": "m2", "precio_ref": 35.00},
+        {"concepto": "Falso techo de escayola lisa", "unidad": "m2", "precio_ref": 22.00},
+        {"concepto": "Puerta interior de paso abatible", "unidad": "ud", "precio_ref": 280.00},
+        {"concepto": "Pintura plástica lisa en paredes y techos", "unidad": "m2", "precio_ref": 7.50},
+        {"concepto": "Transporte y retirada de escombros a vertedero autorizado", "unidad": "ud", "precio_ref": 350.00}
+      ]
+    },
+    {
+      "nombre": "Reparación de zaguán y escalera",
+      "categoria": "rehabilitación",
+      "descripcion": "Reparación y acondicionamiento de zaguán y/o escalera comunitaria.",
+      "contexto_ia": "Reparación o rehabilitación de zaguán de entrada y escalera comunitaria en edificio de viviendas. Incluye reparación de solados, peldaños, barandillas, paredes, techos, iluminación y pintura. Considerar el uso intensivo de la zona, materiales resistentes al tránsito, normativa de accesibilidad y acabados representativos del edificio.",
+      "partidas_base": [
+        {"concepto": "Reparación de solado de mármol o terrazo en zaguán", "unidad": "m2", "precio_ref": 55.00},
+        {"concepto": "Reparación de peldaños de escalera", "unidad": "ud", "precio_ref": 45.00},
+        {"concepto": "Reparación o sustitución de barandilla metálica", "unidad": "ml", "precio_ref": 85.00},
+        {"concepto": "Enfoscado y enlucido de paredes en caja de escalera", "unidad": "m2", "precio_ref": 20.00},
+        {"concepto": "Pintura plástica en paredes y techos de escalera", "unidad": "m2", "precio_ref": 8.00},
+        {"concepto": "Instalación de iluminación LED en zonas comunes", "unidad": "ud", "precio_ref": 120.00},
+        {"concepto": "Reparación de buzones y cuadro de contadores", "unidad": "ud", "precio_ref": 200.00},
+        {"concepto": "Transporte y retirada de escombros a vertedero autorizado", "unidad": "ud", "precio_ref": 150.00}
+      ]
+    },
+    {
+      "nombre": "Reparación de patios y medianeras",
+      "categoria": "rehabilitación",
+      "descripcion": "Reparación de patios interiores y medianeras de edificio.",
+      "contexto_ia": "Reparación y acondicionamiento de patios interiores de luces y medianeras en edificio de viviendas. Incluye saneado de paramentos, reparación de bajantes vistas, impermeabilización de base del patio, pintado de paredes y reparación de sumideros. Considerar la dificultad de acceso, necesidad de trabajos en altura dentro del patio y ventilación.",
+      "partidas_base": [
+        {"concepto": "Montaje de medios auxiliares en patio interior", "unidad": "ud", "precio_ref": 450.00},
+        {"concepto": "Saneado y picado de revestimiento en medianera", "unidad": "m2", "precio_ref": 9.00},
+        {"concepto": "Enfoscado de mortero hidrófugo en medianera", "unidad": "m2", "precio_ref": 24.00},
+        {"concepto": "Pintura impermeabilizante para exteriores", "unidad": "m2", "precio_ref": 10.50},
+        {"concepto": "Impermeabilización de base de patio con lámina", "unidad": "m2", "precio_ref": 35.00},
+        {"concepto": "Reparación de sumidero en patio", "unidad": "ud", "precio_ref": 85.00},
+        {"concepto": "Reparación de bajante vista en patio", "unidad": "ml", "precio_ref": 30.00},
+        {"concepto": "Transporte y retirada de escombros a vertedero autorizado", "unidad": "ud", "precio_ref": 180.00}
+      ]
+    }
+  ]
+}
