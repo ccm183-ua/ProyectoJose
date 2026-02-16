@@ -12,6 +12,7 @@ from src.core.excel_manager import ExcelManager
 from src.core.file_manager import FileManager
 from src.core.template_manager import TemplateManager
 from src.core import database as db_module
+from src.core import db_repository
 from src.utils.helpers import sanitize_filename
 from src.gui import theme
 
@@ -220,6 +221,9 @@ class MainFrame(wx.Frame):
             wx.MessageBox("No se encontró la plantilla.", "Error", wx.OK | wx.ICON_ERROR)
             return
 
+        # Buscar administración en la BDD a partir del campo "cliente"
+        admin_data = self._buscar_admin_para_presupuesto(project_data.get("cliente", ""))
+
         excel_data = {
             "nombre_obra": project_name,
             "direccion": project_data.get("calle", ""),
@@ -234,6 +238,9 @@ class MainFrame(wx.Frame):
             "num_calle": project_data.get("num_calle", ""),
             "localidad": project_data.get("localidad", ""),
             "tipo": project_data.get("tipo", ""),
+            "admin_cif": admin_data.get("cif", "") if admin_data else "",
+            "admin_email": admin_data.get("email", "") if admin_data else "",
+            "admin_telefono": admin_data.get("telefono", "") if admin_data else "",
         }
         if not self.excel_manager.create_from_template(template_path, save_path, excel_data):
             wx.MessageBox("Error al crear el presupuesto.", "Error", wx.OK | wx.ICON_ERROR)
@@ -241,6 +248,61 @@ class MainFrame(wx.Frame):
 
         # --- NUEVO: Flujo de generación de partidas con IA ---
         self._offer_ai_partidas(save_path, project_data)
+
+    def _buscar_admin_para_presupuesto(self, nombre_cliente: str) -> dict | None:
+        """
+        Busca una administración en la BDD cuyo nombre coincida con el campo
+        'cliente' del proyecto. Muestra un diálogo de confirmación si se
+        encuentra (exacta o fuzzy).
+
+        Args:
+            nombre_cliente: Nombre del cliente/administración a buscar.
+
+        Returns:
+            Dict con los datos de la administración confirmada, o None.
+        """
+        from src.gui.dialogs_wx import (
+            AdminConfirmDialog, AdminFuzzySelectDialog, NuevaAdminDialog,
+        )
+
+        if not nombre_cliente or not nombre_cliente.strip():
+            return None
+
+        nombre = nombre_cliente.strip()
+
+        # 1. Búsqueda exacta (case-insensitive)
+        admin = db_repository.buscar_administracion_por_nombre(nombre)
+        if admin:
+            dlg = AdminConfirmDialog(self, admin, nombre)
+            resultado = dlg.ShowModal()
+            datos = dlg.get_admin_data() if resultado == wx.ID_OK else None
+            dlg.Destroy()
+            return datos
+
+        # 2. Búsqueda fuzzy
+        fuzzy = db_repository.buscar_administraciones_fuzzy(nombre)
+        if fuzzy:
+            dlg = AdminFuzzySelectDialog(self, fuzzy, nombre)
+            resultado = dlg.ShowModal()
+            datos = dlg.get_admin_data() if resultado == wx.ID_OK else None
+            dlg.Destroy()
+            return datos
+
+        # 3. No se encontró nada → ofrecer crear nueva administración
+        resp = wx.MessageBox(
+            f'No se encontró ninguna administración con el nombre "{nombre}".\n\n'
+            "¿Desea añadir una nueva administración a la base de datos?",
+            "Administración no encontrada",
+            wx.YES_NO | wx.ICON_QUESTION,
+        )
+        if resp == wx.YES:
+            dlg = NuevaAdminDialog(self, nombre_prefill=nombre)
+            resultado = dlg.ShowModal()
+            datos = dlg.get_admin_data() if resultado == wx.ID_OK else None
+            dlg.Destroy()
+            return datos
+
+        return None
 
     def _offer_ai_partidas(self, excel_path, project_data):
         """

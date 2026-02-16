@@ -115,11 +115,11 @@ class ExcelManager:
             "E5": numero_pres,
             "H5": fecha or '',
             "B7": (data.get('cliente', '') or '').strip(),
-            "H7": '',
+            "H7": (data.get('admin_cif', '') or '').strip(),
             "B9": (direccion_solo_calle_numero or '').strip(),
             "H9": str(data.get('codigo_postal', '') or '').strip(),
-            "B11": '',
-            "H11": '',
+            "B11": (data.get('admin_email', '') or '').strip(),
+            "H11": (data.get('admin_telefono', '') or '').strip(),
             "A14": obra_final,
         }
 

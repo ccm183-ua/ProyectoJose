@@ -6,6 +6,7 @@ Captura sqlite3.IntegrityError y lo convierte en mensajes claros.
 """
 
 import sqlite3
+from difflib import SequenceMatcher
 from typing import Optional, List, Dict, Tuple
 
 from src.core import database
@@ -148,6 +149,76 @@ def get_administraciones_para_tabla() -> List[Dict]:
             }
             for r in rows
         ]
+    finally:
+        conn.close()
+
+
+def buscar_administracion_por_nombre(nombre: str) -> Optional[Dict]:
+    """Busca una administración por nombre exacto (case-insensitive).
+
+    Args:
+        nombre: Nombre a buscar.
+
+    Returns:
+        Dict con los datos de la administración o None si no se encuentra.
+    """
+    nombre = nombre.strip()
+    if not nombre:
+        return None
+    conn = database.connect()
+    try:
+        cur = conn.execute(
+            "SELECT id, nombre, cif, email, telefono, direccion "
+            "FROM administracion WHERE LOWER(TRIM(nombre)) = LOWER(?)",
+            (nombre,),
+        )
+        r = cur.fetchone()
+        if not r:
+            return None
+        return {
+            "id": r[0], "nombre": r[1] or "", "cif": r[2] or "",
+            "email": r[3] or "", "telefono": r[4] or "", "direccion": r[5] or "",
+        }
+    finally:
+        conn.close()
+
+
+def buscar_administraciones_fuzzy(nombre: str, umbral: float = 0.55) -> List[Dict]:
+    """Busca administraciones cuyo nombre sea similar al dado (fuzzy matching).
+
+    Usa difflib.SequenceMatcher para calcular la similitud. Solo devuelve
+    resultados cuya ratio >= umbral, ordenados de mayor a menor similitud.
+
+    Args:
+        nombre: Nombre aproximado a buscar.
+        umbral: Ratio mínimo de similitud (0-1). Por defecto 0.55.
+
+    Returns:
+        Lista de dicts con los datos de las administraciones encontradas,
+        cada uno con un campo extra 'similitud' (float 0-1).
+    """
+    nombre = nombre.strip()
+    if not nombre:
+        return []
+    conn = database.connect()
+    try:
+        cur = conn.execute(
+            "SELECT id, nombre, cif, email, telefono, direccion FROM administracion ORDER BY nombre"
+        )
+        rows = cur.fetchall()
+        nombre_lower = nombre.lower()
+        resultados = []
+        for r in rows:
+            nombre_db = (r[1] or "").strip().lower()
+            ratio = SequenceMatcher(None, nombre_lower, nombre_db).ratio()
+            if ratio >= umbral:
+                resultados.append({
+                    "id": r[0], "nombre": r[1] or "", "cif": r[2] or "",
+                    "email": r[3] or "", "telefono": r[4] or "", "direccion": r[5] or "",
+                    "similitud": round(ratio, 3),
+                })
+        resultados.sort(key=lambda x: x["similitud"], reverse=True)
+        return resultados
     finally:
         conn.close()
 
