@@ -90,8 +90,8 @@ class ProjectNameDialogWx(wx.Dialog):
         dialog_sizer.Add(panel, 1, wx.EXPAND)
         self.SetSizer(dialog_sizer)
         
-        self.SetMinSize((600, 480))
-        self.SetSize((660, 540))
+        self.SetMinSize((600, 560))
+        self.SetSize((660, 600))
         self.CenterOnParent()
         self.Bind(wx.EVT_BUTTON, self._on_validate_ok, id=wx.ID_OK)
 

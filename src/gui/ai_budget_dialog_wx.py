@@ -49,7 +49,7 @@ class AIBudgetDialog(wx.Dialog):
 
         # --- Título ---
         title = theme.create_title(panel, "Generar Partidas con IA", "xl")
-        main_sizer.Add(title, 0, wx.ALL, theme.SPACE_XL)
+        main_sizer.Add(title, 0, wx.LEFT | wx.TOP | wx.RIGHT, theme.SPACE_XL)
 
         subtitle = theme.create_text(
             panel,
@@ -57,25 +57,25 @@ class AIBudgetDialog(wx.Dialog):
             "con precios orientativos. Opcionalmente selecciona una plantilla de referencia."
         )
         subtitle.Wrap(580)
-        main_sizer.Add(subtitle, 0, wx.LEFT | wx.RIGHT, theme.SPACE_XL)
+        main_sizer.Add(subtitle, 0, wx.LEFT | wx.RIGHT | wx.TOP, theme.SPACE_MD)
 
-        main_sizer.AddSpacer(theme.SPACE_LG)
+        main_sizer.AddSpacer(theme.SPACE_MD)
 
         # --- Tipo de obra ---
         lbl_tipo = wx.StaticText(panel, label="Tipo de obra:")
         lbl_tipo.SetFont(theme.get_font_medium())
         lbl_tipo.SetForegroundColour(theme.TEXT_PRIMARY)
-        main_sizer.Add(lbl_tipo, 0, wx.LEFT | wx.TOP, theme.SPACE_XL)
+        main_sizer.Add(lbl_tipo, 0, wx.LEFT, theme.SPACE_XL)
 
-        self._tipo_text = wx.TextCtrl(panel, size=(-1, 36))
+        self._tipo_text = wx.TextCtrl(panel, size=(-1, 32))
         theme.style_textctrl(self._tipo_text)
         try:
             self._tipo_text.SetHint("Ej: Reparación de bajante comunitaria, Reforma integral cocina...")
         except AttributeError:
             pass
-        main_sizer.Add(self._tipo_text, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, theme.SPACE_XL)
+        main_sizer.Add(self._tipo_text, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, theme.SPACE_SM)
 
-        main_sizer.AddSpacer(theme.SPACE_MD)
+        main_sizer.AddSpacer(theme.SPACE_SM)
 
         # --- Descripción adicional ---
         lbl_desc = wx.StaticText(panel, label="Descripción adicional (contexto para la IA):")
@@ -83,7 +83,7 @@ class AIBudgetDialog(wx.Dialog):
         lbl_desc.SetForegroundColour(theme.TEXT_PRIMARY)
         main_sizer.Add(lbl_desc, 0, wx.LEFT, theme.SPACE_XL)
 
-        self._desc_text = wx.TextCtrl(panel, style=wx.TE_MULTILINE, size=(-1, 80))
+        self._desc_text = wx.TextCtrl(panel, style=wx.TE_MULTILINE, size=(-1, 64))
         theme.style_textctrl(self._desc_text)
         try:
             self._desc_text.SetHint(
@@ -92,9 +92,9 @@ class AIBudgetDialog(wx.Dialog):
             )
         except AttributeError:
             pass
-        main_sizer.Add(self._desc_text, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, theme.SPACE_XL)
+        main_sizer.Add(self._desc_text, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, theme.SPACE_SM)
 
-        main_sizer.AddSpacer(theme.SPACE_LG)
+        main_sizer.AddSpacer(theme.SPACE_SM)
 
         # --- Plantilla de referencia (opcional) ---
         lbl_plantilla = wx.StaticText(panel, label="Plantilla de referencia (opcional):")
@@ -107,20 +107,20 @@ class AIBudgetDialog(wx.Dialog):
             "Si seleccionas una, la IA la usará como base para generar partidas más precisas.",
             muted=True,
         )
-        main_sizer.Add(plantilla_hint, 0, wx.LEFT | wx.TOP, theme.SPACE_XL)
+        main_sizer.Add(plantilla_hint, 0, wx.LEFT | wx.TOP, theme.SPACE_SM)
 
         # Lista de plantillas
         names = self._catalog.get_all_names()
         self._plantilla_list = wx.ListBox(
             panel,
             choices=["(Ninguna - generar desde cero)"] + names,
-            size=(-1, 110),
+            size=(-1, 100),
         )
         self._plantilla_list.SetSelection(0)  # "Ninguna" por defecto
         self._plantilla_list.SetFont(theme.font_base())
         self._plantilla_list.SetBackgroundColour(theme.BG_CARD)
         main_sizer.Add(
-            self._plantilla_list, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, theme.SPACE_XL
+            self._plantilla_list, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, theme.SPACE_SM
         )
 
         # --- Aviso API key ---
@@ -138,13 +138,13 @@ class AIBudgetDialog(wx.Dialog):
             warning_text.SetForegroundColour(theme.WARNING)
             warning_sizer.Add(warning_text, 1, wx.ALIGN_CENTER_VERTICAL)
 
-            main_sizer.AddSpacer(theme.SPACE_MD)
+            main_sizer.AddSpacer(theme.SPACE_SM)
             main_sizer.Add(warning_sizer, 0, wx.LEFT | wx.RIGHT, theme.SPACE_XL)
 
         # --- Separador ---
-        main_sizer.AddSpacer(theme.SPACE_LG)
+        main_sizer.AddSpacer(theme.SPACE_MD)
         main_sizer.Add(theme.create_divider(panel), 0, wx.EXPAND | wx.LEFT | wx.RIGHT, theme.SPACE_XL)
-        main_sizer.AddSpacer(theme.SPACE_LG)
+        main_sizer.AddSpacer(theme.SPACE_MD)
 
         # --- Botones ---
         btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
@@ -170,8 +170,16 @@ class AIBudgetDialog(wx.Dialog):
         dialog_sizer.Add(panel, 1, wx.EXPAND)
         self.SetSizer(dialog_sizer)
 
-        self.SetMinSize((650, 580))
-        self.SetSize((680, 620))
+        self.Fit()
+        w, h = self.GetSize()
+        w = max(w, 650)
+        h = max(h, 580)
+        display = wx.Display(wx.Display.GetFromWindow(self) if wx.Display.GetFromWindow(self) >= 0 else 0)
+        screen_w, screen_h = display.GetClientArea().GetSize()
+        w = min(w, screen_w - 40)
+        h = min(h, screen_h - 40)
+        self.SetSize((w, h))
+        self.SetMinSize((650, 500))
 
         # Eventos
         self.Bind(wx.EVT_BUTTON, self._on_generate, id=wx.ID_OK)

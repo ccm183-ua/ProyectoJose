@@ -98,13 +98,13 @@ class DBManagerFrame(wx.Frame):
         
         # Buscador Administración
         search_panel_a, self.search_admin = self._create_search_box(
-            self.panel_admin, "Nombre, email, teléfono, dirección o contactos", self._on_search_admin
+            self.panel_admin, "Nombre, C.I.F, email, teléfono, dirección o contactos", self._on_search_admin
         )
         sza.Add(search_panel_a, 0, wx.EXPAND | wx.ALL, theme.SPACE_MD)
         
         self.list_admin = wx.ListCtrl(self.panel_admin, style=wx.LC_REPORT | wx.LC_SINGLE_SEL | wx.BORDER_SIMPLE)
         theme.style_listctrl(self.list_admin)
-        for col, w in [("ID", 50), ("Nombre", 180), ("Dirección", 180), ("Email", 180), ("Teléfono", 120), ("Contactos", 200)]:
+        for col, w in [("ID", 50), ("Nombre", 170), ("C.I.F", 110), ("Dirección", 160), ("Email", 160), ("Teléfono", 110), ("Contactos", 180)]:
             self.list_admin.AppendColumn(col, width=w)
         sza.Add(self.list_admin, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, theme.SPACE_LG)
         
@@ -245,10 +245,10 @@ class DBManagerFrame(wx.Frame):
         self.list_admin.DeleteAllItems()
         rows = self._admin_rows or []
         query = self.search_admin.GetValue() if hasattr(self, "search_admin") else ""
-        rows = self._filter_rows(rows, ["nombre", "email", "telefono", "direccion", "contactos"], query)
+        rows = self._filter_rows(rows, ["nombre", "cif", "email", "telefono", "direccion", "contactos"], query)
         for r in rows:
             self.list_admin.Append([
-                str(r["id"]), r["nombre"] or "—",
+                str(r["id"]), r["nombre"] or "—", r["cif"] or "—",
                 r["direccion"] or "—", r["email"] or "—", r["telefono"] or "—",
                 r["contactos"],
             ])
@@ -398,7 +398,7 @@ class DBManagerFrame(wx.Frame):
         return a.get("nombre") or a.get("email") or f"ID {a['id']}"
 
     def _add_admin(self):
-        d = SimpleDialog(self, "Añadir administración", ["Nombre *", "Email", "Teléfono", "Dirección"])
+        d = SimpleDialog(self, "Añadir administración", ["Nombre *", "C.I.F", "Email", "Teléfono", "Dirección"])
         if d.ShowModal() != wx.ID_OK:
             d.Destroy()
             return
@@ -408,7 +408,7 @@ class DBManagerFrame(wx.Frame):
         if not nombre:
             wx.MessageBox("El nombre es obligatorio.", "Error", wx.OK | wx.ICON_ERROR)
             return
-        id_, err = repo.create_administracion(nombre, vals.get("Email", ""), vals.get("Teléfono", ""), vals.get("Dirección", ""))
+        id_, err = repo.create_administracion(nombre, vals.get("C.I.F", ""), vals.get("Email", ""), vals.get("Teléfono", ""), vals.get("Dirección", ""))
         if err:
             wx.MessageBox(err, "Error", wx.OK | wx.ICON_ERROR)
         else:
@@ -424,7 +424,7 @@ class DBManagerFrame(wx.Frame):
         r = repo.get_administracion_por_id(id_)
         if not r:
             return
-        d = SimpleDialog(self, "Editar administración", ["Nombre *", "Email", "Teléfono", "Dirección"], initial={"Nombre *": r["nombre"], "Email": r["email"], "Teléfono": r["telefono"], "Dirección": r["direccion"]})
+        d = SimpleDialog(self, "Editar administración", ["Nombre *", "C.I.F", "Email", "Teléfono", "Dirección"], initial={"Nombre *": r["nombre"], "C.I.F": r["cif"], "Email": r["email"], "Teléfono": r["telefono"], "Dirección": r["direccion"]})
         if d.ShowModal() != wx.ID_OK:
             d.Destroy()
             return
@@ -434,7 +434,7 @@ class DBManagerFrame(wx.Frame):
         if not nombre:
             wx.MessageBox("El nombre es obligatorio.", "Error", wx.OK | wx.ICON_ERROR)
             return
-        err = repo.update_administracion(id_, nombre, vals.get("Email", ""), vals.get("Teléfono", ""), vals.get("Dirección", ""))
+        err = repo.update_administracion(id_, nombre, vals.get("C.I.F", ""), vals.get("Email", ""), vals.get("Teléfono", ""), vals.get("Dirección", ""))
         if err:
             wx.MessageBox(err, "Error", wx.OK | wx.ICON_ERROR)
         else:

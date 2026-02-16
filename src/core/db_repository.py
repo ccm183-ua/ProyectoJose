@@ -56,22 +56,22 @@ def _ejecutar(conn, *args, **kwargs):
 # ---------------------------------------------------------------------------
 
 def get_administraciones() -> List[Dict]:
-    """Lista todas las administraciones. Cada elemento es un dict con id, nombre, email, telefono, direccion."""
+    """Lista todas las administraciones. Cada elemento es un dict con id, nombre, cif, email, telefono, direccion."""
     conn = database.connect()
     try:
         cur = conn.execute(
-            "SELECT id, nombre, email, telefono, direccion FROM administracion ORDER BY id"
+            "SELECT id, nombre, cif, email, telefono, direccion FROM administracion ORDER BY id"
         )
         rows = cur.fetchall()
         return [
-            {"id": r[0], "nombre": r[1] or "", "email": r[2] or "", "telefono": r[3] or "", "direccion": r[4] or ""}
+            {"id": r[0], "nombre": r[1] or "", "cif": r[2] or "", "email": r[3] or "", "telefono": r[4] or "", "direccion": r[5] or ""}
             for r in rows
         ]
     finally:
         conn.close()
 
 
-def create_administracion(nombre: str, email: str = "", telefono: str = "", direccion: str = "") -> Tuple[Optional[int], Optional[str]]:
+def create_administracion(nombre: str, cif: str = "", email: str = "", telefono: str = "", direccion: str = "") -> Tuple[Optional[int], Optional[str]]:
     """Crea una administración. nombre es obligatorio. Devuelve (id, None) o (None, mensaje_error)."""
     nombre = nombre.strip()
     if not nombre:
@@ -79,8 +79,8 @@ def create_administracion(nombre: str, email: str = "", telefono: str = "", dire
     conn = database.connect()
     try:
         conn.execute(
-            "INSERT INTO administracion (nombre, email, telefono, direccion) VALUES (?, ?, ?, ?)",
-            (nombre, email.strip() or None, telefono.strip() or None, direccion.strip() or None),
+            "INSERT INTO administracion (nombre, cif, email, telefono, direccion) VALUES (?, ?, ?, ?, ?)",
+            (nombre, cif.strip() or None, email.strip() or None, telefono.strip() or None, direccion.strip() or None),
         )
         conn.commit()
         cur = conn.execute("SELECT last_insert_rowid()")
@@ -95,7 +95,7 @@ def create_administracion(nombre: str, email: str = "", telefono: str = "", dire
         conn.close()
 
 
-def update_administracion(id_: int, nombre: str, email: str = "", telefono: str = "", direccion: str = "") -> Optional[str]:
+def update_administracion(id_: int, nombre: str, cif: str = "", email: str = "", telefono: str = "", direccion: str = "") -> Optional[str]:
     """Actualiza una administración. nombre es obligatorio. Devuelve None si ok, o mensaje de error."""
     nombre = nombre.strip()
     if not nombre:
@@ -104,8 +104,8 @@ def update_administracion(id_: int, nombre: str, email: str = "", telefono: str 
     try:
         err = _ejecutar(
             conn,
-            "UPDATE administracion SET nombre=?, email=?, telefono=?, direccion=? WHERE id=?",
-            (nombre, email.strip() or None, telefono.strip() or None, direccion.strip() or None, id_),
+            "UPDATE administracion SET nombre=?, cif=?, email=?, telefono=?, direccion=? WHERE id=?",
+            (nombre, cif.strip() or None, email.strip() or None, telefono.strip() or None, direccion.strip() or None, id_),
         )
         return err
     finally:
@@ -127,7 +127,7 @@ def get_administraciones_para_tabla() -> List[Dict]:
     conn = database.connect()
     try:
         cur = conn.execute("""
-            SELECT a.id, a.nombre, a.email, a.telefono, a.direccion,
+            SELECT a.id, a.nombre, a.cif, a.email, a.telefono, a.direccion,
                    COALESCE(GROUP_CONCAT(c.nombre), '') AS contactos
             FROM administracion a
             LEFT JOIN administracion_contacto ac ON ac.administracion_id = a.id
@@ -140,10 +140,11 @@ def get_administraciones_para_tabla() -> List[Dict]:
             {
                 "id": r[0],
                 "nombre": r[1] or "",
-                "email": r[2] or "",
-                "telefono": r[3] or "",
-                "direccion": r[4] or "",
-                "contactos": (r[5] or "").strip() or "—",
+                "cif": r[2] or "",
+                "email": r[3] or "",
+                "telefono": r[4] or "",
+                "direccion": r[5] or "",
+                "contactos": (r[6] or "").strip() or "—",
             }
             for r in rows
         ]
@@ -417,13 +418,13 @@ def get_administracion_por_id(id_: int) -> Optional[Dict]:
     conn = database.connect()
     try:
         cur = conn.execute(
-            "SELECT id, nombre, email, telefono, direccion FROM administracion WHERE id=?",
+            "SELECT id, nombre, cif, email, telefono, direccion FROM administracion WHERE id=?",
             (id_,),
         )
         r = cur.fetchone()
         if not r:
             return None
-        return {"id": r[0], "nombre": r[1] or "", "email": r[2] or "", "telefono": r[3] or "", "direccion": r[4] or ""}
+        return {"id": r[0], "nombre": r[1] or "", "cif": r[2] or "", "email": r[3] or "", "telefono": r[4] or "", "direccion": r[5] or ""}
     finally:
         conn.close()
 

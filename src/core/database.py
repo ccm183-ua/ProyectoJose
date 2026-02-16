@@ -82,6 +82,15 @@ def _migrate_administracion_nombre(conn: sqlite3.Connection) -> None:
         conn.commit()
 
 
+def _migrate_administracion_cif(conn: sqlite3.Connection) -> None:
+    """Añade la columna cif a administracion si no existe (BDs creadas antes del cambio)."""
+    cur = conn.execute("PRAGMA table_info(administracion)")
+    columns = [row[1] for row in cur.fetchall()]
+    if "cif" not in columns:
+        conn.execute("ALTER TABLE administracion ADD COLUMN cif TEXT")
+        conn.commit()
+
+
 def init_schema(conn: sqlite3.Connection) -> None:
     """
     Crea las tablas si no existen. No modifica tablas ya existentes.
@@ -93,13 +102,14 @@ def init_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(_SCHEMA_SQL)
     conn.commit()
     _migrate_administracion_nombre(conn)
+    _migrate_administracion_cif(conn)
 
 
 # ---------------------------------------------------------------------------
 # Esquema según especificación:
 # - Contacto: id, nombre NOT NULL, telefono NOT NULL (c.alt), telefono2, email, notas (resto nullable)
 # - Comunidad: id, nombre NOT NULL UNIQUE (identificador), direccion, email, telefono, administracion_id
-# - Administración: id, nombre NOT NULL, email (c.alt), telefono, direccion (resto nullable)
+# - Administración: id, nombre NOT NULL, cif, email (c.alt), telefono, direccion (resto nullable)
 # Relaciones: Administración N:M Contacto, Comunidad N:M Contacto,
 #             Comunidad N:1 Administración (comunidad obligada a tener una)
 # ---------------------------------------------------------------------------
@@ -109,6 +119,7 @@ _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS administracion (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     nombre TEXT NOT NULL,
+    cif TEXT,
     email TEXT UNIQUE,
     telefono TEXT,
     direccion TEXT

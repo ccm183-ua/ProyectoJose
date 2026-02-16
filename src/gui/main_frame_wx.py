@@ -205,22 +205,15 @@ class MainFrame(wx.Frame):
         if not save_path:
             return
 
-        create_folder = wx.MessageBox("¿Crear carpeta con el nombre del proyecto y subcarpetas (FOTOS, PLANOS, etc.)?", "Carpeta", wx.YES_NO | wx.ICON_QUESTION) == wx.YES
-        # Subcarpetas que se crean dentro de la carpeta del proyecto (src/core/file_manager.create_subfolders)
         subfolders = ["FOTOS", "PLANOS", "PROYECTO", "MEDICIONES", "PRESUPUESTOS"]
-
-        if create_folder:
-            folder_name = sanitize_filename(project_name)
-            save_dir = os.path.dirname(save_path)
-            folder_path = os.path.join(save_dir, folder_name)
-            if not self.file_manager.create_folder(folder_path):
-                wx.MessageBox("No se pudo crear la carpeta.", "Error", wx.OK | wx.ICON_ERROR)
-                return
-            self.file_manager.create_subfolders(folder_path, subfolders)
-            save_path = os.path.join(folder_path, f"{folder_name}.xlsx")
-        else:
-            save_dir = os.path.dirname(save_path)
-            save_path = os.path.join(save_dir, f"{sanitize_filename(project_name)}.xlsx")
+        folder_name = sanitize_filename(project_name)
+        save_dir = os.path.dirname(save_path)
+        folder_path = os.path.join(save_dir, folder_name)
+        if not self.file_manager.create_folder(folder_path):
+            wx.MessageBox("No se pudo crear la carpeta.", "Error", wx.OK | wx.ICON_ERROR)
+            return
+        self.file_manager.create_subfolders(folder_path, subfolders)
+        save_path = os.path.join(folder_path, f"{folder_name}.xlsx")
 
         template_path = self.template_manager.get_template_path()
         if not os.path.exists(template_path):

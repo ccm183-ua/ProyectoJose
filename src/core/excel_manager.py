@@ -99,8 +99,20 @@ class ExcelManager:
         obra_texto = (data.get('tipo', '') or nombre_obra or '').strip()
         obra_final = f"Obra: {obra_texto}." if obra_texto else "Obra:"
 
+        numero_pres = str(data.get('numero_proyecto', '') or data.get('numero', '') or '').strip()
+        fecha_raw = data.get('fecha', '') or ''
+        year_suffix = ''
+        try:
+            fecha_parts = str(fecha_raw).strip().split('-')
+            if len(fecha_parts) == 3:
+                year_suffix = fecha_parts[2]
+        except Exception:
+            pass
+        if numero_pres and year_suffix:
+            numero_pres = f"{numero_pres}/{year_suffix}"
+
         celdas = {
-            "E5": str(data.get('numero_proyecto', '') or data.get('numero', '') or '').strip(),
+            "E5": numero_pres,
             "H5": fecha or '',
             "B7": (data.get('cliente', '') or '').strip(),
             "H7": '',
