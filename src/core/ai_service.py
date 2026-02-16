@@ -47,6 +47,46 @@ class AIService:
         """
         return self._api_key is not None
 
+    def generate_contexto_ia(self, nombre: str, partidas: list) -> Optional[str]:
+        """
+        Genera un contexto_ia descriptivo a partir del nombre y las partidas.
+
+        Usa la IA para crear un párrafo descriptivo que se usará como
+        contexto en futuros prompts de generación de partidas.
+
+        Args:
+            nombre: Nombre de la plantilla.
+            partidas: Lista de partidas extraídas del Excel.
+
+        Returns:
+            String con el contexto generado, o None si la IA no está disponible
+            o hay algún error.
+        """
+        if not self.is_available():
+            return None
+
+        # Extraer lista de conceptos para el prompt
+        conceptos = [p.get('concepto', '') for p in partidas[:15]]
+        lista_conceptos = ", ".join(c for c in conceptos if c)
+
+        prompt = (
+            f"Genera un párrafo descriptivo (3-5 líneas) para un contexto de "
+            f"presupuesto de obra de tipo '{nombre}'. Las partidas incluidas son: "
+            f"{lista_conceptos}. Describe qué incluye este tipo de obra, "
+            f"materiales habituales y consideraciones técnicas importantes. "
+            f"Responde solo con el texto descriptivo, sin formato JSON ni markdown."
+        )
+
+        try:
+            response = self._call_api(prompt)
+            response_text = response.text if hasattr(response, 'text') else str(response)
+            text = response_text.strip()
+            if len(text) >= 20:
+                return text
+            return None
+        except Exception:
+            return None
+
     def generate_partidas(self, prompt: str) -> Tuple[List[Dict], Optional[str]]:
         """
         Genera partidas presupuestarias usando la IA.

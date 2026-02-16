@@ -105,6 +105,21 @@ class WorkTypeCatalog:
         """
         return self._custom_store.add(plantilla)
 
+    def update_custom(self, nombre: str, changes: dict) -> bool:
+        """
+        Actualiza una plantilla personalizada. No permite modificar predefinidas.
+
+        Args:
+            nombre: Nombre de la plantilla a actualizar.
+            changes: Diccionario con los campos a actualizar.
+
+        Returns:
+            True si se actualizó, False si no existe o es predefinida.
+        """
+        if any(p['nombre'] == nombre for p in self._predefined):
+            return False
+        return self._custom_store.update(nombre, changes)
+
     def remove_custom(self, nombre: str) -> bool:
         """
         Elimina una plantilla personalizada.

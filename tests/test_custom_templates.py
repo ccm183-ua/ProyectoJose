@@ -134,6 +134,56 @@ class TestCustomTemplateStore:
         assert store2.count() == 1
         assert store2.load_all()[0]['nombre'] == 'Reforma cocina completa'
 
+    def test_update_descripcion(self, store, sample_plantilla):
+        """Se puede actualizar solo la descripción sin cambiar el resto."""
+        store.add(sample_plantilla)
+        result = store.update('Reforma cocina completa', {'descripcion': 'Nueva descripción'})
+        assert result is True
+        updated = store.get_by_name('Reforma cocina completa')
+        assert updated['descripcion'] == 'Nueva descripción'
+        assert updated['categoria'] == 'reforma'
+        assert len(updated['partidas_base']) == 3
+
+    def test_update_contexto_ia(self, store, sample_plantilla):
+        """Se puede actualizar el contexto_ia."""
+        store.add(sample_plantilla)
+        nuevo_contexto = 'Nuevo contexto IA detallado para cocina completa con fontanería.'
+        result = store.update('Reforma cocina completa', {'contexto_ia': nuevo_contexto})
+        assert result is True
+        assert store.get_by_name('Reforma cocina completa')['contexto_ia'] == nuevo_contexto
+
+    def test_update_partidas_base(self, store, sample_plantilla):
+        """Se puede reemplazar la lista de partidas_base."""
+        store.add(sample_plantilla)
+        nuevas_partidas = [
+            {'concepto': 'Pintura cocina', 'unidad': 'm2', 'precio_ref': 12.0},
+        ]
+        result = store.update('Reforma cocina completa', {'partidas_base': nuevas_partidas})
+        assert result is True
+        updated = store.get_by_name('Reforma cocina completa')
+        assert len(updated['partidas_base']) == 1
+        assert updated['partidas_base'][0]['concepto'] == 'Pintura cocina'
+
+    def test_update_nonexistent(self, store):
+        """Intentar actualizar una plantilla inexistente devuelve False."""
+        assert store.update('No existe', {'descripcion': 'test'}) is False
+
+    def test_update_cannot_change_personalizada(self, store, sample_plantilla):
+        """No se puede cambiar el flag personalizada mediante update."""
+        store.add(sample_plantilla)
+        store.update('Reforma cocina completa', {'personalizada': False})
+        updated = store.get_by_name('Reforma cocina completa')
+        assert updated['personalizada'] is True
+
+    def test_update_nombre_changes_key(self, store, sample_plantilla):
+        """Si se cambia el nombre, se actualiza correctamente."""
+        store.add(sample_plantilla)
+        result = store.update('Reforma cocina completa', {'nombre': 'Cocina premium'})
+        assert result is True
+        assert store.get_by_name('Reforma cocina completa') is None
+        assert store.get_by_name('Cocina premium') is not None
+        assert store.get_by_name('Cocina premium')['categoria'] == 'reforma'
+
 
 # ============================================================
 # Tests: WorkTypeCatalog unificado
@@ -185,6 +235,21 @@ class TestCatalogUnified:
         """No se pueden eliminar plantillas predefinidas."""
         catalog = WorkTypeCatalog()
         assert catalog.remove_custom('Reparación de bajante') is False
+
+    def test_update_custom_via_catalog(self, temp_dir, sample_plantilla):
+        """Se puede actualizar una plantilla personalizada desde el catálogo."""
+        store = CustomTemplateStore(config_dir=temp_dir)
+        catalog = WorkTypeCatalog(custom_store=store)
+        catalog.add_custom(sample_plantilla)
+        result = catalog.update_custom('Reforma cocina completa', {'descripcion': 'Actualizada'})
+        assert result is True
+        assert catalog.get_by_name('Reforma cocina completa')['descripcion'] == 'Actualizada'
+
+    def test_cannot_update_predefined(self):
+        """No se pueden modificar plantillas predefinidas."""
+        catalog = WorkTypeCatalog()
+        result = catalog.update_custom('Reparación de bajante', {'descripcion': 'hack'})
+        assert result is False
 
 
 # ============================================================

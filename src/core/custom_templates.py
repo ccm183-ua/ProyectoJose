@@ -11,6 +11,8 @@ import json
 import os
 from typing import Dict, List, Optional
 
+from src.core.template_validator import TemplateValidator
+
 
 # Archivo de plantillas personalizadas
 CUSTOM_TEMPLATES_FILENAME = "custom_templates.json"
@@ -77,6 +79,12 @@ class CustomTemplateStore:
         if not plantilla.get('nombre'):
             return False
 
+        # Validar esquema antes de guardar
+        validator = TemplateValidator()
+        is_valid, errors = validator.validate(plantilla)
+        if not is_valid:
+            return False
+
         plantillas = self.load_all()
 
         # Reemplazar si ya existe con el mismo nombre
@@ -121,6 +129,61 @@ class CustomTemplateStore:
             if p['nombre'] == nombre:
                 return p
         return None
+
+    def update(self, nombre: str, changes: dict) -> bool:
+        """
+        Actualiza campos de una plantilla personalizada existente.
+
+        Args:
+            nombre: Nombre de la plantilla a actualizar.
+            changes: Diccionario con los campos a actualizar.
+                     Solo se actualizan los campos presentes en 'changes'.
+                     No se permite cambiar 'personalizada'.
+
+        Returns:
+            True si se actualizó, False si no existe.
+        """
+        plantillas = self.load_all()
+
+        # Buscar la plantilla por nombre
+        target_idx = None
+        for i, p in enumerate(plantillas):
+            if p['nombre'] == nombre:
+                target_idx = i
+                break
+
+        if target_idx is None:
+            return False
+
+        # Aplicar cambios (no permitir cambiar 'personalizada')
+        changes_filtered = {
+            k: v for k, v in changes.items() if k != 'personalizada'
+        }
+
+        plantilla = plantillas[target_idx]
+
+        # Si se cambia el nombre, verificar que no hay colisión
+        new_nombre = changes_filtered.get('nombre')
+        if new_nombre and new_nombre != nombre:
+            for p in plantillas:
+                if p['nombre'] == new_nombre:
+                    return False
+
+        # Aplicar cambios en una copia para validar antes de persistir
+        updated = dict(plantilla)
+        updated.update(changes_filtered)
+
+        # Validar el resultado final
+        validator = TemplateValidator()
+        is_valid, errors = validator.validate(updated)
+        if not is_valid:
+            return False
+
+        # Aplicar cambios en el original
+        plantilla.update(changes_filtered)
+
+        self.save_all(plantillas)
+        return True
 
     def count(self) -> int:
         """Devuelve el número de plantillas personalizadas."""

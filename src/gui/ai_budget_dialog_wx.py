@@ -13,6 +13,7 @@ import threading
 
 from src.core.work_type_catalog import WorkTypeCatalog
 from src.core.budget_generator import BudgetGenerator
+from src.core.prompt_builder import PromptBuilder
 from src.core.settings import Settings
 from src.gui import theme
 
@@ -123,6 +124,13 @@ class AIBudgetDialog(wx.Dialog):
             self._plantilla_list, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, theme.SPACE_SM
         )
 
+        # --- Botón vista previa del prompt ---
+        btn_preview = wx.Button(panel, label="Ver prompt que se enviará", size=(220, 30))
+        btn_preview.SetFont(theme.font_sm())
+        btn_preview.SetForegroundColour(theme.TEXT_SECONDARY)
+        btn_preview.Bind(wx.EVT_BUTTON, self._on_preview_prompt)
+        main_sizer.Add(btn_preview, 0, wx.LEFT | wx.TOP, theme.SPACE_SM)
+
         # --- Aviso API key ---
         if not self._settings.has_api_key():
             warning_sizer = wx.BoxSizer(wx.HORIZONTAL)
@@ -183,6 +191,79 @@ class AIBudgetDialog(wx.Dialog):
 
         # Eventos
         self.Bind(wx.EVT_BUTTON, self._on_generate, id=wx.ID_OK)
+
+    def _on_preview_prompt(self, event):
+        """Muestra una vista previa del prompt que se enviará a la IA."""
+        tipo = self._tipo_text.GetValue().strip()
+        descripcion = self._desc_text.GetValue().strip()
+
+        if not tipo:
+            wx.MessageBox(
+                "Escribe el tipo de obra para ver el prompt.",
+                "Campo obligatorio", wx.OK | wx.ICON_WARNING,
+            )
+            return
+
+        # Obtener plantilla seleccionada
+        sel_idx = self._plantilla_list.GetSelection()
+        plantilla = None
+        if sel_idx > 0:
+            nombre = self._plantilla_list.GetString(sel_idx)
+            plantilla = self._catalog.get_by_name(nombre)
+
+        # Construir prompt
+        builder = PromptBuilder()
+        prompt = builder.build_prompt(
+            tipo_obra=tipo,
+            descripcion=descripcion,
+            plantilla=plantilla,
+            datos_proyecto=self._datos_proyecto,
+        )
+
+        # Mostrar en diálogo de solo lectura
+        dlg = wx.Dialog(
+            self, title="Prompt para la IA", size=(600, 500),
+            style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER,
+        )
+        theme.style_dialog(dlg)
+
+        panel = wx.Panel(dlg)
+        theme.style_panel(panel)
+        sizer = wx.BoxSizer(wx.VERTICAL)
+
+        lbl = theme.create_title(panel, "Prompt completo", "xl")
+        sizer.Add(lbl, 0, wx.ALL, theme.SPACE_LG)
+
+        text = wx.TextCtrl(
+            panel, style=wx.TE_MULTILINE | wx.TE_READONLY,
+            size=(-1, -1),
+        )
+        theme.style_textctrl(text)
+        text.SetValue(prompt)
+        sizer.Add(text, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, theme.SPACE_LG)
+
+        info = theme.create_text(
+            panel,
+            f"Longitud: {len(prompt)} caracteres",
+            muted=True,
+        )
+        sizer.Add(info, 0, wx.LEFT | wx.TOP, theme.SPACE_SM)
+
+        btn_close = wx.Button(panel, wx.ID_CLOSE, "Cerrar", size=(100, 36))
+        btn_close.SetFont(theme.font_base())
+        sizer.Add(btn_close, 0, wx.ALIGN_RIGHT | wx.ALL, theme.SPACE_LG)
+
+        panel.SetSizer(sizer)
+
+        dlg_sizer = wx.BoxSizer(wx.VERTICAL)
+        dlg_sizer.Add(panel, 1, wx.EXPAND)
+        dlg.SetSizer(dlg_sizer)
+        dlg.SetMinSize((400, 300))
+
+        dlg.Bind(wx.EVT_BUTTON, lambda e: dlg.EndModal(wx.ID_CLOSE), id=wx.ID_CLOSE)
+        dlg.CenterOnParent()
+        dlg.ShowModal()
+        dlg.Destroy()
 
     def _on_generate(self, event):
         """Valida y lanza la generación de partidas."""
