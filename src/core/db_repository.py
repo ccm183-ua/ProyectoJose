@@ -57,22 +57,22 @@ def _ejecutar(conn, *args, **kwargs):
 # ---------------------------------------------------------------------------
 
 def get_administraciones() -> List[Dict]:
-    """Lista todas las administraciones. Cada elemento es un dict con id, nombre, cif, email, telefono, direccion."""
+    """Lista todas las administraciones. Cada elemento es un dict con id, nombre, email, telefono, direccion."""
     conn = database.connect()
     try:
         cur = conn.execute(
-            "SELECT id, nombre, cif, email, telefono, direccion FROM administracion ORDER BY id"
+            "SELECT id, nombre, email, telefono, direccion FROM administracion ORDER BY id"
         )
         rows = cur.fetchall()
         return [
-            {"id": r[0], "nombre": r[1] or "", "cif": r[2] or "", "email": r[3] or "", "telefono": r[4] or "", "direccion": r[5] or ""}
+            {"id": r[0], "nombre": r[1] or "", "email": r[2] or "", "telefono": r[3] or "", "direccion": r[4] or ""}
             for r in rows
         ]
     finally:
         conn.close()
 
 
-def create_administracion(nombre: str, cif: str = "", email: str = "", telefono: str = "", direccion: str = "") -> Tuple[Optional[int], Optional[str]]:
+def create_administracion(nombre: str, email: str = "", telefono: str = "", direccion: str = "") -> Tuple[Optional[int], Optional[str]]:
     """Crea una administración. nombre es obligatorio. Devuelve (id, None) o (None, mensaje_error)."""
     nombre = nombre.strip()
     if not nombre:
@@ -80,8 +80,8 @@ def create_administracion(nombre: str, cif: str = "", email: str = "", telefono:
     conn = database.connect()
     try:
         conn.execute(
-            "INSERT INTO administracion (nombre, cif, email, telefono, direccion) VALUES (?, ?, ?, ?, ?)",
-            (nombre, cif.strip() or None, email.strip() or None, telefono.strip() or None, direccion.strip() or None),
+            "INSERT INTO administracion (nombre, email, telefono, direccion) VALUES (?, ?, ?, ?)",
+            (nombre, email.strip() or None, telefono.strip() or None, direccion.strip() or None),
         )
         conn.commit()
         cur = conn.execute("SELECT last_insert_rowid()")
@@ -96,7 +96,7 @@ def create_administracion(nombre: str, cif: str = "", email: str = "", telefono:
         conn.close()
 
 
-def update_administracion(id_: int, nombre: str, cif: str = "", email: str = "", telefono: str = "", direccion: str = "") -> Optional[str]:
+def update_administracion(id_: int, nombre: str, email: str = "", telefono: str = "", direccion: str = "") -> Optional[str]:
     """Actualiza una administración. nombre es obligatorio. Devuelve None si ok, o mensaje de error."""
     nombre = nombre.strip()
     if not nombre:
@@ -105,8 +105,8 @@ def update_administracion(id_: int, nombre: str, cif: str = "", email: str = "",
     try:
         err = _ejecutar(
             conn,
-            "UPDATE administracion SET nombre=?, cif=?, email=?, telefono=?, direccion=? WHERE id=?",
-            (nombre, cif.strip() or None, email.strip() or None, telefono.strip() or None, direccion.strip() or None, id_),
+            "UPDATE administracion SET nombre=?, email=?, telefono=?, direccion=? WHERE id=?",
+            (nombre, email.strip() or None, telefono.strip() or None, direccion.strip() or None, id_),
         )
         return err
     finally:
@@ -128,7 +128,7 @@ def get_administraciones_para_tabla() -> List[Dict]:
     conn = database.connect()
     try:
         cur = conn.execute("""
-            SELECT a.id, a.nombre, a.cif, a.email, a.telefono, a.direccion,
+            SELECT a.id, a.nombre, a.email, a.telefono, a.direccion,
                    COALESCE(GROUP_CONCAT(c.nombre), '') AS contactos
             FROM administracion a
             LEFT JOIN administracion_contacto ac ON ac.administracion_id = a.id
@@ -141,11 +141,10 @@ def get_administraciones_para_tabla() -> List[Dict]:
             {
                 "id": r[0],
                 "nombre": r[1] or "",
-                "cif": r[2] or "",
-                "email": r[3] or "",
-                "telefono": r[4] or "",
-                "direccion": r[5] or "",
-                "contactos": (r[6] or "").strip() or "—",
+                "email": r[2] or "",
+                "telefono": r[3] or "",
+                "direccion": r[4] or "",
+                "contactos": (r[5] or "").strip() or "—",
             }
             for r in rows
         ]
@@ -168,7 +167,7 @@ def buscar_administracion_por_nombre(nombre: str) -> Optional[Dict]:
     conn = database.connect()
     try:
         cur = conn.execute(
-            "SELECT id, nombre, cif, email, telefono, direccion "
+            "SELECT id, nombre, email, telefono, direccion "
             "FROM administracion WHERE LOWER(TRIM(nombre)) = LOWER(?)",
             (nombre,),
         )
@@ -176,8 +175,8 @@ def buscar_administracion_por_nombre(nombre: str) -> Optional[Dict]:
         if not r:
             return None
         return {
-            "id": r[0], "nombre": r[1] or "", "cif": r[2] or "",
-            "email": r[3] or "", "telefono": r[4] or "", "direccion": r[5] or "",
+            "id": r[0], "nombre": r[1] or "",
+            "email": r[2] or "", "telefono": r[3] or "", "direccion": r[4] or "",
         }
     finally:
         conn.close()
@@ -203,7 +202,7 @@ def buscar_administraciones_fuzzy(nombre: str, umbral: float = 0.55) -> List[Dic
     conn = database.connect()
     try:
         cur = conn.execute(
-            "SELECT id, nombre, cif, email, telefono, direccion FROM administracion ORDER BY nombre"
+            "SELECT id, nombre, email, telefono, direccion FROM administracion ORDER BY nombre"
         )
         rows = cur.fetchall()
         nombre_lower = nombre.lower()
@@ -213,8 +212,8 @@ def buscar_administraciones_fuzzy(nombre: str, umbral: float = 0.55) -> List[Dic
             ratio = SequenceMatcher(None, nombre_lower, nombre_db).ratio()
             if ratio >= umbral:
                 resultados.append({
-                    "id": r[0], "nombre": r[1] or "", "cif": r[2] or "",
-                    "email": r[3] or "", "telefono": r[4] or "", "direccion": r[5] or "",
+                    "id": r[0], "nombre": r[1] or "",
+                    "email": r[2] or "", "telefono": r[3] or "", "direccion": r[4] or "",
                     "similitud": round(ratio, 3),
                 })
         resultados.sort(key=lambda x: x["similitud"], reverse=True)
@@ -228,11 +227,11 @@ def buscar_administraciones_fuzzy(nombre: str, umbral: float = 0.55) -> List[Dic
 # ---------------------------------------------------------------------------
 
 def get_comunidades() -> List[Dict]:
-    """Lista todas las comunidades con id, nombre, direccion, email, telefono, administracion_id y nombre_administracion."""
+    """Lista todas las comunidades con id, nombre, cif, direccion, email, telefono, administracion_id y nombre_administracion."""
     conn = database.connect()
     try:
         cur = conn.execute("""
-            SELECT c.id, c.nombre, c.direccion, c.email, c.telefono, c.administracion_id,
+            SELECT c.id, c.nombre, c.cif, c.direccion, c.email, c.telefono, c.administracion_id,
                    COALESCE(a.nombre, a.email) AS admin_nombre
             FROM comunidad c
             LEFT JOIN administracion a ON a.id = c.administracion_id
@@ -243,11 +242,12 @@ def get_comunidades() -> List[Dict]:
             {
                 "id": r[0],
                 "nombre": r[1] or "",
-                "direccion": r[2] or "",
-                "email": r[3] or "",
-                "telefono": r[4] or "",
-                "administracion_id": r[5],
-                "nombre_administracion": r[6] or "(sin asignar)",
+                "cif": r[2] or "",
+                "direccion": r[3] or "",
+                "email": r[4] or "",
+                "telefono": r[5] or "",
+                "administracion_id": r[6],
+                "nombre_administracion": r[7] or "(sin asignar)",
             }
             for r in rows
         ]
@@ -258,6 +258,7 @@ def get_comunidades() -> List[Dict]:
 def create_comunidad(
     nombre: str,
     administracion_id: int,
+    cif: str = "",
     direccion: str = "",
     email: str = "",
     telefono: str = "",
@@ -269,8 +270,8 @@ def create_comunidad(
     conn = database.connect()
     try:
         conn.execute(
-            "INSERT INTO comunidad (nombre, direccion, email, telefono, administracion_id) VALUES (?, ?, ?, ?, ?)",
-            (nombre, direccion.strip() or None, email.strip() or None, telefono.strip() or None, administracion_id),
+            "INSERT INTO comunidad (nombre, cif, direccion, email, telefono, administracion_id) VALUES (?, ?, ?, ?, ?, ?)",
+            (nombre, cif.strip() or None, direccion.strip() or None, email.strip() or None, telefono.strip() or None, administracion_id),
         )
         conn.commit()
         cur = conn.execute("SELECT last_insert_rowid()")
@@ -289,6 +290,7 @@ def update_comunidad(
     id_: int,
     nombre: str,
     administracion_id: int,
+    cif: str = "",
     direccion: str = "",
     email: str = "",
     telefono: str = "",
@@ -301,8 +303,8 @@ def update_comunidad(
     try:
         err = _ejecutar(
             conn,
-            "UPDATE comunidad SET nombre=?, direccion=?, email=?, telefono=?, administracion_id=? WHERE id=?",
-            (nombre, direccion.strip() or None, email.strip() or None, telefono.strip() or None, administracion_id, id_),
+            "UPDATE comunidad SET nombre=?, cif=?, direccion=?, email=?, telefono=?, administracion_id=? WHERE id=?",
+            (nombre, cif.strip() or None, direccion.strip() or None, email.strip() or None, telefono.strip() or None, administracion_id, id_),
         )
         return err
     finally:
@@ -320,11 +322,11 @@ def delete_comunidad(id_: int) -> Optional[str]:
 
 
 def get_comunidades_para_tabla() -> List[Dict]:
-    """Lista comunidades con administracion_id, nombre_administracion y contactos (para tabla y clics)."""
+    """Lista comunidades con cif, administracion_id, nombre_administracion y contactos (para tabla y clics)."""
     conn = database.connect()
     try:
         cur = conn.execute("""
-            SELECT c.id, c.nombre, c.direccion, c.email, c.telefono, c.administracion_id,
+            SELECT c.id, c.nombre, c.cif, c.direccion, c.email, c.telefono, c.administracion_id,
                    COALESCE(a.nombre, a.email, '(sin asignar)') AS nombre_administracion,
                    COALESCE(GROUP_CONCAT(ct.nombre), '') AS contactos
             FROM comunidad c
@@ -339,15 +341,91 @@ def get_comunidades_para_tabla() -> List[Dict]:
             {
                 "id": r[0],
                 "nombre": r[1] or "",
-                "direccion": r[2] or "",
-                "email": r[3] or "",
-                "telefono": r[4] or "",
-                "administracion_id": r[5],
-                "nombre_administracion": r[6] or "—",
-                "contactos": (r[7] or "").strip() or "—",
+                "cif": r[2] or "",
+                "direccion": r[3] or "",
+                "email": r[4] or "",
+                "telefono": r[5] or "",
+                "administracion_id": r[6],
+                "nombre_administracion": r[7] or "—",
+                "contactos": (r[8] or "").strip() or "—",
             }
             for r in rows
         ]
+    finally:
+        conn.close()
+
+
+def buscar_comunidad_por_nombre(nombre: str) -> Optional[Dict]:
+    """Busca una comunidad por nombre exacto (case-insensitive).
+
+    Args:
+        nombre: Nombre a buscar.
+
+    Returns:
+        Dict con los datos de la comunidad o None si no se encuentra.
+    """
+    nombre = nombre.strip()
+    if not nombre:
+        return None
+    conn = database.connect()
+    try:
+        cur = conn.execute(
+            "SELECT id, nombre, cif, direccion, email, telefono, administracion_id "
+            "FROM comunidad WHERE LOWER(TRIM(nombre)) = LOWER(?)",
+            (nombre,),
+        )
+        r = cur.fetchone()
+        if not r:
+            return None
+        return {
+            "id": r[0], "nombre": r[1] or "",
+            "cif": r[2] or "", "direccion": r[3] or "",
+            "email": r[4] or "", "telefono": r[5] or "",
+            "administracion_id": r[6],
+        }
+    finally:
+        conn.close()
+
+
+def buscar_comunidades_fuzzy(nombre: str, umbral: float = 0.55) -> List[Dict]:
+    """Busca comunidades cuyo nombre sea similar al dado (fuzzy matching).
+
+    Usa difflib.SequenceMatcher para calcular la similitud. Solo devuelve
+    resultados cuya ratio >= umbral, ordenados de mayor a menor similitud.
+
+    Args:
+        nombre: Nombre aproximado a buscar.
+        umbral: Ratio mínimo de similitud (0-1). Por defecto 0.55.
+
+    Returns:
+        Lista de dicts con los datos de las comunidades encontradas,
+        cada uno con un campo extra 'similitud' (float 0-1).
+    """
+    nombre = nombre.strip()
+    if not nombre:
+        return []
+    conn = database.connect()
+    try:
+        cur = conn.execute(
+            "SELECT id, nombre, cif, direccion, email, telefono, administracion_id "
+            "FROM comunidad ORDER BY nombre"
+        )
+        rows = cur.fetchall()
+        nombre_lower = nombre.lower()
+        resultados = []
+        for r in rows:
+            nombre_db = (r[1] or "").strip().lower()
+            ratio = SequenceMatcher(None, nombre_lower, nombre_db).ratio()
+            if ratio >= umbral:
+                resultados.append({
+                    "id": r[0], "nombre": r[1] or "",
+                    "cif": r[2] or "", "direccion": r[3] or "",
+                    "email": r[4] or "", "telefono": r[5] or "",
+                    "administracion_id": r[6],
+                    "similitud": round(ratio, 3),
+                })
+        resultados.sort(key=lambda x: x["similitud"], reverse=True)
+        return resultados
     finally:
         conn.close()
 
@@ -489,13 +567,13 @@ def get_administracion_por_id(id_: int) -> Optional[Dict]:
     conn = database.connect()
     try:
         cur = conn.execute(
-            "SELECT id, nombre, cif, email, telefono, direccion FROM administracion WHERE id=?",
+            "SELECT id, nombre, email, telefono, direccion FROM administracion WHERE id=?",
             (id_,),
         )
         r = cur.fetchone()
         if not r:
             return None
-        return {"id": r[0], "nombre": r[1] or "", "cif": r[2] or "", "email": r[3] or "", "telefono": r[4] or "", "direccion": r[5] or ""}
+        return {"id": r[0], "nombre": r[1] or "", "email": r[2] or "", "telefono": r[3] or "", "direccion": r[4] or ""}
     finally:
         conn.close()
 
@@ -505,7 +583,7 @@ def get_comunidad_por_id(id_: int) -> Optional[Dict]:
     conn = database.connect()
     try:
         cur = conn.execute(
-            "SELECT id, nombre, direccion, email, telefono, administracion_id FROM comunidad WHERE id=?",
+            "SELECT id, nombre, cif, direccion, email, telefono, administracion_id FROM comunidad WHERE id=?",
             (id_,),
         )
         r = cur.fetchone()
@@ -514,10 +592,11 @@ def get_comunidad_por_id(id_: int) -> Optional[Dict]:
         return {
             "id": r[0],
             "nombre": r[1] or "",
-            "direccion": r[2] or "",
-            "email": r[3] or "",
-            "telefono": r[4] or "",
-            "administracion_id": r[5],
+            "cif": r[2] or "",
+            "direccion": r[3] or "",
+            "email": r[4] or "",
+            "telefono": r[5] or "",
+            "administracion_id": r[6],
         }
     finally:
         conn.close()
@@ -638,6 +717,44 @@ def set_comunidad_contacto(contacto_id: int, comunidad_ids: List[int]) -> Option
             )
             if err:
                 return err
+        conn.commit()
+        return None
+    except sqlite3.IntegrityError as e:
+        conn.rollback()
+        return _mensaje_integridad(e)
+    finally:
+        conn.close()
+
+
+def set_contactos_para_administracion(administracion_id: int, contacto_ids: List[int]) -> Optional[str]:
+    """Sustituye los contactos asignados a una administración por la lista dada."""
+    conn = database.connect()
+    try:
+        conn.execute("DELETE FROM administracion_contacto WHERE administracion_id=?", (administracion_id,))
+        for cid in contacto_ids:
+            conn.execute(
+                "INSERT INTO administracion_contacto (administracion_id, contacto_id) VALUES (?, ?)",
+                (administracion_id, cid),
+            )
+        conn.commit()
+        return None
+    except sqlite3.IntegrityError as e:
+        conn.rollback()
+        return _mensaje_integridad(e)
+    finally:
+        conn.close()
+
+
+def set_contactos_para_comunidad(comunidad_id: int, contacto_ids: List[int]) -> Optional[str]:
+    """Sustituye los contactos asignados a una comunidad por la lista dada."""
+    conn = database.connect()
+    try:
+        conn.execute("DELETE FROM comunidad_contacto WHERE comunidad_id=?", (comunidad_id,))
+        for cid in contacto_ids:
+            conn.execute(
+                "INSERT INTO comunidad_contacto (comunidad_id, contacto_id) VALUES (?, ?)",
+                (comunidad_id, cid),
+            )
         conn.commit()
         return None
     except sqlite3.IntegrityError as e:
