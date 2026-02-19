@@ -10,128 +10,61 @@ from src.gui import theme
 
 
 # ---------------------------------------------------------------------------
-# Diálogos de confirmación / selección de administración
+# Diálogos de confirmación / selección de comunidad (flujo presupuesto)
 # ---------------------------------------------------------------------------
 
-ID_BTN_NUEVA_ADMIN = wx.NewIdRef()
+ID_BTN_NUEVA_COMUNIDAD = wx.NewIdRef()
 
 
-class NuevaAdminDialog(wx.Dialog):
-    """Formulario para crear una nueva administración desde el flujo de presupuesto."""
+def crear_comunidad_con_formulario(parent, nombre_prefill: str = "") -> dict | None:
+    """Abre el formulario unificado de comunidad, crea la entidad y devuelve sus datos.
 
-    def __init__(self, parent, nombre_prefill: str = ""):
-        super().__init__(parent, title="Nueva Administración",
-                         style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
-        theme.style_dialog(self)
-        self._nombre_prefill = nombre_prefill
-        self._admin_creada = None
-        self._build_ui()
+    Utiliza ComunidadFormDialog de db_manager_wx para que el formulario sea
+    idéntico tanto en la gestión de BDD como en el flujo de creación de proyecto.
+    """
+    from src.gui.db_manager_wx import ComunidadFormDialog
 
-    def _build_ui(self):
-        panel = wx.Panel(self)
-        theme.style_panel(panel)
-        sizer = wx.BoxSizer(wx.VERTICAL)
-
-        title = theme.create_title(panel, "Añadir administración", "xl")
-        sizer.Add(title, 0, wx.ALL, theme.SPACE_XL)
-
-        msg = theme.create_text(
-            panel,
-            "Rellene los datos de la nueva administración.\n"
-            "Los campos marcados con (*) son obligatorios."
-        )
-        msg.Wrap(440)
-        sizer.Add(msg, 0, wx.LEFT | wx.RIGHT, theme.SPACE_XL)
-
-        sizer.AddSpacer(theme.SPACE_LG)
-
-        grid = wx.FlexGridSizer(cols=2, vgap=8, hgap=12)
-        grid.AddGrowableCol(1, 1)
-
-        campos_def = [
-            ("Nombre (*):", "_nombre"),
-            ("CIF:", "_cif"),
-            ("Correo:", "_email"),
-            ("Teléfono:", "_telefono"),
-            ("Dirección:", "_direccion"),
-        ]
-        for label_text, attr in campos_def:
-            lbl = wx.StaticText(panel, label=label_text)
-            lbl.SetFont(theme.get_font_medium())
-            lbl.SetForegroundColour(theme.TEXT_PRIMARY)
-            grid.Add(lbl, 0, wx.ALIGN_RIGHT | wx.ALIGN_CENTER_VERTICAL)
-
-            txt = wx.TextCtrl(panel, size=(280, -1))
-            txt.SetFont(theme.font_base())
-            setattr(self, attr, txt)
-            grid.Add(txt, 1, wx.EXPAND)
-
-        self._nombre.SetValue(self._nombre_prefill)
-
-        sizer.Add(grid, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, theme.SPACE_XL)
-
-        sizer.Add(theme.create_divider(panel), 0, wx.EXPAND | wx.ALL, theme.SPACE_XL)
-
-        btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
-        btn_cancel = wx.Button(panel, wx.ID_CANCEL, "Cancelar", size=(130, 44))
-        btn_cancel.SetFont(theme.font_base())
-        btn_ok = wx.Button(panel, wx.ID_OK, "Guardar y usar", size=(160, 44))
-        btn_ok.SetFont(theme.get_font_medium())
-        btn_ok.SetBackgroundColour(theme.ACCENT_PRIMARY)
-        btn_ok.SetForegroundColour(theme.TEXT_INVERSE)
-        btn_ok.SetDefault()
-        btn_sizer.Add(btn_cancel, 0, wx.RIGHT, theme.SPACE_MD)
-        btn_sizer.Add(btn_ok, 0)
-        sizer.Add(btn_sizer, 0, wx.ALIGN_RIGHT | wx.RIGHT | wx.BOTTOM, theme.SPACE_XL)
-
-        panel.SetSizer(sizer)
-        dialog_sizer = wx.BoxSizer(wx.VERTICAL)
-        dialog_sizer.Add(panel, 1, wx.EXPAND)
-        self.SetSizer(dialog_sizer)
-
-        self.Fit()
-        size = self.GetSize()
-        self.SetMinSize((max(560, size.x), max(470, size.y)))
-        self.SetSize((max(560, size.x), max(470, size.y)))
-        self.CenterOnParent()
-
-        self.Bind(wx.EVT_BUTTON, self._on_ok, id=wx.ID_OK)
-
-    def _on_ok(self, event):
-        nombre = self._nombre.GetValue().strip()
-        if not nombre:
-            wx.MessageBox("El nombre de la administración es obligatorio.", "Aviso", wx.OK)
-            return
-
-        cif = self._cif.GetValue().strip()
-        email = self._email.GetValue().strip()
-        telefono = self._telefono.GetValue().strip()
-        direccion = self._direccion.GetValue().strip()
-
-        new_id, err = db_repository.create_administracion(
-            nombre, cif=cif, email=email, telefono=telefono, direccion=direccion,
+    initial = {"nombre": nombre_prefill} if nombre_prefill else {}
+    dlg = ComunidadFormDialog(parent, "Nueva Comunidad", initial=initial)
+    result = None
+    if dlg.ShowModal() == wx.ID_OK:
+        vals = dlg.get_values()
+        nombre = vals.get("nombre", "").strip()
+        admin_id = vals.get("administracion_id")
+        new_id, err = db_repository.create_comunidad(
+            nombre, admin_id,
+            cif=vals.get("cif", ""),
+            direccion=vals.get("direccion", ""),
+            email=vals.get("email", ""),
+            telefono=vals.get("telefono", ""),
         )
         if err:
-            wx.MessageBox(f"Error al crear la administración:\n{err}", "Error", wx.OK | wx.ICON_ERROR)
-            return
+            wx.MessageBox(f"Error al crear la comunidad:\n{err}", "Error",
+                          wx.OK | wx.ICON_ERROR)
+        else:
+            ct_ids = vals.get("contacto_ids", [])
+            if ct_ids:
+                db_repository.set_contactos_para_comunidad(new_id, ct_ids)
+            result = {
+                "id": new_id, "nombre": nombre,
+                "cif": vals.get("cif", ""),
+                "direccion": vals.get("direccion", ""),
+                "email": vals.get("email", ""),
+                "telefono": vals.get("telefono", ""),
+                "administracion_id": admin_id,
+            }
+    dlg.Destroy()
+    return result
 
-        self._admin_creada = {
-            "id": new_id, "nombre": nombre, "cif": cif,
-            "email": email, "telefono": telefono, "direccion": direccion,
-        }
-        self.EndModal(wx.ID_OK)
 
-    def get_admin_data(self) -> dict | None:
-        return self._admin_creada
+class ComunidadConfirmDialog(wx.Dialog):
+    """Diálogo que muestra los datos de una comunidad encontrada y pide confirmación."""
 
-class AdminConfirmDialog(wx.Dialog):
-    """Diálogo que muestra los datos de una administración encontrada y pide confirmación."""
-
-    def __init__(self, parent, admin_data: dict, nombre_buscado: str):
-        super().__init__(parent, title="Administración encontrada",
+    def __init__(self, parent, comunidad_data: dict, nombre_buscado: str):
+        super().__init__(parent, title="Comunidad encontrada",
                          style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         theme.style_dialog(self)
-        self._admin = admin_data
+        self._comunidad = comunidad_data
         self._nombre_buscado = nombre_buscado
         self._build_ui()
 
@@ -140,12 +73,12 @@ class AdminConfirmDialog(wx.Dialog):
         theme.style_panel(panel)
         sizer = wx.BoxSizer(wx.VERTICAL)
 
-        title = theme.create_title(panel, "Administración encontrada", "xl")
+        title = theme.create_title(panel, "Comunidad encontrada", "xl")
         sizer.Add(title, 0, wx.ALL, theme.SPACE_XL)
 
         msg = theme.create_text(
             panel,
-            f'Se ha encontrado una administración con el nombre "{self._nombre_buscado}".\n'
+            f'Se ha encontrado una comunidad con el nombre "{self._nombre_buscado}".\n'
             "¿Desea rellenar automáticamente los datos del presupuesto con esta información?"
         )
         msg.Wrap(440)
@@ -153,16 +86,15 @@ class AdminConfirmDialog(wx.Dialog):
 
         sizer.AddSpacer(theme.SPACE_LG)
 
-        # Mostrar datos de la administración en un grid
         grid = wx.FlexGridSizer(cols=2, vgap=6, hgap=12)
         grid.AddGrowableCol(1, 1)
 
         campos = [
-            ("Nombre:", self._admin.get("nombre", "")),
-            ("CIF:", self._admin.get("cif", "") or "(vacío)"),
-            ("Correo:", self._admin.get("email", "") or "(vacío)"),
-            ("Teléfono:", self._admin.get("telefono", "") or "(vacío)"),
-            ("Dirección:", self._admin.get("direccion", "") or "(vacío)"),
+            ("Nombre:", self._comunidad.get("nombre", "")),
+            ("CIF:", self._comunidad.get("cif", "") or "(vacío)"),
+            ("Correo:", self._comunidad.get("email", "") or "(vacío)"),
+            ("Teléfono:", self._comunidad.get("telefono", "") or "(vacío)"),
+            ("Dirección:", self._comunidad.get("direccion", "") or "(vacío)"),
         ]
         for label_text, value_text in campos:
             lbl = wx.StaticText(panel, label=label_text)
@@ -179,7 +111,6 @@ class AdminConfirmDialog(wx.Dialog):
 
         sizer.Add(theme.create_divider(panel), 0, wx.EXPAND | wx.ALL, theme.SPACE_XL)
 
-        # Botones
         btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
         btn_no = wx.Button(panel, wx.ID_CANCEL, "No, continuar sin datos", size=(200, 44))
         btn_no.SetFont(theme.font_base())
@@ -197,19 +128,14 @@ class AdminConfirmDialog(wx.Dialog):
         dialog_sizer = wx.BoxSizer(wx.VERTICAL)
         dialog_sizer.Add(panel, 1, wx.EXPAND)
         self.SetSizer(dialog_sizer)
+        theme.fit_dialog(self, 580, 460)
 
-        self.Fit()
-        size = self.GetSize()
-        self.SetMinSize((max(580, size.x), max(460, size.y)))
-        self.SetSize((max(580, size.x), max(460, size.y)))
-        self.CenterOnParent()
-
-    def get_admin_data(self) -> dict:
-        return self._admin
+    def get_comunidad_data(self) -> dict:
+        return self._comunidad
 
 
-class AdminFuzzySelectDialog(wx.Dialog):
-    """Diálogo que muestra coincidencias fuzzy y permite al usuario elegir una administración."""
+class ComunidadFuzzySelectDialog(wx.Dialog):
+    """Diálogo que muestra coincidencias fuzzy y permite al usuario elegir una comunidad."""
 
     def __init__(self, parent, resultados: list, nombre_buscado: str):
         super().__init__(parent, title="Coincidencias aproximadas",
@@ -217,7 +143,7 @@ class AdminFuzzySelectDialog(wx.Dialog):
         theme.style_dialog(self)
         self._resultados = resultados
         self._nombre_buscado = nombre_buscado
-        self._selected_admin = None
+        self._selected_comunidad = None
         self._build_ui()
 
     def _build_ui(self):
@@ -230,7 +156,7 @@ class AdminFuzzySelectDialog(wx.Dialog):
 
         msg = theme.create_text(
             panel,
-            f'No se encontró una administración exacta con "{self._nombre_buscado}", '
+            f'No se encontró una comunidad exacta con "{self._nombre_buscado}", '
             "pero se encontraron las siguientes coincidencias.\n"
             "Seleccione una para rellenar los datos del presupuesto:"
         )
@@ -239,7 +165,6 @@ class AdminFuzzySelectDialog(wx.Dialog):
 
         sizer.AddSpacer(theme.SPACE_MD)
 
-        # Lista de resultados
         self._list = wx.ListCtrl(panel, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
         self._list.SetFont(theme.font_base())
         self._list.InsertColumn(0, "Nombre", width=200)
@@ -247,11 +172,11 @@ class AdminFuzzySelectDialog(wx.Dialog):
         self._list.InsertColumn(2, "Correo", width=160)
         self._list.InsertColumn(3, "Similitud", width=80)
 
-        for idx, admin in enumerate(self._resultados):
-            pos = self._list.InsertItem(idx, admin.get("nombre", ""))
-            self._list.SetItem(pos, 1, admin.get("cif", "") or "")
-            self._list.SetItem(pos, 2, admin.get("email", "") or "")
-            similitud_pct = f"{admin.get('similitud', 0) * 100:.0f}%"
+        for idx, com in enumerate(self._resultados):
+            pos = self._list.InsertItem(idx, com.get("nombre", ""))
+            self._list.SetItem(pos, 1, com.get("cif", "") or "")
+            self._list.SetItem(pos, 2, com.get("email", "") or "")
+            similitud_pct = f"{com.get('similitud', 0) * 100:.0f}%"
             self._list.SetItem(pos, 3, similitud_pct)
 
         if self._resultados:
@@ -261,11 +186,10 @@ class AdminFuzzySelectDialog(wx.Dialog):
 
         sizer.Add(theme.create_divider(panel), 0, wx.EXPAND | wx.ALL, theme.SPACE_XL)
 
-        # Botones
         btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
         btn_skip = wx.Button(panel, wx.ID_CANCEL, "Continuar sin datos", size=(170, 44))
         btn_skip.SetFont(theme.font_base())
-        btn_new = wx.Button(panel, ID_BTN_NUEVA_ADMIN, "Añadir nueva", size=(150, 44))
+        btn_new = wx.Button(panel, ID_BTN_NUEVA_COMUNIDAD, "Añadir nueva", size=(150, 44))
         btn_new.SetFont(theme.font_base())
         btn_ok = wx.Button(panel, wx.ID_OK, "Usar seleccionada", size=(170, 44))
         btn_ok.SetFont(theme.get_font_medium())
@@ -282,35 +206,27 @@ class AdminFuzzySelectDialog(wx.Dialog):
         dialog_sizer = wx.BoxSizer(wx.VERTICAL)
         dialog_sizer.Add(panel, 1, wx.EXPAND)
         self.SetSizer(dialog_sizer)
-
-        self.Fit()
-        size = self.GetSize()
-        self.SetMinSize((max(720, size.x), max(500, size.y)))
-        self.SetSize((max(720, size.x), max(500, size.y)))
-        self.CenterOnParent()
+        theme.fit_dialog(self, 720, 500)
 
         self.Bind(wx.EVT_BUTTON, self._on_ok, id=wx.ID_OK)
-        self.Bind(wx.EVT_BUTTON, self._on_nueva_admin, id=ID_BTN_NUEVA_ADMIN)
+        self.Bind(wx.EVT_BUTTON, self._on_nueva_comunidad, id=ID_BTN_NUEVA_COMUNIDAD)
 
     def _on_ok(self, event):
         sel = self._list.GetFirstSelected()
         if sel < 0:
-            wx.MessageBox("Seleccione una administración de la lista.", "Aviso", wx.OK)
+            wx.MessageBox("Seleccione una comunidad de la lista.", "Aviso", wx.OK)
             return
-        self._selected_admin = self._resultados[sel]
+        self._selected_comunidad = self._resultados[sel]
         self.EndModal(wx.ID_OK)
 
-    def _on_nueva_admin(self, event):
-        dlg = NuevaAdminDialog(self, nombre_prefill=self._nombre_buscado)
-        if dlg.ShowModal() == wx.ID_OK:
-            self._selected_admin = dlg.get_admin_data()
-            dlg.Destroy()
+    def _on_nueva_comunidad(self, event):
+        result = crear_comunidad_con_formulario(self, nombre_prefill=self._nombre_buscado)
+        if result:
+            self._selected_comunidad = result
             self.EndModal(wx.ID_OK)
-        else:
-            dlg.Destroy()
 
-    def get_admin_data(self) -> dict:
-        return self._selected_admin
+    def get_comunidad_data(self) -> dict:
+        return self._selected_comunidad
 
 
 class ProjectNameDialogWx(wx.Dialog):
@@ -394,10 +310,7 @@ class ProjectNameDialogWx(wx.Dialog):
         dialog_sizer = wx.BoxSizer(wx.VERTICAL)
         dialog_sizer.Add(panel, 1, wx.EXPAND)
         self.SetSizer(dialog_sizer)
-        
-        self.SetMinSize((600, 560))
-        self.SetSize((660, 600))
-        self.CenterOnParent()
+        theme.fit_dialog(self, 600, 560)
         self.Bind(wx.EVT_BUTTON, self._on_validate_ok, id=wx.ID_OK)
 
     def _load_from_clipboard(self):
