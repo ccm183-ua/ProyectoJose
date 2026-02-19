@@ -19,7 +19,7 @@ import pytest
 from src.core.excel_manager import ExcelManager
 from src.core.template_manager import TemplateManager
 
-SHEET_12220 = "xl/worksheets/sheet2.xml"
+SHEET_12220 = "xl/worksheets/sheet1.xml"
 
 
 @pytest.fixture
@@ -81,13 +81,12 @@ class TestInsertPartidas:
         assert zipfile.is_zipfile(budget_file)
 
     def test_partidas_in_correct_sheet(self, budget_file, sample_partidas):
-        """Las partidas se insertan en sheet2 (PRESUP FINAL), no en sheet1."""
+        """Las partidas se insertan en sheet1 (plantilla 122-20)."""
         em = ExcelManager()
         em.insert_partidas_via_xml(budget_file, sample_partidas)
-        sheet2 = _read_sheet2(budget_file)
-        # Verificar que el concepto aparece en sheet2
-        assert "Desmontaje de bajante existente" in sheet2
-        assert "Codo PVC 45 grados" in sheet2
+        sheet = _read_sheet2(budget_file)
+        assert "Desmontaje de bajante existente" in sheet
+        assert "Codo PVC 45 grados" in sheet
 
     def test_correct_number_of_data_rows(self, budget_file, sample_partidas):
         """Se generan el número correcto de filas de datos (una por partida)."""
@@ -129,17 +128,17 @@ class TestInsertPartidas:
         assert "SUM(I17:I26)" in sheet2, "Subtotal debe tener SUM(I17:I26)"
 
     def test_styles_preserved(self, budget_file, sample_partidas):
-        """Los estilos de celda se mantienen (s=33 para num, s=14 para valores)."""
+        """Los estilos de celda se mantienen según la plantilla 122-20."""
         em = ExcelManager()
         em.insert_partidas_via_xml(budget_file, sample_partidas)
-        sheet2 = _read_sheet2(budget_file)
+        sheet = _read_sheet2(budget_file)
 
-        # A17 debe tener estilo s="33"
-        assert re.search(r'<c r="A17" s="33"', sheet2), "A17 debe tener estilo s=33"
-        # G17 debe tener estilo s="14"
-        assert re.search(r'<c r="G17" s="14"', sheet2), "G17 debe tener estilo s=14"
-        # I17 debe tener estilo s="14"
-        assert re.search(r'<c r="I17" s="14"', sheet2), "I17 debe tener estilo s=14"
+        # A17 debe tener estilo s="31" (número de partida)
+        assert re.search(r'<c r="A17" s="31"', sheet), "A17 debe tener estilo s=31"
+        # G17 debe tener estilo s="34" (cantidad)
+        assert re.search(r'<c r="G17" s="34"', sheet), "G17 debe tener estilo s=34"
+        # I17 debe tener estilo s="35" (total con fórmula)
+        assert re.search(r'<c r="I17" s="35"', sheet), "I17 debe tener estilo s=35"
 
     def test_merge_cells_for_description(self, budget_file, sample_partidas):
         """Las celdas de descripción (C:F) están combinadas para cada fila de datos."""

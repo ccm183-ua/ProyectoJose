@@ -259,7 +259,10 @@ class ExcelManager:
                 sheet_content = z_in.read(SHEET_12220).decode("utf-8")
                 otros = {n: z_in.read(n) for n in namelist if n != SHEET_12220}
 
-            sheet_content = self._replace_partidas_in_xml(sheet_content, partidas)
+            wrap_style = self._create_wrap_style(otros, 47)
+            sheet_content = self._replace_partidas_in_xml(
+                sheet_content, partidas, asciende_style=wrap_style,
+            )
 
             fd, tmp_path = tempfile.mkstemp(suffix=".xlsx")
             try:
@@ -328,7 +331,7 @@ class ExcelManager:
 
         return str(round(height, 1))
 
-    def _replace_partidas_in_xml(self, sheet_xml, partidas):
+    def _replace_partidas_in_xml(self, sheet_xml, partidas, asciende_style="47"):
         """
         Reemplaza las filas de partidas de ejemplo (17-26) con las partidas reales.
 
@@ -536,7 +539,10 @@ class ExcelManager:
             "Asciende el presupuesto de ejecución material a la expresada "
             f"cantidad de {_euros_en_letras(total_con_iva)} IVA INCLUIDO."
         )
-        sheet_xml = self._replace_cell_text(sheet_xml, f'A{r49}', texto_importe, style='47')
+        sheet_xml = self._replace_cell_text(
+            sheet_xml, f'A{r49}', texto_importe,
+            style=asciende_style, bold=True, font_size=11,
+        )
 
         # --- Paso 8: Insertar las nuevas filas en el XML ---
         # Insertamos justo antes de la primera fila que quede después del subtotal
@@ -639,19 +645,339 @@ class ExcelManager:
             sheet_xml = sheet_xml[:match.start()] + replacement + sheet_xml[match.end():]
         return sheet_xml
 
-    def _replace_cell_text(self, sheet_xml, ref, text, style=None):
+    def _replace_cell_text(self, sheet_xml, ref, text, style=None,
+                           bold=False, font_size=10):
         """Reemplaza el contenido de texto de una celda (inline string)."""
         escaped = xml_escape(str(text))
         pattern = r'<c r="' + re.escape(ref) + r'"[^>]*?>(?:.*?</c>|/>)'
         match = re.search(pattern, sheet_xml, re.DOTALL)
         if match:
             s_attr = f' s="{style}"' if style else ''
+            if bold:
+                inner = (
+                    f'<r><rPr><b/><sz val="{font_size}"/><rFont val="Calibri"/>'
+                    '<family val="2"/></rPr>'
+                    f'<t xml:space="preserve">{escaped}</t></r>'
+                )
+            else:
+                inner = f'<t>{escaped}</t>'
             new_cell = (
                 f'<c r="{ref}"{s_attr} t="inlineStr">'
-                f'<is><t>{escaped}</t></is></c>'
+                f'<is>{inner}</is></c>'
             )
             sheet_xml = sheet_xml[:match.start()] + new_cell + sheet_xml[match.end():]
         return sheet_xml
+
+    def update_header_fields(self, file_path, data):
+        """
+        Actualiza los campos de cabecera de un presupuesto existente,
+        incluyendo el texto "Asciende el presupuesto..." y el nombre
+        del cliente al final del documento.
+
+        Args:
+            file_path: Ruta del archivo Excel.
+            data: Dict con campos: nombre_obra, numero_proyecto, fecha,
+                  cliente, calle, num_calle, codigo_postal, tipo,
+                  admin_cif, admin_email, admin_telefono.
+
+        Returns:
+            bool: True si se actualizó correctamente.
+        """
+        try:
+            fecha_raw = data.get("fecha", "")
+            fecha = ""
+            if fecha_raw:
+                parts = str(fecha_raw).strip().split("-")
+                if len(parts) == 3:
+                    fecha = f"{parts[0]}/{parts[1]}/{parts[2]}"
+
+            numero_pres = (data.get("numero_proyecto", "") or "").strip()
+            year_suffix = ""
+            try:
+                fecha_parts = str(fecha_raw).strip().split("-")
+                if len(fecha_parts) == 3:
+                    year_suffix = fecha_parts[2]
+            except Exception:
+                pass
+            if numero_pres and year_suffix:
+                numero_pres = f"{numero_pres}/{year_suffix}"
+
+            calle = (data.get("calle", "") or "").strip()
+            num_calle = (data.get("num_calle", "") or "").strip()
+            direccion = f"{calle} N\u00ba {num_calle}" if calle and num_calle else calle
+
+            obra_final = ""
+            tipo = (data.get("tipo", "") or "").strip()
+            if tipo:
+                obra_final = f"Obra: {tipo}."
+
+            cliente = (data.get("cliente", "") or "").strip()
+
+            celdas = {
+                "E5": numero_pres,
+                "H5": fecha or "",
+                "B7": cliente,
+                "H7": (data.get("admin_cif", "") or "").strip(),
+                "B9": direccion,
+                "H9": str(data.get("codigo_postal", "") or "").strip(),
+                "B11": (data.get("admin_email", "") or "").strip(),
+                "H11": (data.get("admin_telefono", "") or "").strip(),
+                "A14": obra_final,
+            }
+
+            with zipfile.ZipFile(file_path, "r") as z_in:
+                namelist = z_in.namelist()
+                sheet_content = z_in.read(SHEET_12220).decode("utf-8")
+                otros = {n: z_in.read(n) for n in namelist if n != SHEET_12220}
+
+            for ref, valor in celdas.items():
+                if valor:
+                    sheet_content = _replace_cell_in_sheet_xml(sheet_content, ref, valor)
+
+            # Leer shared strings para resolver valores de celdas t="s"
+            shared_strings = self._read_shared_strings(otros)
+
+            # Crear estilo con wrapText para la celda "Asciende..."
+            wrap_style = self._create_wrap_style(otros, 47)
+
+            # Actualizar texto "Asciende el presupuesto..." con el total actual
+            sheet_content = self._update_asciende_text(
+                sheet_content, file_path, shared_strings,
+                wrap_style=wrap_style,
+            )
+
+            # Actualizar celda del cliente al final del documento (originalmente A57)
+            if cliente:
+                sheet_content = self._update_bottom_client_cell(
+                    sheet_content, cliente, shared_strings,
+                )
+
+            fd, tmp_path = tempfile.mkstemp(suffix=".xlsx")
+            try:
+                os.close(fd)
+                with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as z_out:
+                    for name in namelist:
+                        if name == SHEET_12220:
+                            z_out.writestr(name, sheet_content.encode("utf-8"))
+                        else:
+                            z_out.writestr(name, otros[name])
+                shutil.move(tmp_path, file_path)
+            except Exception:
+                if os.path.exists(tmp_path):
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
+                raise
+
+            return True
+        except Exception as e:
+            print(f"Error al actualizar campos: {e}")
+            return False
+
+    @staticmethod
+    def _read_shared_strings(otros_dict):
+        """Lee sharedStrings.xml del zip y devuelve lista indexada de strings."""
+        ss_key = "xl/sharedStrings.xml"
+        if ss_key not in otros_dict:
+            return []
+        ss_xml = otros_dict[ss_key].decode("utf-8")
+        strings = []
+        for m in re.finditer(r'<si>(.*?)</si>', ss_xml, re.DOTALL):
+            inner = m.group(1)
+            parts = re.findall(r'<t[^>]*?>([^<]*)</t>', inner)
+            strings.append("".join(parts))
+        return strings
+
+    @staticmethod
+    def _create_wrap_style(otros_dict, base_style_idx=47):
+        """Crea un nuevo estilo en styles.xml copiando base_style_idx y añadiendo
+        wrapText='1' y horizontal='left'. Devuelve el índice (str) del nuevo estilo.
+        Si el estilo base ya tiene wrapText+left, devuelve su índice sin crear nada."""
+        styles_key = "xl/styles.xml"
+        if styles_key not in otros_dict:
+            return str(base_style_idx)
+
+        styles_xml = otros_dict[styles_key].decode("utf-8")
+
+        cellxfs_match = re.search(
+            r'(<cellXfs\s+count=")(\d+)(")(.*?)(</cellXfs>)',
+            styles_xml, re.DOTALL,
+        )
+        if not cellxfs_match:
+            return str(base_style_idx)
+
+        count = int(cellxfs_match.group(2))
+        content = cellxfs_match.group(4)
+
+        xfs = list(re.finditer(
+            r'<xf\b[^>]*?(?:/>|>.*?</xf>)', content, re.DOTALL,
+        ))
+        if base_style_idx >= len(xfs):
+            return str(base_style_idx)
+
+        base_xf = xfs[base_style_idx].group(0)
+
+        if 'wrapText="1"' in base_xf and 'horizontal="left"' in base_xf:
+            return str(base_style_idx)
+
+        _align = '<alignment horizontal="left" wrapText="1"/>'
+        new_xf = base_xf
+        if '<alignment' in new_xf:
+            new_xf = re.sub(
+                r'<alignment[^/]*/>', _align, new_xf, count=1,
+            )
+        elif new_xf.endswith('/>'):
+            new_xf = (
+                new_xf[:-2]
+                + ' applyAlignment="1">'
+                + _align + '</xf>'
+            )
+        else:
+            new_xf = new_xf.replace(
+                '</xf>', _align + '</xf>', 1,
+            )
+            if 'applyAlignment' not in new_xf:
+                new_xf = re.sub(
+                    r'<xf\b', '<xf applyAlignment="1"', new_xf, count=1,
+                )
+
+        new_idx = count
+        new_content = content + new_xf + '\n'
+        new_section = (
+            cellxfs_match.group(1)
+            + str(new_idx + 1)
+            + cellxfs_match.group(3)
+            + new_content
+            + cellxfs_match.group(5)
+        )
+        styles_xml = (
+            styles_xml[:cellxfs_match.start()]
+            + new_section
+            + styles_xml[cellxfs_match.end():]
+        )
+        otros_dict[styles_key] = styles_xml.encode("utf-8")
+        return str(new_idx)
+
+    def _resolve_cell_text(self, cell_xml, shared_strings):
+        """Resuelve el texto de una celda, ya sea inline o shared string."""
+        if 't="inlineStr"' in cell_xml or "<is>" in cell_xml:
+            parts = re.findall(r'<t[^>]*?>([^<]*)</t>', cell_xml)
+            return "".join(parts)
+        if 't="s"' in cell_xml:
+            vm = re.search(r'<v>(\d+)</v>', cell_xml)
+            if vm:
+                idx = int(vm.group(1))
+                if idx < len(shared_strings):
+                    return shared_strings[idx]
+        return ""
+
+    def _find_cell_by_text(self, sheet_xml, shared_strings, col, search_text,
+                           min_row=0):
+        """Busca en columna `col` la primera celda cuyo texto contenga `search_text`."""
+        for m in re.finditer(
+            r'<c r="' + col + r'(\d+)"[^>]*?(?:/>|>.*?</c>)',
+            sheet_xml, re.DOTALL,
+        ):
+            row = int(m.group(1))
+            if row < min_row:
+                continue
+            text = self._resolve_cell_text(m.group(0), shared_strings)
+            if search_text.lower() in text.lower():
+                return row
+        return None
+
+    def _update_asciende_text(self, sheet_xml, file_path, shared_strings,
+                              wrap_style="47"):
+        """Busca la celda 'Asciende el presupuesto...' y la actualiza con el total actual."""
+        from src.core.budget_reader import BudgetReader
+
+        row = self._find_cell_by_text(
+            sheet_xml, shared_strings, "A", "Asciende", min_row=30,
+        )
+        if row is None:
+            return sheet_xml
+
+        reader = BudgetReader()
+        budget_data = reader.read(file_path)
+        total_con_iva = budget_data["total"] if budget_data else 0
+
+        texto_importe = (
+            "Asciende el presupuesto de ejecución material a la expresada "
+            f"cantidad de {_euros_en_letras(total_con_iva)} IVA INCLUIDO."
+        )
+        sheet_xml = self._replace_cell_text(
+            sheet_xml, f"A{row}", texto_importe,
+            style=wrap_style, bold=True, font_size=11,
+        )
+        return sheet_xml
+
+    def _update_bottom_client_cell(self, sheet_xml, cliente, shared_strings):
+        """Busca la última celda en columna A (fila >= 50) con texto (no fórmula)
+        y la reemplaza con el nombre del cliente."""
+        last_row = None
+        for m in re.finditer(
+            r'<c r="A(\d+)"[^>]*?(?:/>|>.*?</c>)',
+            sheet_xml, re.DOTALL,
+        ):
+            row = int(m.group(1))
+            cell = m.group(0)
+            if row < 50 or "<f>" in cell:
+                continue
+            text = self._resolve_cell_text(cell, shared_strings)
+            if text.strip():
+                last_row = row
+
+        if last_row is None:
+            return sheet_xml
+
+        sheet_xml = self._replace_cell_text(
+            sheet_xml, f"A{last_row}", cliente,
+            style="47", bold=True, font_size=11,
+        )
+        return sheet_xml
+
+    def append_partidas_via_xml(self, file_path, new_partidas):
+        """
+        Añade partidas al final de las existentes en un presupuesto.
+
+        Lee las partidas actuales, combina con las nuevas y regenera
+        todas las filas de partidas + subtotal.
+
+        Args:
+            file_path: Ruta del archivo Excel.
+            new_partidas: Lista de dicts con concepto, cantidad, unidad, precio_unitario.
+
+        Returns:
+            bool: True si se añadieron correctamente.
+        """
+        if not new_partidas:
+            return True
+
+        from src.core.budget_reader import BudgetReader
+
+        try:
+            reader = BudgetReader()
+            existing_data = reader.read(file_path)
+            existing_partidas = existing_data["partidas"] if existing_data else []
+
+            combined = []
+            for p in existing_partidas:
+                combined.append({
+                    "titulo": p.get("concepto", "").split("\n")[0] if p.get("concepto") else "",
+                    "descripcion": "\n".join(p.get("concepto", "").split("\n")[1:]) if "\n" in p.get("concepto", "") else "",
+                    "concepto": p.get("concepto", ""),
+                    "cantidad": p.get("cantidad", 1),
+                    "unidad": p.get("unidad", "ud"),
+                    "precio_unitario": p.get("precio", 0),
+                })
+            for p in new_partidas:
+                combined.append(p)
+
+            return self.insert_partidas_via_xml(file_path, combined)
+        except Exception as e:
+            print(f"Error al añadir partidas: {e}")
+            return False
 
     def load_budget(self, file_path):
         """

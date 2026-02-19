@@ -64,14 +64,16 @@ class TestGetDbPath:
         path = database.get_db_path()
         assert path.is_absolute()
         assert path.name == "datos.db"
-        assert "cubiApp" in str(path)
+        # Cae a la ruta por defecto (raíz del proyecto)
+        assert path.parent == Path(__file__).resolve().parent.parent
 
     def test_ruta_por_defecto_si_no_hay_env(self, monkeypatch):
         monkeypatch.delenv("CUBIAPP_DB_PATH", raising=False)
         path = database.get_db_path()
         assert path.is_absolute()
         assert path.name == "datos.db"
-        assert path.parent.name == "cubiApp"
+        # La ruta por defecto es la raíz del proyecto (donde está src/)
+        assert path.parent == Path(__file__).resolve().parent.parent
 
 
 class TestEnsureDbDirectory:

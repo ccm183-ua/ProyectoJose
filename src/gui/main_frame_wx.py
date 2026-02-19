@@ -25,6 +25,7 @@ class MainFrame(wx.Frame):
         self.file_manager = FileManager()
         self.template_manager = TemplateManager()
         self._db_frame = None
+        self._dashboard_frame = None
         self._build_ui()
         self.Centre()
 
@@ -67,12 +68,12 @@ class MainFrame(wx.Frame):
         btn_create.Bind(wx.EVT_BUTTON, lambda e: self._create_budget())
         btn_sizer.Add(btn_create, 0, wx.ALIGN_CENTER | wx.BOTTOM, theme.SPACE_LG)
         
-        # Botón abrir - Botón nativo estilizado
-        btn_open = wx.Button(btn_container, label="Abrir presupuesto existente", size=(320, 46))
+        # Botón presupuestos existentes - Botón nativo estilizado
+        btn_open = wx.Button(btn_container, label="Presupuestos existentes", size=(320, 46))
         btn_open.SetFont(theme.font_base())
         btn_open.SetBackgroundColour(theme.BG_SECONDARY)
         btn_open.SetForegroundColour(theme.TEXT_PRIMARY)
-        btn_open.Bind(wx.EVT_BUTTON, lambda e: self._open_excel())
+        btn_open.Bind(wx.EVT_BUTTON, lambda e: self._open_dashboard())
         btn_sizer.Add(btn_open, 0, wx.ALIGN_CENTER | wx.BOTTOM, theme.SPACE_MD)
 
         # Botón base de datos - Botón nativo estilizado
@@ -152,6 +153,27 @@ class MainFrame(wx.Frame):
         self._db_frame = None
         event.Skip()
 
+    def _open_dashboard(self):
+        try:
+            from src.gui.budget_dashboard_wx import BudgetDashboardFrame
+            try:
+                if self._dashboard_frame is not None and self._dashboard_frame.IsShown():
+                    self._dashboard_frame.Raise()
+                    return
+            except RuntimeError:
+                self._dashboard_frame = None
+
+            self._dashboard_frame = BudgetDashboardFrame(self)
+            self._dashboard_frame.Bind(wx.EVT_CLOSE, self._on_dashboard_closed)
+            self._dashboard_frame.Show()
+            self._dashboard_frame.Raise()
+        except Exception as ex:
+            wx.MessageBox(f"Error al abrir el dashboard: {ex}", "Error", wx.OK | wx.ICON_ERROR)
+
+    def _on_dashboard_closed(self, event):
+        self._dashboard_frame = None
+        event.Skip()
+
     def _open_db_folder(self):
         try:
             path = db_module.get_db_path()
@@ -181,6 +203,11 @@ class MainFrame(wx.Frame):
         try:
             budget = self.excel_manager.load_budget(path)
             if budget:
+                db_repository.registrar_presupuesto({
+                    "nombre_proyecto": os.path.splitext(os.path.basename(path))[0],
+                    "ruta_excel": path,
+                    "ruta_carpeta": os.path.dirname(path),
+                })
                 wx.MessageBox(f"Presupuesto abierto: {os.path.basename(path)}", "Éxito", wx.OK)
             else:
                 wx.MessageBox("No se pudo abrir el archivo Excel.", "Error", wx.OK | wx.ICON_ERROR)
@@ -246,7 +273,18 @@ class MainFrame(wx.Frame):
             wx.MessageBox("Error al crear el presupuesto.", "Error", wx.OK | wx.ICON_ERROR)
             return
 
-        # --- NUEVO: Flujo de generación de partidas con IA ---
+        # Registrar en historial
+        db_repository.registrar_presupuesto({
+            "nombre_proyecto": project_name,
+            "ruta_excel": save_path,
+            "ruta_carpeta": folder_path,
+            "cliente": project_data.get("cliente", ""),
+            "localidad": project_data.get("localidad", ""),
+            "tipo_obra": project_data.get("tipo", ""),
+            "numero_proyecto": project_data.get("numero", ""),
+        })
+
+        # --- Flujo de generación de partidas con IA ---
         self._offer_ai_partidas(save_path, project_data)
 
     def _buscar_comunidad_para_presupuesto(self, nombre_cliente: str) -> dict | None:
@@ -348,6 +386,15 @@ class MainFrame(wx.Frame):
         # Paso 3: Insertar partidas seleccionadas en el Excel via XML
         if selected:
             if self.excel_manager.insert_partidas_via_xml(excel_path, selected):
+                db_repository.registrar_presupuesto({
+                    "nombre_proyecto": project_data.get("nombre_obra", os.path.basename(excel_path)),
+                    "ruta_excel": excel_path,
+                    "usa_partidas_ia": True,
+                })
+                from src.core.budget_reader import BudgetReader
+                data = BudgetReader().read(excel_path)
+                if data:
+                    db_repository.actualizar_total(excel_path, data["total"])
                 wx.MessageBox(
                     f"Presupuesto creado con {len(selected)} partidas:\n{excel_path}",
                     "Éxito", wx.OK,
