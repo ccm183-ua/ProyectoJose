@@ -9,6 +9,7 @@ sin modificar el catálogo base de la aplicación.
 
 import json
 import os
+import tempfile
 from typing import Dict, List, Optional
 
 
@@ -54,12 +55,26 @@ class CustomTemplateStore:
         """
         Guarda la lista completa de plantillas personalizadas.
 
+        Usa escritura atómica (temporal + replace) para evitar corrupción
+        si el proceso se interrumpe a mitad de escritura.
+
         Args:
             plantillas: Lista de plantillas a guardar.
         """
         os.makedirs(self._config_dir, exist_ok=True)
-        with open(self._file_path, 'w', encoding='utf-8') as f:
-            json.dump({'plantillas': plantillas}, f, indent=2, ensure_ascii=False)
+        fd, tmp_path = tempfile.mkstemp(
+            dir=self._config_dir, suffix='.tmp', prefix='tpl_'
+        )
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                json.dump({'plantillas': plantillas}, f, indent=2, ensure_ascii=False)
+            os.replace(tmp_path, self._file_path)
+        except BaseException:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
 
     def add(self, plantilla: Dict) -> bool:
         """

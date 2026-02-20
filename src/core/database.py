@@ -164,6 +164,23 @@ CREATE INDEX IF NOT EXISTS idx_administracion_contacto_admin ON administracion_c
 CREATE INDEX IF NOT EXISTS idx_administracion_contacto_contacto ON administracion_contacto(contacto_id);
 CREATE INDEX IF NOT EXISTS idx_comunidad_contacto_comunidad ON comunidad_contacto(comunidad_id);
 CREATE INDEX IF NOT EXISTS idx_comunidad_contacto_contacto ON comunidad_contacto(contacto_id);
+
+-- Historial de presupuestos (creados y abiertos desde la app)
+CREATE TABLE IF NOT EXISTS historial_presupuesto (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nombre_proyecto TEXT NOT NULL,
+    ruta_excel TEXT NOT NULL UNIQUE,
+    ruta_carpeta TEXT,
+    fecha_creacion TEXT NOT NULL,
+    fecha_ultimo_acceso TEXT NOT NULL,
+    cliente TEXT,
+    localidad TEXT,
+    tipo_obra TEXT,
+    numero_proyecto TEXT,
+    usa_partidas_ia INTEGER DEFAULT 0,
+    total_presupuesto REAL
+);
+CREATE INDEX IF NOT EXISTS idx_historial_fecha ON historial_presupuesto(fecha_ultimo_acceso);
 """
 
 

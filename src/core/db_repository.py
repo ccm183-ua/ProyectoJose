@@ -5,11 +5,33 @@ Devuelve datos o (éxito, mensaje_error) con mensajes en español para el usuari
 Captura sqlite3.IntegrityError y lo convierte en mensajes claros.
 """
 
+import re
 import sqlite3
 from difflib import SequenceMatcher
 from typing import Optional, List, Dict, Tuple
 
 from src.core import database
+
+# Umbral de similitud para búsqueda fuzzy (0.0 – 1.0)
+FUZZY_MATCH_THRESHOLD = 0.55
+
+# Límite de registros en consultas de historial
+HISTORIAL_DEFAULT_LIMIT = 50
+
+_CP_RE = re.compile(
+    r"\b[Cc]\.?\s*[Pp]\.?\s*",
+)
+
+
+def _normalize_for_match(name: str) -> str:
+    """Elimina prefijos 'C.P.', 'C.P', 'C. P.', etc. y normaliza espacios.
+
+    Estos prefijos son abreviaturas de "Comunidad de Propietarios" y están
+    presentes en la gran mayoría de nombres de comunidad y proyecto, lo que
+    distorsiona el matching fuzzy produciendo falsos positivos.
+    """
+    result = _CP_RE.sub("", name)
+    return " ".join(result.split()).strip()
 
 
 def _mensaje_integridad(e: sqlite3.IntegrityError) -> str:
@@ -182,7 +204,7 @@ def buscar_administracion_por_nombre(nombre: str) -> Optional[Dict]:
         conn.close()
 
 
-def buscar_administraciones_fuzzy(nombre: str, umbral: float = 0.55) -> List[Dict]:
+def buscar_administraciones_fuzzy(nombre: str, umbral: float = FUZZY_MATCH_THRESHOLD) -> List[Dict]:
     """Busca administraciones cuyo nombre sea similar al dado (fuzzy matching).
 
     Usa difflib.SequenceMatcher para calcular la similitud. Solo devuelve
@@ -358,6 +380,11 @@ def get_comunidades_para_tabla() -> List[Dict]:
 def buscar_comunidad_por_nombre(nombre: str) -> Optional[Dict]:
     """Busca una comunidad por nombre exacto (case-insensitive).
 
+    Primero intenta coincidencia directa. Si no encuentra, repite la
+    búsqueda normalizando ambos lados (eliminando «C.P.» y variantes)
+    para evitar que el prefijo de «Comunidad de Propietarios» impida
+    el match cuando una parte lo tiene y la otra no.
+
     Args:
         nombre: Nombre a buscar.
 
@@ -375,23 +402,41 @@ def buscar_comunidad_por_nombre(nombre: str) -> Optional[Dict]:
             (nombre,),
         )
         r = cur.fetchone()
-        if not r:
+        if r:
+            return _row_to_comunidad(r)
+
+        nombre_norm = _normalize_for_match(nombre).lower()
+        if not nombre_norm:
             return None
-        return {
-            "id": r[0], "nombre": r[1] or "",
-            "cif": r[2] or "", "direccion": r[3] or "",
-            "email": r[4] or "", "telefono": r[5] or "",
-            "administracion_id": r[6],
-        }
+        cur = conn.execute(
+            "SELECT id, nombre, cif, direccion, email, telefono, administracion_id "
+            "FROM comunidad ORDER BY nombre"
+        )
+        for r in cur.fetchall():
+            db_norm = _normalize_for_match(r[1] or "").lower()
+            if db_norm == nombre_norm:
+                return _row_to_comunidad(r)
+        return None
     finally:
         conn.close()
 
 
-def buscar_comunidades_fuzzy(nombre: str, umbral: float = 0.55) -> List[Dict]:
+def _row_to_comunidad(r) -> Dict:
+    return {
+        "id": r[0], "nombre": r[1] or "",
+        "cif": r[2] or "", "direccion": r[3] or "",
+        "email": r[4] or "", "telefono": r[5] or "",
+        "administracion_id": r[6],
+    }
+
+
+def buscar_comunidades_fuzzy(nombre: str, umbral: float = FUZZY_MATCH_THRESHOLD) -> List[Dict]:
     """Busca comunidades cuyo nombre sea similar al dado (fuzzy matching).
 
-    Usa difflib.SequenceMatcher para calcular la similitud. Solo devuelve
-    resultados cuya ratio >= umbral, ordenados de mayor a menor similitud.
+    Usa difflib.SequenceMatcher para calcular la similitud. Antes de
+    comparar, normaliza ambos nombres eliminando «C.P.» y variantes
+    (Comunidad de Propietarios) para evitar falsos positivos por ese
+    prefijo tan común.
 
     Args:
         nombre: Nombre aproximado a buscar.
@@ -411,17 +456,16 @@ def buscar_comunidades_fuzzy(nombre: str, umbral: float = 0.55) -> List[Dict]:
             "FROM comunidad ORDER BY nombre"
         )
         rows = cur.fetchall()
-        nombre_lower = nombre.lower()
+        nombre_norm = _normalize_for_match(nombre).lower()
+        if not nombre_norm:
+            return []
         resultados = []
         for r in rows:
-            nombre_db = (r[1] or "").strip().lower()
-            ratio = SequenceMatcher(None, nombre_lower, nombre_db).ratio()
+            db_norm = _normalize_for_match(r[1] or "").lower()
+            ratio = SequenceMatcher(None, nombre_norm, db_norm).ratio()
             if ratio >= umbral:
                 resultados.append({
-                    "id": r[0], "nombre": r[1] or "",
-                    "cif": r[2] or "", "direccion": r[3] or "",
-                    "email": r[4] or "", "telefono": r[5] or "",
-                    "administracion_id": r[6],
+                    **_row_to_comunidad(r),
                     "similitud": round(ratio, 3),
                 })
         resultados.sort(key=lambda x: x["similitud"], reverse=True)
@@ -688,13 +732,10 @@ def set_administracion_contacto(contacto_id: int, administracion_ids: List[int])
     try:
         conn.execute("DELETE FROM administracion_contacto WHERE contacto_id=?", (contacto_id,))
         for aid in administracion_ids:
-            err = _ejecutar(
-                conn,
+            conn.execute(
                 "INSERT INTO administracion_contacto (administracion_id, contacto_id) VALUES (?, ?)",
                 (aid, contacto_id),
             )
-            if err:
-                return err
         conn.commit()
         return None
     except sqlite3.IntegrityError as e:
@@ -710,13 +751,10 @@ def set_comunidad_contacto(contacto_id: int, comunidad_ids: List[int]) -> Option
     try:
         conn.execute("DELETE FROM comunidad_contacto WHERE contacto_id=?", (contacto_id,))
         for cid in comunidad_ids:
-            err = _ejecutar(
-                conn,
+            conn.execute(
                 "INSERT INTO comunidad_contacto (comunidad_id, contacto_id) VALUES (?, ?)",
                 (cid, contacto_id),
             )
-            if err:
-                return err
         conn.commit()
         return None
     except sqlite3.IntegrityError as e:
@@ -760,5 +798,235 @@ def set_contactos_para_comunidad(comunidad_id: int, contacto_ids: List[int]) -> 
     except sqlite3.IntegrityError as e:
         conn.rollback()
         return _mensaje_integridad(e)
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Historial de presupuestos
+# ---------------------------------------------------------------------------
+
+def registrar_presupuesto(datos: Dict) -> Tuple[Optional[int], Optional[str]]:
+    """Registra un presupuesto en el historial (INSERT OR REPLACE por ruta_excel).
+
+    Args:
+        datos: Dict con nombre_proyecto, ruta_excel, ruta_carpeta, fecha_creacion,
+               cliente, localidad, tipo_obra, numero_proyecto, usa_partidas_ia,
+               total_presupuesto.
+
+    Returns:
+        (id, None) si ok, (None, mensaje_error) si falla.
+    """
+    from datetime import datetime
+
+    nombre = (datos.get("nombre_proyecto") or "").strip()
+    ruta = (datos.get("ruta_excel") or "").strip()
+    if not nombre or not ruta:
+        return (None, "nombre_proyecto y ruta_excel son obligatorios.")
+
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn = database.connect()
+    try:
+        conn.execute(
+            """INSERT INTO historial_presupuesto
+               (nombre_proyecto, ruta_excel, ruta_carpeta, fecha_creacion,
+                fecha_ultimo_acceso, cliente, localidad, tipo_obra,
+                numero_proyecto, usa_partidas_ia, total_presupuesto)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(ruta_excel) DO UPDATE SET
+                   nombre_proyecto=excluded.nombre_proyecto,
+                   fecha_ultimo_acceso=excluded.fecha_ultimo_acceso,
+                   cliente=COALESCE(excluded.cliente,
+                                    historial_presupuesto.cliente),
+                   localidad=COALESCE(excluded.localidad,
+                                      historial_presupuesto.localidad),
+                   tipo_obra=COALESCE(excluded.tipo_obra,
+                                      historial_presupuesto.tipo_obra),
+                   numero_proyecto=COALESCE(excluded.numero_proyecto,
+                                            historial_presupuesto.numero_proyecto),
+                   usa_partidas_ia=MAX(excluded.usa_partidas_ia,
+                                       historial_presupuesto.usa_partidas_ia),
+                   total_presupuesto=COALESCE(excluded.total_presupuesto,
+                                              historial_presupuesto.total_presupuesto)
+            """,
+            (
+                nombre, ruta,
+                (datos.get("ruta_carpeta") or "").strip() or None,
+                datos.get("fecha_creacion") or now,
+                now,
+                (datos.get("cliente") or "").strip() or None,
+                (datos.get("localidad") or "").strip() or None,
+                (datos.get("tipo_obra") or "").strip() or None,
+                (datos.get("numero_proyecto") or "").strip() or None,
+                1 if datos.get("usa_partidas_ia") else 0,
+                datos.get("total_presupuesto"),
+            ),
+        )
+        conn.commit()
+        cur = conn.execute(
+            "SELECT id FROM historial_presupuesto WHERE ruta_excel=?", (ruta,)
+        )
+        row = cur.fetchone()
+        return (row[0] if row else None, None)
+    except sqlite3.IntegrityError as e:
+        conn.rollback()
+        return (None, _mensaje_integridad(e))
+    except sqlite3.OperationalError as e:
+        conn.rollback()
+        return (None, f"Error de base de datos: {e.args[0] if e.args else 'desconocido'}.")
+    finally:
+        conn.close()
+
+
+def get_historial_reciente(limit: int = HISTORIAL_DEFAULT_LIMIT) -> List[Dict]:
+    """Lista los presupuestos más recientes del historial.
+
+    Args:
+        limit: Número máximo de resultados.
+
+    Returns:
+        Lista de dicts ordenada por fecha_ultimo_acceso DESC.
+    """
+    conn = database.connect()
+    try:
+        cur = conn.execute(
+            """SELECT id, nombre_proyecto, ruta_excel, ruta_carpeta,
+                      fecha_creacion, fecha_ultimo_acceso, cliente,
+                      localidad, tipo_obra, numero_proyecto,
+                      usa_partidas_ia, total_presupuesto
+               FROM historial_presupuesto
+               ORDER BY fecha_ultimo_acceso DESC
+               LIMIT ?""",
+            (limit,),
+        )
+        rows = cur.fetchall()
+        return [
+            {
+                "id": r[0],
+                "nombre_proyecto": r[1] or "",
+                "ruta_excel": r[2] or "",
+                "ruta_carpeta": r[3] or "",
+                "fecha_creacion": r[4] or "",
+                "fecha_ultimo_acceso": r[5] or "",
+                "cliente": r[6] or "",
+                "localidad": r[7] or "",
+                "tipo_obra": r[8] or "",
+                "numero_proyecto": r[9] or "",
+                "usa_partidas_ia": bool(r[10]),
+                "total_presupuesto": r[11],
+            }
+            for r in rows
+        ]
+    finally:
+        conn.close()
+
+
+def actualizar_acceso(ruta_excel: str) -> Optional[str]:
+    """Actualiza la fecha de último acceso de un presupuesto.
+
+    Returns:
+        None si ok, mensaje de error si falla.
+    """
+    from datetime import datetime
+
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn = database.connect()
+    try:
+        conn.execute(
+            "UPDATE historial_presupuesto SET fecha_ultimo_acceso=? WHERE ruta_excel=?",
+            (now, ruta_excel),
+        )
+        conn.commit()
+        return None
+    except sqlite3.OperationalError as e:
+        conn.rollback()
+        return f"Error de base de datos: {e.args[0] if e.args else 'desconocido'}."
+    finally:
+        conn.close()
+
+
+def actualizar_total(ruta_excel: str, total: float) -> Optional[str]:
+    """Actualiza el total de un presupuesto en el historial.
+
+    Returns:
+        None si ok, mensaje de error si falla.
+    """
+    conn = database.connect()
+    try:
+        conn.execute(
+            "UPDATE historial_presupuesto SET total_presupuesto=? WHERE ruta_excel=?",
+            (total, ruta_excel),
+        )
+        conn.commit()
+        return None
+    except sqlite3.OperationalError as e:
+        conn.rollback()
+        return f"Error de base de datos: {e.args[0] if e.args else 'desconocido'}."
+    finally:
+        conn.close()
+
+
+def eliminar_historial(id_: int) -> Optional[str]:
+    """Elimina una entrada del historial. No borra el archivo Excel.
+
+    Returns:
+        None si ok, mensaje de error si falla.
+    """
+    conn = database.connect()
+    try:
+        conn.execute("DELETE FROM historial_presupuesto WHERE id=?", (id_,))
+        conn.commit()
+        return None
+    except sqlite3.OperationalError as e:
+        conn.rollback()
+        return f"Error de base de datos: {e.args[0] if e.args else 'desconocido'}."
+    finally:
+        conn.close()
+
+
+def buscar_historial(texto: str) -> List[Dict]:
+    """Busca presupuestos en el historial por nombre, cliente o localidad.
+
+    Args:
+        texto: Texto a buscar (LIKE %texto%).
+
+    Returns:
+        Lista de dicts coincidentes, ordenada por fecha_ultimo_acceso DESC.
+    """
+    texto = texto.strip()
+    if not texto:
+        return get_historial_reciente()
+
+    like = f"%{texto}%"
+    conn = database.connect()
+    try:
+        cur = conn.execute(
+            """SELECT id, nombre_proyecto, ruta_excel, ruta_carpeta,
+                      fecha_creacion, fecha_ultimo_acceso, cliente,
+                      localidad, tipo_obra, numero_proyecto,
+                      usa_partidas_ia, total_presupuesto
+               FROM historial_presupuesto
+               WHERE nombre_proyecto LIKE ? OR cliente LIKE ? OR localidad LIKE ?
+               ORDER BY fecha_ultimo_acceso DESC""",
+            (like, like, like),
+        )
+        rows = cur.fetchall()
+        return [
+            {
+                "id": r[0],
+                "nombre_proyecto": r[1] or "",
+                "ruta_excel": r[2] or "",
+                "ruta_carpeta": r[3] or "",
+                "fecha_creacion": r[4] or "",
+                "fecha_ultimo_acceso": r[5] or "",
+                "cliente": r[6] or "",
+                "localidad": r[7] or "",
+                "tipo_obra": r[8] or "",
+                "numero_proyecto": r[9] or "",
+                "usa_partidas_ia": bool(r[10]),
+                "total_presupuesto": r[11],
+            }
+            for r in rows
+        ]
     finally:
         conn.close()

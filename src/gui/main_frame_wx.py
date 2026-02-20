@@ -1,12 +1,17 @@
 """
-Ventana principal de cubiApp (wxPython).
+Ventana principal de cubiApp (PySide6).
 """
 
 import os
 import subprocess
 import sys
 
-import wx
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QAction
+from PySide6.QtWidgets import (
+    QFileDialog, QHBoxLayout, QInputDialog, QMainWindow, QMessageBox,
+    QPushButton, QVBoxLayout, QWidget,
+)
 
 from src.core.excel_manager import ExcelManager
 from src.core.file_manager import FileManager
@@ -17,140 +22,160 @@ from src.utils.helpers import sanitize_filename
 from src.gui import theme
 
 
-class MainFrame(wx.Frame):
-    def __init__(self, parent, title="cubiApp", **kwargs):
-        super().__init__(parent, title=title, size=(520, 520), 
-                         style=wx.DEFAULT_FRAME_STYLE, **kwargs)
+class MainFrame(QMainWindow):
+    def __init__(self, parent=None, title="cubiApp", **kwargs):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.resize(520, 520)
         self.excel_manager = ExcelManager()
         self.file_manager = FileManager()
         self.template_manager = TemplateManager()
         self._db_frame = None
+        self._dashboard_frame = None
         self._build_ui()
-        self.Centre()
+        self._center()
+
+    def _center(self):
+        screen = self.screen()
+        if screen:
+            geo = screen.availableGeometry()
+            self.move(
+                geo.x() + (geo.width() - self.width()) // 2,
+                geo.y() + (geo.height() - self.height()) // 2,
+            )
 
     def _build_ui(self):
-        # Panel principal
-        panel = wx.Panel(self)
-        panel.SetBackgroundColour(theme.BG_PRIMARY)
-        theme.style_frame(self)
-        
-        main_sizer = wx.BoxSizer(wx.VERTICAL)
-        
-        # === HEADER ===
-        header = wx.Panel(panel)
-        header.SetBackgroundColour(theme.BG_PRIMARY)
-        header_sizer = wx.BoxSizer(wx.VERTICAL)
-        
-        # Logo/Título
-        title = theme.create_title(header, "cubiApp", "display")
-        header_sizer.Add(title, 0, wx.ALIGN_CENTER_HORIZONTAL | wx.TOP, 60)
-        
-        # Subtítulo
-        subtitle = theme.create_subtitle(header, "Gestión de presupuestos")
-        header_sizer.Add(subtitle, 0, wx.ALIGN_CENTER_HORIZONTAL | wx.TOP, 8)
-        
-        header.SetSizer(header_sizer)
-        main_sizer.Add(header, 0, wx.EXPAND)
-        
-        main_sizer.AddSpacer(50)
-        
-        # === BOTONES ===
-        btn_container = wx.Panel(panel)
-        btn_container.SetBackgroundColour(theme.BG_PRIMARY)
-        btn_sizer = wx.BoxSizer(wx.VERTICAL)
-        
-        # Botón crear (primario) - Botón nativo estilizado
-        btn_create = wx.Button(btn_container, label="+ Crear nuevo presupuesto", size=(320, 50))
-        btn_create.SetFont(theme.get_font_medium(12))
-        btn_create.SetBackgroundColour(theme.ACCENT_PRIMARY)
-        btn_create.SetForegroundColour(theme.TEXT_INVERSE)
-        btn_create.Bind(wx.EVT_BUTTON, lambda e: self._create_budget())
-        btn_sizer.Add(btn_create, 0, wx.ALIGN_CENTER | wx.BOTTOM, theme.SPACE_LG)
-        
-        # Botón abrir - Botón nativo estilizado
-        btn_open = wx.Button(btn_container, label="Abrir presupuesto existente", size=(320, 46))
-        btn_open.SetFont(theme.font_base())
-        btn_open.SetBackgroundColour(theme.BG_SECONDARY)
-        btn_open.SetForegroundColour(theme.TEXT_PRIMARY)
-        btn_open.Bind(wx.EVT_BUTTON, lambda e: self._open_excel())
-        btn_sizer.Add(btn_open, 0, wx.ALIGN_CENTER | wx.BOTTOM, theme.SPACE_MD)
+        central = QWidget()
+        central.setObjectName("centralWidget")
+        main_layout = QVBoxLayout(central)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
 
-        # Botón base de datos - Botón nativo estilizado
-        btn_db = wx.Button(btn_container, label="Gestionar base de datos", size=(320, 46))
-        btn_db.SetFont(theme.font_base())
-        btn_db.SetBackgroundColour(theme.BG_SECONDARY)
-        btn_db.SetForegroundColour(theme.TEXT_PRIMARY)
-        btn_db.Bind(wx.EVT_BUTTON, lambda e: self._open_db_manager())
-        btn_sizer.Add(btn_db, 0, wx.ALIGN_CENTER)
-        
-        btn_container.SetSizer(btn_sizer)
-        main_sizer.Add(btn_container, 1, wx.EXPAND)
-        
+        # === HEADER ===
+        header = QWidget()
+        header_layout = QVBoxLayout(header)
+        header_layout.setContentsMargins(0, 60, 0, 0)
+        header_layout.setSpacing(8)
+
+        title = theme.create_title(header, "cubiApp", "display")
+        title.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        header_layout.addWidget(title)
+
+        subtitle = theme.create_subtitle(header, "Gestión de presupuestos")
+        subtitle.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        header_layout.addWidget(subtitle)
+
+        main_layout.addWidget(header)
+        main_layout.addSpacing(50)
+
+        # === BOTONES ===
+        btn_container = QWidget()
+        btn_layout = QVBoxLayout(btn_container)
+        btn_layout.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        btn_layout.setSpacing(theme.SPACE_MD)
+
+        btn_create = QPushButton("+ Crear nuevo presupuesto")
+        btn_create.setFixedSize(320, 50)
+        btn_create.setFont(theme.get_font_medium(12))
+        btn_create.setProperty("class", "primary")
+        btn_create.clicked.connect(self._create_budget)
+        btn_layout.addWidget(btn_create, alignment=Qt.AlignmentFlag.AlignHCenter)
+
+        btn_open = QPushButton("Presupuestos existentes")
+        btn_open.setFixedSize(320, 46)
+        btn_open.setFont(theme.font_base())
+        btn_open.clicked.connect(self._open_dashboard)
+        btn_layout.addWidget(btn_open, alignment=Qt.AlignmentFlag.AlignHCenter)
+
+        btn_db = QPushButton("Gestionar base de datos")
+        btn_db.setFixedSize(320, 46)
+        btn_db.setFont(theme.font_base())
+        btn_db.clicked.connect(self._open_db_manager)
+        btn_layout.addWidget(btn_db, alignment=Qt.AlignmentFlag.AlignHCenter)
+
+        main_layout.addWidget(btn_container, 1)
+
         # === FOOTER ===
-        footer = theme.create_caption(panel, "versión 1.0")
-        main_sizer.Add(footer, 0, wx.ALIGN_CENTER | wx.BOTTOM, theme.SPACE_XL)
-        
-        panel.SetSizer(main_sizer)
+        footer = theme.create_caption(central, "versión 1.0")
+        footer.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        main_layout.addWidget(footer)
+        main_layout.addSpacing(theme.SPACE_XL)
+
+        self.setCentralWidget(central)
         self._create_menu()
 
     def _create_menu(self):
-        menubar = wx.MenuBar()
-        # Archivo
-        m_archivo = wx.Menu()
-        m_archivo.Append(wx.ID_OPEN, "Abrir presupuesto...\tCtrl+O")
-        m_archivo.Append(wx.ID_NEW, "Crear nuevo presupuesto...\tCtrl+N")
-        m_archivo.AppendSeparator()
-        m_archivo.Append(wx.ID_EXIT, "Salir\tCtrl+Q")
-        self.Bind(wx.EVT_MENU, lambda e: self._open_excel(), id=wx.ID_OPEN)
-        self.Bind(wx.EVT_MENU, lambda e: self._create_budget(), id=wx.ID_NEW)
-        self.Bind(wx.EVT_MENU, lambda e: self.Close(), id=wx.ID_EXIT)
-        menubar.Append(m_archivo, "&Archivo")
+        menubar = self.menuBar()
 
-        m_bd = wx.Menu()
-        item_db = m_bd.Append(wx.ID_ANY, "Gestionar base de datos...")
-        self.Bind(wx.EVT_MENU, lambda e: self._open_db_manager(), item_db)
-        item_folder = m_bd.Append(wx.ID_ANY, "Abrir carpeta de la base de datos")
-        self.Bind(wx.EVT_MENU, lambda e: self._open_db_folder(), item_folder)
-        menubar.Append(m_bd, "Base de &datos")
+        m_archivo = menubar.addMenu("&Archivo")
+        act_open = m_archivo.addAction("Abrir presupuesto...\tCtrl+O")
+        act_open.triggered.connect(self._open_excel)
+        act_new = m_archivo.addAction("Crear nuevo presupuesto...\tCtrl+N")
+        act_new.triggered.connect(self._create_budget)
+        m_archivo.addSeparator()
+        act_exit = m_archivo.addAction("Salir\tCtrl+Q")
+        act_exit.triggered.connect(self.close)
 
-        # Configuración
-        m_config = wx.Menu()
-        item_ai = m_config.Append(wx.ID_ANY, "Configuración IA (API Key)...")
-        self.Bind(wx.EVT_MENU, lambda e: self._open_ai_settings(), item_ai)
-        item_templates = m_config.Append(wx.ID_ANY, "Gestionar plantillas...")
-        self.Bind(wx.EVT_MENU, lambda e: self._open_template_manager(), item_templates)
-        menubar.Append(m_config, "&Configuración")
+        m_bd = menubar.addMenu("Base de &datos")
+        act_db = m_bd.addAction("Gestionar base de datos...")
+        act_db.triggered.connect(self._open_db_manager)
+        act_folder = m_bd.addAction("Abrir carpeta de la base de datos")
+        act_folder.triggered.connect(self._open_db_folder)
 
-        m_ayuda = wx.Menu()
-        m_ayuda.Append(wx.ID_ABOUT, "Acerca de...")
-        self.Bind(wx.EVT_MENU, lambda e: wx.MessageBox("cubiApp\n\nAbre o crea presupuestos desde plantilla Excel.", "Acerca de", wx.OK), id=wx.ID_ABOUT)
-        menubar.Append(m_ayuda, "&Ayuda")
+        m_config = menubar.addMenu("&Configuración")
+        act_ai = m_config.addAction("Configuración IA (API Key)...")
+        act_ai.triggered.connect(self._open_ai_settings)
+        act_templates = m_config.addAction("Gestionar plantillas...")
+        act_templates.triggered.connect(self._open_template_manager)
+        act_paths = m_config.addAction("Rutas por defecto...")
+        act_paths.triggered.connect(self._open_default_paths)
 
-        self.SetMenuBar(menubar)
+        m_ayuda = menubar.addMenu("&Ayuda")
+        act_about = m_ayuda.addAction("Acerca de...")
+        act_about.triggered.connect(
+            lambda: QMessageBox.information(
+                self, "Acerca de",
+                "cubiApp\n\nAbre o crea presupuestos desde plantilla Excel.",
+            )
+        )
 
     def _open_db_manager(self):
         try:
             from src.gui.db_manager_wx import DBManagerFrame
-            # Comprobar si el frame anterior fue destruido (C++ deleted)
-            try:
-                if self._db_frame is not None and self._db_frame.IsShown():
-                    self._db_frame.Raise()
-                    return
-            except RuntimeError:
-                # El objeto C++ ya fue destruido; crear uno nuevo
-                self._db_frame = None
+            if self._db_frame is not None:
+                try:
+                    if self._db_frame.isVisible():
+                        self._db_frame.raise_()
+                        self._db_frame.activateWindow()
+                        return
+                except RuntimeError:
+                    self._db_frame = None
 
             self._db_frame = DBManagerFrame(self)
-            self._db_frame.Bind(wx.EVT_CLOSE, self._on_db_frame_closed)
-            self._db_frame.Show()
-            self._db_frame.Raise()
+            self._db_frame.destroyed.connect(lambda: setattr(self, '_db_frame', None))
+            self._db_frame.show()
+            self._db_frame.raise_()
         except Exception as ex:
-            wx.MessageBox(f"Error al abrir la base de datos: {ex}", "Error", wx.OK | wx.ICON_ERROR)
+            QMessageBox.critical(self, "Error", f"Error al abrir la base de datos: {ex}")
 
-    def _on_db_frame_closed(self, event):
-        """Limpiar la referencia cuando se cierra la ventana de BD."""
-        self._db_frame = None
-        event.Skip()
+    def _open_dashboard(self):
+        try:
+            from src.gui.budget_dashboard_wx import BudgetDashboardFrame
+            if self._dashboard_frame is not None:
+                try:
+                    if self._dashboard_frame.isVisible():
+                        self._dashboard_frame.raise_()
+                        self._dashboard_frame.activateWindow()
+                        return
+                except RuntimeError:
+                    self._dashboard_frame = None
+
+            self._dashboard_frame = BudgetDashboardFrame(self)
+            self._dashboard_frame.destroyed.connect(lambda: setattr(self, '_dashboard_frame', None))
+            self._dashboard_frame.show()
+            self._dashboard_frame.raise_()
+        except Exception as ex:
+            QMessageBox.critical(self, "Error", f"Error al abrir el dashboard: {ex}")
 
     def _open_db_folder(self):
         try:
@@ -169,40 +194,43 @@ class MainFrame(wx.Frame):
             else:
                 subprocess.run(["xdg-open", folder], check=True)
         except Exception as ex:
-            wx.MessageBox(f"Error: {ex}", "Error", wx.OK | wx.ICON_ERROR)
+            QMessageBox.critical(self, "Error", f"Error: {ex}")
 
     def _open_excel(self):
-        with wx.FileDialog(self, "Abrir Presupuesto", wildcard="Excel (*.xlsx;*.xls)|*.xlsx;*.xls|Todos (*.*)|*.*", style=wx.FD_OPEN) as dlg:
-            if dlg.ShowModal() != wx.ID_OK:
-                return
-            path = dlg.GetPath()
+        from src.core.settings import Settings
+        default_dir = Settings().get_default_path(Settings.PATH_OPEN_BUDGETS) or ""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Abrir Presupuesto", default_dir,
+            "Excel (*.xlsx *.xls);;Todos (*.*)",
+        )
         if not path:
             return
         try:
             budget = self.excel_manager.load_budget(path)
             if budget:
-                wx.MessageBox(f"Presupuesto abierto: {os.path.basename(path)}", "Éxito", wx.OK)
+                budget.close()
+                db_repository.registrar_presupuesto({
+                    "nombre_proyecto": os.path.splitext(os.path.basename(path))[0],
+                    "ruta_excel": path,
+                    "ruta_carpeta": os.path.dirname(path),
+                })
+                QMessageBox.information(self, "Éxito", f"Presupuesto abierto: {os.path.basename(path)}")
             else:
-                wx.MessageBox("No se pudo abrir el archivo Excel.", "Error", wx.OK | wx.ICON_ERROR)
+                QMessageBox.critical(self, "Error", "No se pudo abrir el archivo Excel.")
         except Exception as ex:
-            wx.MessageBox(f"Error: {ex}", "Error", wx.OK | wx.ICON_ERROR)
+            QMessageBox.critical(self, "Error", f"Error: {ex}")
 
     def _create_budget(self):
-        from src.gui.dialogs_wx import ProjectNameDialogWx
-        dlg = ProjectNameDialogWx(self)
-        if dlg.ShowModal() != wx.ID_OK:
-            dlg.Destroy()
-            return
-        project_data = dlg.get_project_data()
-        project_name = dlg.get_project_name()
-        dlg.Destroy()
+        project_data, project_name = self._obtain_project_data()
         if not project_data or not project_name:
             return
 
-        with wx.FileDialog(self, "Guardar Presupuesto", defaultFile=f"{sanitize_filename(project_name)}.xlsx", wildcard="Excel (*.xlsx)|*.xlsx|Todos (*.*)|*.*", style=wx.FD_SAVE) as fd:
-            if fd.ShowModal() != wx.ID_OK:
-                return
-            save_path = fd.GetPath()
+        from src.core.settings import Settings
+        save_default_dir = Settings().get_default_path(Settings.PATH_SAVE_BUDGETS) or ""
+        save_path, _ = QFileDialog.getSaveFileName(
+            self, "Guardar Presupuesto", os.path.join(save_default_dir, f"{sanitize_filename(project_name)}.xlsx"),
+            "Excel (*.xlsx);;Todos (*.*)",
+        )
         if not save_path:
             return
 
@@ -211,17 +239,16 @@ class MainFrame(wx.Frame):
         save_dir = os.path.dirname(save_path)
         folder_path = os.path.join(save_dir, folder_name)
         if not self.file_manager.create_folder(folder_path):
-            wx.MessageBox("No se pudo crear la carpeta.", "Error", wx.OK | wx.ICON_ERROR)
+            QMessageBox.critical(self, "Error", "No se pudo crear la carpeta.")
             return
         self.file_manager.create_subfolders(folder_path, subfolders)
         save_path = os.path.join(folder_path, f"{folder_name}.xlsx")
 
         template_path = self.template_manager.get_template_path()
         if not os.path.exists(template_path):
-            wx.MessageBox("No se encontró la plantilla.", "Error", wx.OK | wx.ICON_ERROR)
+            QMessageBox.critical(self, "Error", "No se encontró la plantilla.")
             return
 
-        # Buscar comunidad en la BDD a partir del campo "cliente"
         comunidad_data = self._buscar_comunidad_para_presupuesto(project_data.get("cliente", ""))
 
         excel_data = {
@@ -243,24 +270,31 @@ class MainFrame(wx.Frame):
             "admin_telefono": comunidad_data.get("telefono", "") if comunidad_data else "",
         }
         if not self.excel_manager.create_from_template(template_path, save_path, excel_data):
-            wx.MessageBox("Error al crear el presupuesto.", "Error", wx.OK | wx.ICON_ERROR)
+            QMessageBox.critical(self, "Error", "Error al crear el presupuesto.")
             return
 
-        # --- NUEVO: Flujo de generación de partidas con IA ---
+        db_repository.registrar_presupuesto({
+            "nombre_proyecto": project_name,
+            "ruta_excel": save_path,
+            "ruta_carpeta": folder_path,
+            "cliente": project_data.get("cliente", ""),
+            "localidad": project_data.get("localidad", ""),
+            "tipo_obra": project_data.get("tipo", ""),
+            "numero_proyecto": project_data.get("numero", ""),
+        })
+
         self._offer_ai_partidas(save_path, project_data)
 
+    def _obtain_project_data(self):
+        from src.gui.dialogs_wx import obtain_project_data
+        return obtain_project_data(self)
+
+    def _open_default_paths(self):
+        from src.gui.dialogs_wx import DefaultPathsDialog
+        dlg = DefaultPathsDialog(self)
+        dlg.exec()
+
     def _buscar_comunidad_para_presupuesto(self, nombre_cliente: str) -> dict | None:
-        """
-        Busca una comunidad en la BDD cuyo nombre coincida con el campo
-        'cliente' del proyecto. Muestra un diálogo de confirmación si se
-        encuentra (exacta o fuzzy).
-
-        Args:
-            nombre_cliente: Nombre del cliente/comunidad a buscar.
-
-        Returns:
-            Dict con los datos de la comunidad confirmada, o None.
-        """
         from src.gui.dialogs_wx import (
             ComunidadConfirmDialog, ComunidadFuzzySelectDialog,
             crear_comunidad_con_formulario,
@@ -271,124 +305,122 @@ class MainFrame(wx.Frame):
 
         nombre = nombre_cliente.strip()
 
-        # 1. Búsqueda exacta (case-insensitive)
         comunidad = db_repository.buscar_comunidad_por_nombre(nombre)
         if comunidad:
             dlg = ComunidadConfirmDialog(self, comunidad, nombre)
-            resultado = dlg.ShowModal()
-            datos = dlg.get_comunidad_data() if resultado == wx.ID_OK else None
-            dlg.Destroy()
-            return datos
+            if dlg.exec() == QMessageBox.DialogCode.Accepted.value:
+                return dlg.get_comunidad_data()
+            return None
 
-        # 2. Búsqueda fuzzy
         fuzzy = db_repository.buscar_comunidades_fuzzy(nombre)
         if fuzzy:
             dlg = ComunidadFuzzySelectDialog(self, fuzzy, nombre)
-            resultado = dlg.ShowModal()
-            datos = dlg.get_comunidad_data() if resultado == wx.ID_OK else None
-            dlg.Destroy()
-            return datos
+            if dlg.exec() == QMessageBox.DialogCode.Accepted.value:
+                return dlg.get_comunidad_data()
+            return None
 
-        # 3. No se encontró nada → ofrecer crear nueva comunidad
-        resp = wx.MessageBox(
+        resp = QMessageBox.question(
+            self,
+            "Comunidad no encontrada",
             f'No se encontró ninguna comunidad con el nombre "{nombre}".\n\n'
             "¿Desea añadir una nueva comunidad a la base de datos?",
-            "Comunidad no encontrada",
-            wx.YES_NO | wx.ICON_QUESTION,
         )
-        if resp == wx.YES:
+        if resp == QMessageBox.StandardButton.Yes:
             return crear_comunidad_con_formulario(self, nombre_prefill=nombre)
 
         return None
 
     def _offer_ai_partidas(self, excel_path, project_data):
-        """
-        Ofrece al usuario generar partidas con IA tras crear el presupuesto.
-
-        Args:
-            excel_path: Ruta del Excel recién creado.
-            project_data: Datos del proyecto (localidad, cliente, etc.).
-        """
         from src.gui.ai_budget_dialog_wx import AIBudgetDialog
         from src.gui.partidas_dialog_wx import SuggestedPartidasDialog
 
-        # Paso 1: Diálogo de configuración IA
         ai_dlg = AIBudgetDialog(self, datos_proyecto=project_data)
-        if ai_dlg.ShowModal() != wx.ID_OK:
-            ai_dlg.Destroy()
-            wx.MessageBox(
+        if ai_dlg.exec() != 1:
+            QMessageBox.information(
+                self, "Éxito",
                 f"Presupuesto creado (sin partidas IA):\n{excel_path}",
-                "Éxito", wx.OK,
             )
             return
 
         result = ai_dlg.get_result()
-        ai_dlg.Destroy()
 
         if not result or not result.get('partidas'):
-            wx.MessageBox(
+            QMessageBox.information(
+                self, "Éxito",
                 f"Presupuesto creado (sin partidas IA):\n{excel_path}",
-                "Éxito", wx.OK,
             )
             return
 
-        # Paso 2: Diálogo de revisión de partidas
         partidas_dlg = SuggestedPartidasDialog(self, result)
-        if partidas_dlg.ShowModal() != wx.ID_OK:
-            partidas_dlg.Destroy()
-            wx.MessageBox(
+        if partidas_dlg.exec() != 1:
+            QMessageBox.information(
+                self, "Éxito",
                 f"Presupuesto creado (sin partidas IA):\n{excel_path}",
-                "Éxito", wx.OK,
             )
             return
 
         selected = partidas_dlg.get_selected_partidas()
-        partidas_dlg.Destroy()
 
-        # Paso 3: Insertar partidas seleccionadas en el Excel via XML
         if selected:
             if self.excel_manager.insert_partidas_via_xml(excel_path, selected):
-                wx.MessageBox(
+                db_repository.registrar_presupuesto({
+                    "nombre_proyecto": project_data.get("nombre_obra", os.path.basename(excel_path)),
+                    "ruta_excel": excel_path,
+                    "usa_partidas_ia": True,
+                })
+                from src.core.budget_reader import BudgetReader
+                data = BudgetReader().read(excel_path)
+                if data:
+                    db_repository.actualizar_total(excel_path, data["total"])
+                QMessageBox.information(
+                    self, "Éxito",
                     f"Presupuesto creado con {len(selected)} partidas:\n{excel_path}",
-                    "Éxito", wx.OK,
                 )
             else:
-                wx.MessageBox(
+                QMessageBox.warning(
+                    self, "Aviso",
                     f"Presupuesto creado pero hubo un error al insertar las partidas.\n{excel_path}",
-                    "Aviso", wx.OK | wx.ICON_WARNING,
                 )
         else:
-            wx.MessageBox(
+            QMessageBox.information(
+                self, "Éxito",
                 f"Presupuesto creado (sin partidas):\n{excel_path}",
-                "Éxito", wx.OK,
             )
 
     def _open_template_manager(self):
-        """Abre el diálogo de gestión de plantillas de presupuesto."""
         from src.gui.template_manager_dialog import TemplateManagerDialog
         dlg = TemplateManagerDialog(self)
-        dlg.ShowModal()
-        dlg.Destroy()
+        dlg.exec()
 
     def _open_ai_settings(self):
-        """Abre el diálogo de configuración de API key para la IA."""
         from src.core.settings import Settings
         settings = Settings()
         current_key = settings.get_api_key() or ""
 
-        dlg = wx.TextEntryDialog(
+        new_key, ok = QInputDialog.getText(
             self,
+            "Configuración IA - API Key",
             "Introduce tu API key de Google Gemini.\n"
             "Puedes obtenerla gratis en: https://aistudio.google.com/apikey\n\n"
             "La clave se guardará de forma local y segura.",
-            "Configuración IA - API Key",
-            value=current_key,
+            text=current_key,
         )
-        if dlg.ShowModal() == wx.ID_OK:
-            new_key = dlg.GetValue().strip()
-            settings.save_api_key(new_key)
-            if new_key:
-                wx.MessageBox("API key guardada correctamente.", "Configuración IA", wx.OK)
-            else:
-                wx.MessageBox("API key eliminada.", "Configuración IA", wx.OK)
-        dlg.Destroy()
+        if not ok:
+            return
+        new_key = new_key.strip()
+        if new_key and (len(new_key) < 10 or not new_key.startswith("AI")):
+            confirm = QMessageBox.warning(
+                self,
+                "Formato sospechoso",
+                "La clave introducida no parece tener el formato esperado "
+                "(las claves de Gemini suelen empezar por 'AI' y tener ~39 caracteres).\n\n"
+                "¿Guardar de todas formas?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if confirm != QMessageBox.StandardButton.Yes:
+                return
+        settings.save_api_key(new_key)
+        if new_key:
+            QMessageBox.information(self, "Configuración IA", "API key guardada correctamente.")
+        else:
+            QMessageBox.information(self, "Configuración IA", "API key eliminada.")

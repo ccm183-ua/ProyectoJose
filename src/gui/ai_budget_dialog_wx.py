@@ -8,8 +8,13 @@ Permite al usuario:
 - Generar partidas con IA o saltar el paso
 """
 
-import wx
 import threading
+
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import (
+    QDialog, QHBoxLayout, QLabel, QLineEdit, QListWidget,
+    QMessageBox, QPushButton, QTextEdit, QVBoxLayout, QWidget,
+)
 
 from src.core.work_type_catalog import WorkTypeCatalog
 from src.core.budget_generator import BudgetGenerator
@@ -17,199 +22,160 @@ from src.core.settings import Settings
 from src.gui import theme
 
 
-class AIBudgetDialog(wx.Dialog):
+class AIBudgetDialog(QDialog):
     """Diálogo para configurar y lanzar la generación de partidas con IA."""
 
-    def __init__(self, parent, datos_proyecto=None):
-        """
-        Args:
-            parent: Ventana padre.
-            datos_proyecto: Diccionario con datos del proyecto (localidad, cliente, etc.).
-        """
-        super().__init__(
-            parent,
-            title="Generar Partidas con IA",
-            style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER,
-        )
-        theme.style_dialog(self)
+    _generation_done = Signal(dict)
+
+    def __init__(self, parent=None, datos_proyecto=None, context_extra=""):
+        super().__init__(parent)
+        self.setWindowTitle("Generar Partidas con IA")
+        self._generation_done.connect(self._on_generation_complete)
 
         self._datos_proyecto = datos_proyecto or {}
+        self._context_extra = context_extra or ""
         self._catalog = WorkTypeCatalog()
         self._settings = Settings()
         self._selected_plantilla = None
-        self._result = None  # Resultado de la generación
+        self._result = None
 
         self._build_ui()
-        self.CenterOnParent()
 
     def _build_ui(self):
-        panel = wx.Panel(self)
-        theme.style_panel(panel)
-        main_sizer = wx.BoxSizer(wx.VERTICAL)
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
 
-        # --- Título ---
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(theme.SPACE_XL, theme.SPACE_XL, theme.SPACE_XL, theme.SPACE_XL)
+        layout.setSpacing(theme.SPACE_SM)
+
         title = theme.create_title(panel, "Generar Partidas con IA", "xl")
-        main_sizer.Add(title, 0, wx.LEFT | wx.TOP | wx.RIGHT, theme.SPACE_XL)
+        layout.addWidget(title)
 
         subtitle = theme.create_text(
             panel,
             "Describe el tipo de obra y la IA generará las partidas del presupuesto "
-            "con precios orientativos. Opcionalmente selecciona una plantilla de referencia."
+            "con precios orientativos. Opcionalmente selecciona una plantilla de referencia.",
         )
-        subtitle.Wrap(580)
-        main_sizer.Add(subtitle, 0, wx.LEFT | wx.RIGHT | wx.TOP, theme.SPACE_MD)
+        subtitle.setWordWrap(True)
+        layout.addWidget(subtitle)
 
-        main_sizer.AddSpacer(theme.SPACE_MD)
+        layout.addSpacing(theme.SPACE_SM)
 
-        # --- Tipo de obra ---
-        lbl_tipo = wx.StaticText(panel, label="Tipo de obra:")
-        lbl_tipo.SetFont(theme.get_font_medium())
-        lbl_tipo.SetForegroundColour(theme.TEXT_PRIMARY)
-        main_sizer.Add(lbl_tipo, 0, wx.LEFT, theme.SPACE_XL)
+        lbl_tipo = QLabel("Tipo de obra:", panel)
+        lbl_tipo.setFont(theme.get_font_medium())
+        lbl_tipo.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; background: transparent;")
+        layout.addWidget(lbl_tipo)
 
-        self._tipo_text = wx.TextCtrl(panel, size=(-1, 32))
-        theme.style_textctrl(self._tipo_text)
-        try:
-            self._tipo_text.SetHint("Ej: Reparación de bajante comunitaria, Reforma integral cocina...")
-        except AttributeError:
-            pass
-        main_sizer.Add(self._tipo_text, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, theme.SPACE_SM)
+        self._tipo_text = QLineEdit(panel)
+        self._tipo_text.setPlaceholderText("Ej: Reparación de bajante comunitaria, Reforma integral cocina...")
+        self._tipo_text.setFont(theme.font_base())
+        self._tipo_text.setMinimumHeight(32)
+        layout.addWidget(self._tipo_text)
 
-        main_sizer.AddSpacer(theme.SPACE_SM)
+        layout.addSpacing(theme.SPACE_XS)
 
-        # --- Descripción adicional ---
-        lbl_desc = wx.StaticText(panel, label="Descripción adicional (contexto para la IA):")
-        lbl_desc.SetFont(theme.get_font_medium())
-        lbl_desc.SetForegroundColour(theme.TEXT_PRIMARY)
-        main_sizer.Add(lbl_desc, 0, wx.LEFT, theme.SPACE_XL)
+        lbl_desc = QLabel("Descripción adicional (contexto para la IA):", panel)
+        lbl_desc.setFont(theme.get_font_medium())
+        lbl_desc.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; background: transparent;")
+        layout.addWidget(lbl_desc)
 
-        self._desc_text = wx.TextCtrl(panel, style=wx.TE_MULTILINE, size=(-1, 64))
-        theme.style_textctrl(self._desc_text)
-        try:
-            self._desc_text.SetHint(
-                "Ej: Bajante de PVC en patio interior, edificio 4 plantas, "
-                "acceso difícil por estrechez del patio..."
-            )
-        except AttributeError:
-            pass
-        main_sizer.Add(self._desc_text, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, theme.SPACE_SM)
+        self._desc_text = QTextEdit(panel)
+        self._desc_text.setPlaceholderText(
+            "Ej: Bajante de PVC en patio interior, edificio 4 plantas, "
+            "acceso difícil por estrechez del patio..."
+        )
+        self._desc_text.setFont(theme.font_base())
+        self._desc_text.setMaximumHeight(64)
+        layout.addWidget(self._desc_text)
 
-        main_sizer.AddSpacer(theme.SPACE_SM)
+        layout.addSpacing(theme.SPACE_XS)
 
-        # --- Plantilla de referencia (opcional) ---
-        lbl_plantilla = wx.StaticText(panel, label="Plantilla de referencia (opcional):")
-        lbl_plantilla.SetFont(theme.get_font_medium())
-        lbl_plantilla.SetForegroundColour(theme.TEXT_PRIMARY)
-        main_sizer.Add(lbl_plantilla, 0, wx.LEFT, theme.SPACE_XL)
+        lbl_plantilla = QLabel("Plantilla de referencia (opcional):", panel)
+        lbl_plantilla.setFont(theme.get_font_medium())
+        lbl_plantilla.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; background: transparent;")
+        layout.addWidget(lbl_plantilla)
 
         plantilla_hint = theme.create_text(
             panel,
             "Si seleccionas una, la IA la usará como base para generar partidas más precisas.",
             muted=True,
         )
-        main_sizer.Add(plantilla_hint, 0, wx.LEFT | wx.TOP, theme.SPACE_SM)
+        layout.addWidget(plantilla_hint)
 
-        # Lista de plantillas
         names = self._catalog.get_all_names()
-        self._plantilla_list = wx.ListBox(
-            panel,
-            choices=["(Ninguna - generar desde cero)"] + names,
-            size=(-1, 100),
-        )
-        self._plantilla_list.SetSelection(0)  # "Ninguna" por defecto
-        self._plantilla_list.SetFont(theme.font_base())
-        self._plantilla_list.SetBackgroundColour(theme.BG_CARD)
-        main_sizer.Add(
-            self._plantilla_list, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, theme.SPACE_SM
-        )
+        self._plantilla_list = QListWidget(panel)
+        self._plantilla_list.addItem("(Ninguna - generar desde cero)")
+        self._plantilla_list.addItems(names)
+        self._plantilla_list.setCurrentRow(0)
+        self._plantilla_list.setFont(theme.font_base())
+        self._plantilla_list.setMaximumHeight(100)
+        layout.addWidget(self._plantilla_list)
 
-        # --- Aviso API key ---
         if not self._settings.has_api_key():
-            warning_sizer = wx.BoxSizer(wx.HORIZONTAL)
-            warning_icon = wx.StaticText(panel, label="⚠")
-            warning_icon.SetForegroundColour(theme.WARNING)
-            warning_icon.SetFont(theme.font_lg())
-            warning_sizer.Add(warning_icon, 0, wx.RIGHT, theme.SPACE_SM)
+            warning_layout = QHBoxLayout()
+            warning_icon = QLabel("⚠", panel)
+            warning_icon.setStyleSheet(f"color: {theme.WARNING}; background: transparent;")
+            warning_icon.setFont(theme.font_lg())
+            warning_layout.addWidget(warning_icon)
 
             warning_text = theme.create_text(
-                panel,
-                "No hay API key configurada. Solo se podrán usar plantillas offline.",
+                panel, "No hay API key configurada. Solo se podrán usar plantillas offline.",
             )
-            warning_text.SetForegroundColour(theme.WARNING)
-            warning_sizer.Add(warning_text, 1, wx.ALIGN_CENTER_VERTICAL)
+            warning_text.setStyleSheet(f"color: {theme.WARNING}; background: transparent;")
+            warning_layout.addWidget(warning_text, 1)
+            layout.addSpacing(theme.SPACE_SM)
+            layout.addLayout(warning_layout)
 
-            main_sizer.AddSpacer(theme.SPACE_SM)
-            main_sizer.Add(warning_sizer, 0, wx.LEFT | wx.RIGHT, theme.SPACE_XL)
+        layout.addSpacing(theme.SPACE_MD)
+        layout.addWidget(theme.create_divider(panel))
+        layout.addSpacing(theme.SPACE_MD)
 
-        # --- Separador ---
-        main_sizer.AddSpacer(theme.SPACE_MD)
-        main_sizer.Add(theme.create_divider(panel), 0, wx.EXPAND | wx.LEFT | wx.RIGHT, theme.SPACE_XL)
-        main_sizer.AddSpacer(theme.SPACE_MD)
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
 
-        # --- Botones ---
-        btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        btn_skip = QPushButton("Saltar", panel)
+        btn_skip.setFont(theme.font_base())
+        btn_skip.setFixedSize(120, 44)
+        btn_skip.setToolTip("Crear presupuesto vacío sin partidas IA")
+        btn_skip.clicked.connect(self.reject)
+        btn_layout.addWidget(btn_skip)
+        btn_layout.addSpacing(theme.SPACE_MD)
 
-        btn_skip = wx.Button(panel, wx.ID_CANCEL, "Saltar", size=(120, 44))
-        btn_skip.SetFont(theme.font_base())
-        btn_skip.SetToolTip("Crear presupuesto vacío sin partidas IA")
+        self._btn_generate = QPushButton("Generar partidas con IA", panel)
+        self._btn_generate.setFont(theme.get_font_medium())
+        self._btn_generate.setFixedSize(220, 44)
+        self._btn_generate.setProperty("class", "primary")
+        self._btn_generate.setDefault(True)
+        self._btn_generate.clicked.connect(self._on_generate)
+        btn_layout.addWidget(self._btn_generate)
 
-        self._btn_generate = wx.Button(panel, wx.ID_OK, "Generar partidas con IA", size=(220, 44))
-        self._btn_generate.SetFont(theme.get_font_medium())
-        self._btn_generate.SetBackgroundColour(theme.ACCENT_PRIMARY)
-        self._btn_generate.SetForegroundColour(theme.TEXT_INVERSE)
-        self._btn_generate.SetDefault()
+        layout.addLayout(btn_layout)
 
-        btn_sizer.Add(btn_skip, 0, wx.RIGHT, theme.SPACE_MD)
-        btn_sizer.Add(self._btn_generate, 0)
+        main_layout.addWidget(panel)
 
-        main_sizer.Add(btn_sizer, 0, wx.ALIGN_RIGHT | wx.RIGHT | wx.BOTTOM, theme.SPACE_XL)
+        self.setMinimumSize(650, 500)
+        self.resize(650, 580)
 
-        panel.SetSizer(main_sizer)
-
-        dialog_sizer = wx.BoxSizer(wx.VERTICAL)
-        dialog_sizer.Add(panel, 1, wx.EXPAND)
-        self.SetSizer(dialog_sizer)
-
-        self.Fit()
-        w, h = self.GetSize()
-        w = max(w, 650)
-        h = max(h, 580)
-        display = wx.Display(wx.Display.GetFromWindow(self) if wx.Display.GetFromWindow(self) >= 0 else 0)
-        screen_w, screen_h = display.GetClientArea().GetSize()
-        w = min(w, screen_w - 40)
-        h = min(h, screen_h - 40)
-        self.SetSize((w, h))
-        self.SetMinSize((650, 500))
-
-        # Eventos
-        self.Bind(wx.EVT_BUTTON, self._on_generate, id=wx.ID_OK)
-
-    def _on_generate(self, event):
-        """Valida y lanza la generación de partidas."""
-        tipo = self._tipo_text.GetValue().strip()
+    def _on_generate(self):
+        tipo = self._tipo_text.text().strip()
         if not tipo:
-            wx.MessageBox(
-                "Por favor, escribe el tipo de obra.",
-                "Campo obligatorio",
-                wx.OK | wx.ICON_WARNING,
-            )
+            QMessageBox.warning(self, "Campo obligatorio", "Por favor, escribe el tipo de obra.")
             return
 
-        descripcion = self._desc_text.GetValue().strip()
+        descripcion = self._desc_text.toPlainText().strip()
 
-        # Obtener plantilla seleccionada (si no es "Ninguna")
-        sel_idx = self._plantilla_list.GetSelection()
+        sel_idx = self._plantilla_list.currentRow()
         if sel_idx > 0:
-            nombre = self._plantilla_list.GetString(sel_idx)
+            nombre = self._plantilla_list.item(sel_idx).text()
             self._selected_plantilla = self._catalog.get_by_name(nombre)
         else:
             self._selected_plantilla = None
 
-        # Generar partidas
-        self._btn_generate.Disable()
-        self._btn_generate.SetLabel("Generando...")
+        self._btn_generate.setEnabled(False)
+        self._btn_generate.setText("Generando...")
 
-        # Ejecutar en hilo para no bloquear la UI
         thread = threading.Thread(
             target=self._run_generation,
             args=(tipo, descripcion),
@@ -218,58 +184,61 @@ class AIBudgetDialog(wx.Dialog):
         thread.start()
 
     def _run_generation(self, tipo, descripcion):
-        """Ejecuta la generación en un hilo separado."""
-        api_key = self._settings.get_api_key()
-        generator = BudgetGenerator(api_key=api_key)
+        try:
+            api_key = self._settings.get_api_key()
+            generator = BudgetGenerator(api_key=api_key)
 
-        result = generator.generate(
-            tipo_obra=tipo,
-            descripcion=descripcion,
-            plantilla=self._selected_plantilla,
-            datos_proyecto=self._datos_proyecto,
-        )
+            full_desc = descripcion
+            if self._context_extra:
+                full_desc = f"{descripcion}\n{self._context_extra}" if descripcion else self._context_extra
 
-        # Volver al hilo principal de la UI
-        wx.CallAfter(self._on_generation_complete, result)
+            result = generator.generate(
+                tipo_obra=tipo,
+                descripcion=full_desc,
+                plantilla=self._selected_plantilla,
+                datos_proyecto=self._datos_proyecto,
+            )
+
+            self._generation_done.emit(result)
+        except Exception as exc:
+            self._generation_done.emit({
+                'partidas': [],
+                'source': 'error',
+                'error': f"Error inesperado en la generación: {exc}",
+            })
 
     def _on_generation_complete(self, result):
-        """Callback cuando la generación termina."""
         self._result = result
-        self._btn_generate.Enable()
-        self._btn_generate.SetLabel("Generar partidas con IA")
+        self._btn_generate.setEnabled(True)
+        self._btn_generate.setText("Generar partidas con IA")
 
         source = result.get('source', 'error')
 
-        # Caso 1: Error total - sin partidas
-        if source == 'error' or (result['error'] and not result['partidas']):
-            wx.MessageBox(
-                f"No se pudieron generar partidas:\n\n{result['error']}",
-                "Error de generación",
-                wx.OK | wx.ICON_WARNING,
+        if source == 'error' or (result.get('error') and not result.get('partidas')):
+            QMessageBox.warning(
+                self, "Error de generación",
+                f"No se pudieron generar partidas:\n\n{result.get('error', '')}",
             )
             return
 
-        # Caso 2: Fallback offline - avisar al usuario y preguntar
         if source == 'offline':
-            confirm = wx.MessageBox(
+            confirm = QMessageBox.question(
+                self,
+                "Modo offline - Partidas de plantilla",
                 "La IA no está disponible en este momento (cuota agotada o sin conexión).\n\n"
                 "Se han cargado las partidas base de la plantilla seleccionada "
                 "como punto de partida. Estas partidas NO han sido adaptadas por la IA "
                 "a tu descripción específica.\n\n"
                 "¿Quieres usar estas partidas base como referencia?\n"
                 "(Podrás editarlas manualmente en el siguiente paso)",
-                "Modo offline - Partidas de plantilla",
-                wx.YES_NO | wx.ICON_INFORMATION,
             )
-            if confirm != wx.YES:
+            if confirm != QMessageBox.StandardButton.Yes:
                 self._result = None
                 return
-            self.EndModal(wx.ID_OK)
+            self.accept()
             return
 
-        # Caso 3: Generadas por IA correctamente
-        self.EndModal(wx.ID_OK)
+        self.accept()
 
     def get_result(self):
-        """Devuelve el resultado de la generación."""
         return self._result

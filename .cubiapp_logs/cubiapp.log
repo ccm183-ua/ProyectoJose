@@ -1,0 +1,37 @@
+2026-02-20 11:59:58,455 [INFO] google_genai.models: AFC is enabled with max remote calls: 10.
+2026-02-20 12:00:15,990 [INFO] httpx: HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-02-20 12:00:22,100 [ERROR] src.core.excel_manager: Error al insertar partidas
+Traceback (most recent call last):
+  File "C:\Users\SERGIO GOMARIZ.IT\AppData\Local\Programs\Python\Python311\Lib\shutil.py", line 853, in move
+    os.rename(src, real_dst)
+FileExistsError: [WinError 183] No se puede crear un archivo que ya existe: 'C:\\Users\\SERGIO~1.IT\\AppData\\Local\\Temp\\tmphugt8c8z.xlsx' -> 'C:\\Users\\SERGIO GOMARIZ.IT\\Documents\\Presupuestos\\EJECUTANDO\\29-26 C.P. SALAMANCA, 42 - ALICANTE (APLACADO SUELTO FACHADA)\\29-26 C.P. SALAMANCA, 42 - ALICANTE (APLACADO SUELTO FACHADA).xlsx'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\SERGIO GOMARIZ.IT\Documents\Dev\ProyectoJose\src\core\excel_manager.py", line 308, in insert_partidas_via_xml
+    shutil.move(tmp_path, file_path)
+  File "C:\Users\SERGIO GOMARIZ.IT\AppData\Local\Programs\Python\Python311\Lib\shutil.py", line 873, in move
+    copy_function(src, real_dst)
+  File "C:\Users\SERGIO GOMARIZ.IT\AppData\Local\Programs\Python\Python311\Lib\shutil.py", line 448, in copy2
+    copyfile(src, dst, follow_symlinks=follow_symlinks)
+  File "C:\Users\SERGIO GOMARIZ.IT\AppData\Local\Programs\Python\Python311\Lib\shutil.py", line 258, in copyfile
+    with open(dst, 'wb') as fdst:
+         ^^^^^^^^^^^^^^^
+PermissionError: [Errno 13] Permission denied: 'C:\\Users\\SERGIO GOMARIZ.IT\\Documents\\Presupuestos\\EJECUTANDO\\29-26 C.P. SALAMANCA, 42 - ALICANTE (APLACADO SUELTO FACHADA)\\29-26 C.P. SALAMANCA, 42 - ALICANTE (APLACADO SUELTO FACHADA).xlsx'
+2026-02-20 12:00:44,069 [INFO] google_genai.models: AFC is enabled with max remote calls: 10.
+2026-02-20 12:00:55,585 [INFO] httpx: HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-02-20 12:01:36,906 [INFO] google_genai.models: AFC is enabled with max remote calls: 10.
+2026-02-20 12:01:56,560 [INFO] httpx: HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-02-20 12:03:11,395 [INFO] google_genai.models: AFC is enabled with max remote calls: 10.
+2026-02-20 12:03:27,406 [INFO] httpx: HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-02-20 12:37:44,729 [INFO] google_genai.models: AFC is enabled with max remote calls: 10.
+2026-02-20 12:38:01,770 [INFO] httpx: HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-02-20 12:45:07,368 [INFO] google_genai.models: AFC is enabled with max remote calls: 10.
+2026-02-20 12:45:27,753 [INFO] httpx: HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-02-20 12:59:57,900 [INFO] google_genai.models: AFC is enabled with max remote calls: 10.
+2026-02-20 13:00:13,073 [INFO] httpx: HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-02-20 13:45:56,180 [INFO] google_genai.models: AFC is enabled with max remote calls: 10.
+2026-02-20 13:46:08,614 [INFO] httpx: HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-02-20 13:54:04,070 [INFO] google_genai.models: AFC is enabled with max remote calls: 10.
+2026-02-20 13:54:17,367 [INFO] httpx: HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
