@@ -889,18 +889,20 @@ class ExcelManager:
 
     def _update_asciende_text(self, sheet_xml, file_path, shared_strings,
                               wrap_style="47"):
-        """Busca la celda 'Asciende el presupuesto...' y la actualiza con el total actual."""
-        from src.core.budget_reader import BudgetReader
+        """Busca la celda 'Asciende el presupuesto...' y la actualiza con el total actual.
 
+        El total se extrae directamente del XML ya cargado en memoria
+        para evitar abrir el archivo de disco una segunda vez (que en
+        Windows puede dejar handles abiertos e impedir que WPS/Excel
+        abran el fichero después).
+        """
         row = self._find_cell_by_text(
             sheet_xml, shared_strings, "A", "Asciende", min_row=30,
         )
         if row is None:
             return sheet_xml
 
-        reader = BudgetReader()
-        budget_data = reader.read(file_path)
-        total_con_iva = budget_data["total"] if budget_data else 0
+        total_con_iva = self._extract_total_from_xml(sheet_xml, shared_strings)
 
         texto_importe = (
             "Asciende el presupuesto de ejecución material a la expresada "
@@ -911,6 +913,42 @@ class ExcelManager:
             style=wrap_style, bold=True, font_size=11,
         )
         return sheet_xml
+
+    def _extract_total_from_xml(self, sheet_xml, shared_strings):
+        """Extrae el total con IVA directamente del XML de la hoja en memoria.
+
+        Busca la fila que contiene ``TOTAL PRESUPUESTO`` + ``I.V.A`` +
+        ``INCLUIDO`` y lee el valor numérico de la columna I de esa fila.
+        Si no la encuentra, devuelve 0.
+        """
+        for row_m in re.finditer(
+            r'<row r="(\d+)"[^>]*?(?:/>|>(.*?)</row>)', sheet_xml, re.DOTALL
+        ):
+            row_num = int(row_m.group(1))
+            if row_num < 30:
+                continue
+            content = row_m.group(2)
+            if not content:
+                continue
+
+            row_text = ""
+            for cell_m in re.finditer(r'<c r="[A-Z]+\d+"[^>]*?(?:/>|>.*?</c>)', content, re.DOTALL):
+                row_text += " " + self._resolve_cell_text(cell_m.group(0), shared_strings)
+
+            text_up = row_text.upper()
+            if "TOTAL" in text_up and "I.V.A" in text_up and "INCLUIDO" in text_up:
+                val_m = re.search(
+                    r'<c r="I' + str(row_num) + r'"[^>]*?>(.*?)</c>',
+                    content, re.DOTALL,
+                )
+                if val_m:
+                    v_m = re.search(r'<v>([^<]+)</v>', val_m.group(1))
+                    if v_m:
+                        try:
+                            return float(v_m.group(1))
+                        except (ValueError, TypeError):
+                            pass
+        return 0
 
     def _update_bottom_client_cell(self, sheet_xml, cliente, shared_strings):
         """Busca la última celda en columna A (fila >= 50) con texto (no fórmula)

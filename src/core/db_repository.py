@@ -5,11 +5,27 @@ Devuelve datos o (éxito, mensaje_error) con mensajes en español para el usuari
 Captura sqlite3.IntegrityError y lo convierte en mensajes claros.
 """
 
+import re
 import sqlite3
 from difflib import SequenceMatcher
 from typing import Optional, List, Dict, Tuple
 
 from src.core import database
+
+_CP_RE = re.compile(
+    r"\b[Cc]\.?\s*[Pp]\.?\s*",
+)
+
+
+def _normalize_for_match(name: str) -> str:
+    """Elimina prefijos 'C.P.', 'C.P', 'C. P.', etc. y normaliza espacios.
+
+    Estos prefijos son abreviaturas de "Comunidad de Propietarios" y están
+    presentes en la gran mayoría de nombres de comunidad y proyecto, lo que
+    distorsiona el matching fuzzy produciendo falsos positivos.
+    """
+    result = _CP_RE.sub("", name)
+    return " ".join(result.split()).strip()
 
 
 def _mensaje_integridad(e: sqlite3.IntegrityError) -> str:
@@ -358,6 +374,11 @@ def get_comunidades_para_tabla() -> List[Dict]:
 def buscar_comunidad_por_nombre(nombre: str) -> Optional[Dict]:
     """Busca una comunidad por nombre exacto (case-insensitive).
 
+    Primero intenta coincidencia directa. Si no encuentra, repite la
+    búsqueda normalizando ambos lados (eliminando «C.P.» y variantes)
+    para evitar que el prefijo de «Comunidad de Propietarios» impida
+    el match cuando una parte lo tiene y la otra no.
+
     Args:
         nombre: Nombre a buscar.
 
@@ -375,23 +396,41 @@ def buscar_comunidad_por_nombre(nombre: str) -> Optional[Dict]:
             (nombre,),
         )
         r = cur.fetchone()
-        if not r:
+        if r:
+            return _row_to_comunidad(r)
+
+        nombre_norm = _normalize_for_match(nombre).lower()
+        if not nombre_norm:
             return None
-        return {
-            "id": r[0], "nombre": r[1] or "",
-            "cif": r[2] or "", "direccion": r[3] or "",
-            "email": r[4] or "", "telefono": r[5] or "",
-            "administracion_id": r[6],
-        }
+        cur = conn.execute(
+            "SELECT id, nombre, cif, direccion, email, telefono, administracion_id "
+            "FROM comunidad ORDER BY nombre"
+        )
+        for r in cur.fetchall():
+            db_norm = _normalize_for_match(r[1] or "").lower()
+            if db_norm == nombre_norm:
+                return _row_to_comunidad(r)
+        return None
     finally:
         conn.close()
+
+
+def _row_to_comunidad(r) -> Dict:
+    return {
+        "id": r[0], "nombre": r[1] or "",
+        "cif": r[2] or "", "direccion": r[3] or "",
+        "email": r[4] or "", "telefono": r[5] or "",
+        "administracion_id": r[6],
+    }
 
 
 def buscar_comunidades_fuzzy(nombre: str, umbral: float = 0.55) -> List[Dict]:
     """Busca comunidades cuyo nombre sea similar al dado (fuzzy matching).
 
-    Usa difflib.SequenceMatcher para calcular la similitud. Solo devuelve
-    resultados cuya ratio >= umbral, ordenados de mayor a menor similitud.
+    Usa difflib.SequenceMatcher para calcular la similitud. Antes de
+    comparar, normaliza ambos nombres eliminando «C.P.» y variantes
+    (Comunidad de Propietarios) para evitar falsos positivos por ese
+    prefijo tan común.
 
     Args:
         nombre: Nombre aproximado a buscar.
@@ -411,17 +450,16 @@ def buscar_comunidades_fuzzy(nombre: str, umbral: float = 0.55) -> List[Dict]:
             "FROM comunidad ORDER BY nombre"
         )
         rows = cur.fetchall()
-        nombre_lower = nombre.lower()
+        nombre_norm = _normalize_for_match(nombre).lower()
+        if not nombre_norm:
+            return []
         resultados = []
         for r in rows:
-            nombre_db = (r[1] or "").strip().lower()
-            ratio = SequenceMatcher(None, nombre_lower, nombre_db).ratio()
+            db_norm = _normalize_for_match(r[1] or "").lower()
+            ratio = SequenceMatcher(None, nombre_norm, db_norm).ratio()
             if ratio >= umbral:
                 resultados.append({
-                    "id": r[0], "nombre": r[1] or "",
-                    "cif": r[2] or "", "direccion": r[3] or "",
-                    "email": r[4] or "", "telefono": r[5] or "",
-                    "administracion_id": r[6],
+                    **_row_to_comunidad(r),
                     "similitud": round(ratio, 3),
                 })
         resultados.sort(key=lambda x: x["similitud"], reverse=True)

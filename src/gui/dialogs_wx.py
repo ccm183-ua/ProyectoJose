@@ -369,9 +369,72 @@ class ProjectNameDialogWx(wx.Dialog):
 # Función compartida: obtener datos de proyecto (relación Excel → portapapeles)
 # ---------------------------------------------------------------------------
 
-def obtain_project_data(parent) -> tuple:
+def _find_budget_by_numero(budgets: list, numero: str):
+    """Devuelve el primer dict de *budgets* cuyo ``numero`` coincida.
+
+    El *numero* del dashboard suele tener formato ``NNN-YY`` (ej. ``16-25``),
+    mientras que la relación solo contiene ``NNN`` (ej. ``16``).  Se intenta
+    primero coincidencia exacta y después se compara solo la parte antes del
+    guion.
+    """
+    target = numero.strip()
+    if not target:
+        return None
+
+    for b in budgets:
+        if str(b.get("numero", "")).strip() == target:
+            return b
+
+    base = target.split("-")[0].strip() if "-" in target else ""
+    if base:
+        for b in budgets:
+            if str(b.get("numero", "")).strip() == base:
+                return b
+
+    return None
+
+
+def _ask_use_matched_budget(parent, budget: dict) -> int:
+    """Muestra un diálogo de confirmación con los datos del presupuesto
+    encontrado y devuelve ``wx.YES``, ``wx.NO`` o ``wx.CANCEL``."""
+    num = budget.get("numero", "")
+    cliente = budget.get("cliente", "")
+    calle = budget.get("calle", "")
+    localidad = budget.get("localidad", "")
+    tipo = budget.get("tipo", "")
+    fecha = budget.get("fecha", "")
+    importe = budget.get("importe", "")
+
+    lines = [
+        f"Nº: {num}",
+        f"Cliente: {cliente}",
+        f"Calle: {calle}",
+        f"Localidad: {localidad}",
+        f"Tipo: {tipo}",
+        f"Fecha: {fecha}",
+        f"Importe: {importe}",
+    ]
+    msg = (
+        f"Se ha encontrado el presupuesto Nº {num} en la relación:\n\n"
+        + "\n".join(lines)
+        + "\n\n¿Desea regenerar los campos con estos datos?"
+        "\n\n(Sí = usar estos datos · No = elegir otro · Cancelar = salir)"
+    )
+    return wx.MessageBox(
+        msg,
+        "Presupuesto encontrado",
+        wx.YES_NO | wx.CANCEL | wx.ICON_QUESTION,
+        parent,
+    )
+
+
+def obtain_project_data(parent, preselect_numero: str = "") -> tuple:
     """Obtiene ``(project_data, project_name)`` usando primero el Excel de
     relación (si está configurado) y después el portapapeles como fallback.
+
+    Si *preselect_numero* coincide con una entrada de la relación, se ofrece
+    al usuario usarla directamente mediante un diálogo de confirmación.
+    Si rechaza, se muestra la lista completa.
 
     Devuelve ``(None, None)`` si el usuario cancela.
     """
@@ -386,6 +449,20 @@ def obtain_project_data(parent) -> tuple:
 
             budgets, err = ExcelRelationReader().read(relation_path)
             if not err and budgets:
+                # --- Atajo: coincidencia directa por número ---------------
+                if preselect_numero:
+                    match = _find_budget_by_numero(budgets, preselect_numero)
+                    if match is not None:
+                        result = _ask_use_matched_budget(parent, match)
+                        if result == wx.YES:
+                            gen = ProjectNameGenerator()
+                            data = {k: v for k, v in match.items() if k != "importe"}
+                            name = gen.generate_project_name(data)
+                            return data, name
+                        if result == wx.CANCEL:
+                            return None, None
+                        # wx.NO → sigue al selector completo
+
                 sel_dlg = BudgetSelectorDialog(parent, budgets)
                 result = sel_dlg.ShowModal()
                 if result == wx.ID_OK:
@@ -430,12 +507,13 @@ ID_BTN_CLIPBOARD_FALLBACK = wx.NewIdRef()
 class BudgetSelectorDialog(wx.Dialog):
     """Muestra los presupuestos leídos del Excel de relación y permite elegir uno."""
 
-    def __init__(self, parent, budgets: list):
+    def __init__(self, parent, budgets: list, preselect_numero: str = ""):
         super().__init__(parent, title="Seleccionar Presupuesto",
                          style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         theme.style_dialog(self)
         self._budgets = budgets
         self._filtered: list = list(budgets)
+        self._preselect_numero = preselect_numero.strip()
         self.project_data = None
         self.project_name = None
         self._use_clipboard = False
@@ -514,6 +592,7 @@ class BudgetSelectorDialog(wx.Dialog):
 
     def _populate_list(self, items: list):
         self._list.DeleteAllItems()
+        select_idx = -1
         for i, b in enumerate(items):
             pos = self._list.InsertItem(i, str(b.get("numero", "")))
             self._list.SetItem(pos, 1, b.get("fecha", ""))
@@ -522,6 +601,13 @@ class BudgetSelectorDialog(wx.Dialog):
             self._list.SetItem(pos, 4, b.get("localidad", ""))
             self._list.SetItem(pos, 5, b.get("tipo", ""))
             self._list.SetItem(pos, 6, b.get("importe", ""))
+            if (self._preselect_numero
+                    and str(b.get("numero", "")).strip() == self._preselect_numero):
+                select_idx = i
+        if select_idx >= 0:
+            self._list.Select(select_idx)
+            self._list.EnsureVisible(select_idx)
+            self._list.Focus(select_idx)
 
     def _on_filter(self, _event):
         query = self._search.GetValue().strip().lower()

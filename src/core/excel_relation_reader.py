@@ -5,6 +5,7 @@ Lee el fichero maestro donde se listan todos los presupuestos emitidos
 y devuelve los datos en el mismo formato que ``ProjectParser``.
 """
 
+import io
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
@@ -35,16 +36,26 @@ class ExcelRelationReader:
         """
         Lee todas las filas de presupuestos del fichero indicado.
 
+        El archivo se lee completamente en memoria antes de pasarlo a
+        openpyxl para evitar que ``read_only=True`` mantenga handles de
+        archivo abiertos en Windows.
+
         Returns:
             ``(lista_de_dicts, None)`` en caso de éxito, o
             ``([], mensaje_error)`` si ocurre algún problema.
         """
         try:
-            wb = load_workbook(file_path, data_only=True, read_only=True)
+            with open(file_path, "rb") as f:
+                raw = io.BytesIO(f.read())
         except FileNotFoundError:
             return [], f"Archivo no encontrado: {file_path}"
         except Exception as exc:
             return [], f"No se pudo abrir el archivo: {exc}"
+
+        try:
+            wb = load_workbook(raw, data_only=True, read_only=True)
+        except Exception as exc:
+            return [], f"No se pudo leer el archivo: {exc}"
 
         try:
             ws = wb.active

@@ -1,8 +1,8 @@
 """
 Dashboard de presupuestos existentes (wxPython).
 
-Muestra el historial de presupuestos creados/abiertos, con opciones
-de previsualización, edición, exportación a PDF y acceso rápido.
+Muestra los presupuestos organizados por carpetas de estado (pestañas
+dinámicas) a partir de la ruta configurada en PATH_OPEN_BUDGETS.
 """
 
 import os
@@ -11,8 +11,21 @@ import sys
 
 import wx
 
-from src.core import db_repository as repo
+from src.core import folder_scanner
+from src.core.project_data_resolver import build_relation_index, resolve_projects
+from src.core.settings import Settings
 from src.gui import theme
+
+_COLUMNS = [
+    ("Proyecto", 220),
+    ("Cliente", 160),
+    ("Localidad", 120),
+    ("Tipo obra", 120),
+    ("Fecha", 90),
+    ("Total", 100),
+]
+
+_SEARCH_KEYS = ("nombre_proyecto", "cliente", "localidad", "tipo_obra", "numero")
 
 
 class BudgetDashboardFrame(wx.Frame):
@@ -20,181 +33,329 @@ class BudgetDashboardFrame(wx.Frame):
 
     def __init__(self, parent):
         super().__init__(
-            parent, title="Presupuestos existentes",
-            size=(960, 600),
+            parent,
+            title="Presupuestos existentes",
+            size=(1060, 650),
             style=wx.DEFAULT_FRAME_STYLE,
         )
         self._parent = parent
-        self._historial = []
+        self._settings = Settings()
+
+        self._tab_data: dict[str, list[dict]] = {}
+        self._tab_lists: dict[str, wx.ListCtrl] = {}
+        self._tab_searches: dict[str, wx.TextCtrl] = {}
+        self._state_names: list[str] = []
+        self._relation_index: dict = {}
+
         self._build_ui()
         self.Centre()
-        self._refresh_list()
+        self._load_data()
+
+    # ------------------------------------------------------------------
+    # UI
+    # ------------------------------------------------------------------
 
     def _build_ui(self):
         theme.style_frame(self)
-        panel = wx.Panel(self)
-        panel.SetBackgroundColour(theme.BG_PRIMARY)
+        main_panel = wx.Panel(self)
+        main_panel.SetBackgroundColour(theme.BG_PRIMARY)
         main_sizer = wx.BoxSizer(wx.VERTICAL)
 
         # --- Header ---
-        header_sizer = wx.BoxSizer(wx.HORIZONTAL)
-        title = theme.create_title(panel, "Presupuestos", "xl")
-        header_sizer.Add(title, 0, wx.ALIGN_CENTER_VERTICAL)
-        header_sizer.AddStretchSpacer()
-        self._search = wx.SearchCtrl(panel, size=(260, 30))
-        self._search.SetDescriptiveText("Buscar proyecto, cliente, localidad...")
-        self._search.ShowCancelButton(True)
-        theme.style_textctrl(self._search)
-        self._search.Bind(wx.EVT_TEXT, self._on_search)
-        self._search.Bind(wx.EVT_SEARCHCTRL_CANCEL_BTN, self._on_search_cancel)
-        header_sizer.Add(self._search, 0, wx.ALIGN_CENTER_VERTICAL)
-        main_sizer.Add(header_sizer, 0, wx.EXPAND | wx.ALL, theme.SPACE_LG)
+        header = wx.Panel(main_panel)
+        header.SetBackgroundColour(theme.BG_PRIMARY)
+        header_sizer = wx.BoxSizer(wx.VERTICAL)
 
-        main_sizer.Add(theme.create_divider(panel), 0, wx.EXPAND | wx.LEFT | wx.RIGHT, theme.SPACE_LG)
+        top_row = wx.BoxSizer(wx.HORIZONTAL)
+        title = theme.create_title(header, "Presupuestos", "2xl")
+        top_row.Add(title, 1, wx.ALIGN_CENTER_VERTICAL)
 
-        # --- ListCtrl ---
-        self._list = wx.ListCtrl(
-            panel, style=wx.LC_REPORT | wx.LC_SINGLE_SEL | wx.BORDER_NONE,
-        )
-        theme.style_listctrl(self._list)
+        btn_refresh = wx.Button(header, label="\u27F3 Actualizar", size=(-1, 36))
+        btn_refresh.SetFont(theme.font_base())
+        btn_refresh.SetBackgroundColour(theme.BG_CARD)
+        btn_refresh.SetForegroundColour(theme.TEXT_PRIMARY)
+        btn_refresh.SetToolTip("Recargar presupuestos desde las carpetas")
+        btn_refresh.Bind(wx.EVT_BUTTON, lambda e: self._load_data())
+        top_row.Add(btn_refresh, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, theme.SPACE_XL)
 
-        columns = [
-            ("Proyecto", 200),
-            ("Cliente", 160),
-            ("Localidad", 100),
-            ("Tipo obra", 100),
-            ("Fecha", 90),
-            ("Total", 90),
-            ("IA", 40),
-        ]
-        for i, (name, width) in enumerate(columns):
-            fmt = wx.LIST_FORMAT_RIGHT if name in ("Total",) else wx.LIST_FORMAT_LEFT
-            self._list.InsertColumn(i, name, fmt, width)
+        header_sizer.Add(top_row, 0, wx.EXPAND | wx.LEFT | wx.TOP, theme.SPACE_XL)
 
-        self._list.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self._on_item_dblclick)
-        self._list.Bind(wx.EVT_LIST_ITEM_SELECTED, self._on_selection_changed)
-        self._list.Bind(wx.EVT_LIST_ITEM_DESELECTED, self._on_selection_changed)
+        root_path = self._settings.get_default_path(Settings.PATH_OPEN_BUDGETS) or ""
+        hint = root_path if root_path else "Ruta no configurada"
+        subtitle = theme.create_text(header, hint, muted=True)
+        header_sizer.Add(subtitle, 0, wx.LEFT | wx.TOP, theme.SPACE_XL)
+        self._subtitle = subtitle
+        header_sizer.AddSpacer(theme.SPACE_LG)
+
+        header.SetSizer(header_sizer)
+        main_sizer.Add(header, 0, wx.EXPAND)
+
+        # --- Notebook (se rellena en _load_data) ---
+        self._notebook = wx.Notebook(main_panel)
+        self._notebook.SetBackgroundColour(theme.BG_SECONDARY)
+        self._notebook.SetFont(theme.font_base())
         main_sizer.Add(
-            self._list, 1,
-            wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP,
+            self._notebook, 1,
+            wx.EXPAND | wx.LEFT | wx.RIGHT,
             theme.SPACE_LG,
         )
 
         # --- Toolbar ---
-        toolbar = wx.Panel(panel)
+        toolbar = wx.Panel(main_panel)
         toolbar.SetBackgroundColour(theme.BG_SECONDARY)
         tb_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        tb_sizer.AddSpacer(theme.SPACE_LG)
 
-        self._btn_preview = wx.Button(toolbar, label="Previsualizar")
-        self._btn_preview.SetFont(theme.font_base())
-        self._btn_preview.Bind(wx.EVT_BUTTON, self._on_preview)
+        self._btn_preview = self._tb_button(toolbar, "Previsualizar", self._on_preview)
+        self._btn_edit = self._tb_button(toolbar, "Editar \u25BC", self._on_edit_menu)
+        self._btn_pdf = self._tb_button(toolbar, "Exportar PDF", self._on_export_pdf)
+        self._btn_open = self._tb_button(toolbar, "Abrir Excel", self._on_open_excel, primary=True)
+        self._btn_folder = self._tb_button(toolbar, "Abrir carpeta", self._on_open_folder)
 
-        self._btn_edit = wx.Button(toolbar, label="Editar \u25BC")
-        self._btn_edit.SetFont(theme.font_base())
-        self._btn_edit.Bind(wx.EVT_BUTTON, self._on_edit_menu)
-
-        self._btn_pdf = wx.Button(toolbar, label="Exportar PDF")
-        self._btn_pdf.SetFont(theme.font_base())
-        self._btn_pdf.Bind(wx.EVT_BUTTON, self._on_export_pdf)
-
-        self._btn_open = wx.Button(toolbar, label="Abrir Excel")
-        self._btn_open.SetFont(theme.font_base())
-        self._btn_open.SetBackgroundColour(theme.ACCENT_PRIMARY)
-        self._btn_open.SetForegroundColour(theme.TEXT_INVERSE)
-        self._btn_open.Bind(wx.EVT_BUTTON, self._on_open_excel)
-
-        self._btn_folder = wx.Button(toolbar, label="Abrir carpeta")
-        self._btn_folder.SetFont(theme.font_base())
-        self._btn_folder.Bind(wx.EVT_BUTTON, self._on_open_folder)
-
-        self._btn_delete = wx.Button(toolbar, label="Eliminar")
-        self._btn_delete.SetFont(theme.font_base())
-        self._btn_delete.SetForegroundColour(theme.ERROR)
-        self._btn_delete.Bind(wx.EVT_BUTTON, self._on_delete)
-
-        for btn in (
-            self._btn_preview, self._btn_edit, self._btn_pdf,
-            self._btn_open, self._btn_folder, self._btn_delete,
-        ):
+        for btn in (self._btn_preview, self._btn_edit, self._btn_pdf,
+                    self._btn_open, self._btn_folder):
             tb_sizer.Add(btn, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, theme.SPACE_SM)
 
         toolbar.SetSizer(tb_sizer)
         main_sizer.Add(toolbar, 0, wx.EXPAND | wx.ALL, theme.SPACE_LG)
 
-        panel.SetSizer(main_sizer)
+        main_panel.SetSizer(main_sizer)
+        self._update_buttons()
+
+    @staticmethod
+    def _tb_button(parent, label, handler, primary=False):
+        btn = wx.Button(parent, label=label)
+        btn.SetFont(theme.font_base())
+        if primary:
+            btn.SetBackgroundColour(theme.ACCENT_PRIMARY)
+            btn.SetForegroundColour(theme.TEXT_INVERSE)
+        btn.Bind(wx.EVT_BUTTON, handler)
+        return btn
+
+    # ------------------------------------------------------------------
+    # Carga de datos
+    # ------------------------------------------------------------------
+
+    def _load_data(self):
+        root_path = self._settings.get_default_path(Settings.PATH_OPEN_BUDGETS)
+        if not root_path or not os.path.isdir(root_path):
+            self._show_empty_state(
+                "La ruta de presupuestos existentes no est\u00e1 configurada.\n\n"
+                "Configura la ruta en Configuraci\u00f3n \u2192 Rutas por defecto."
+            )
+            return
+
+        self._subtitle.SetLabel(root_path)
+
+        wx.BeginBusyCursor()
+        try:
+            self._relation_index = build_relation_index()
+            states = folder_scanner.scan_root(root_path)
+
+            if not states:
+                self._show_empty_state(
+                    "No se encontraron subcarpetas en:\n" + root_path
+                )
+                return
+
+            self._rebuild_tabs(states, root_path)
+        finally:
+            wx.EndBusyCursor()
+
+    def _rebuild_tabs(self, states, root_path):
+        self._rebuilding = True
+        self._notebook.Freeze()
+        while self._notebook.GetPageCount():
+            self._notebook.DeletePage(0)
+        self._tab_data.clear()
+        self._tab_lists.clear()
+        self._tab_searches.clear()
+        self._state_names = states
+
+        for state_name in states:
+            state_dir = os.path.join(root_path, state_name)
+            scanned = folder_scanner.scan_projects(state_dir)
+            resolved = resolve_projects(scanned, self._relation_index)
+            self._tab_data[state_name] = resolved
+
+            panel = wx.Panel(self._notebook)
+            panel.SetBackgroundColour(theme.BG_PRIMARY)
+            sizer = wx.BoxSizer(wx.VERTICAL)
+
+            search_panel, search_ctrl = self._create_search_box(panel, state_name)
+            sizer.Add(search_panel, 0, wx.EXPAND | wx.ALL, theme.SPACE_MD)
+            self._tab_searches[state_name] = search_ctrl
+
+            list_ctrl = wx.ListCtrl(
+                panel,
+                style=wx.LC_REPORT | wx.LC_SINGLE_SEL | wx.BORDER_SIMPLE,
+            )
+            theme.style_listctrl(list_ctrl)
+            for i, (col_name, col_w) in enumerate(_COLUMNS):
+                fmt = wx.LIST_FORMAT_RIGHT if col_name == "Total" else wx.LIST_FORMAT_LEFT
+                list_ctrl.InsertColumn(i, col_name, fmt, col_w)
+
+            list_ctrl.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self._on_item_dblclick)
+            list_ctrl.Bind(wx.EVT_LIST_ITEM_SELECTED, self._on_selection_changed)
+            list_ctrl.Bind(wx.EVT_LIST_ITEM_DESELECTED, self._on_selection_changed)
+            sizer.Add(list_ctrl, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, theme.SPACE_LG)
+
+            self._tab_lists[state_name] = list_ctrl
+
+            panel.SetSizer(sizer)
+            self._notebook.AddPage(panel, f"  {state_name}  ")
+
+        self._notebook.Bind(wx.EVT_NOTEBOOK_PAGE_CHANGED, self._on_tab_changed)
+        self._rebuilding = False
+        self._notebook.Thaw()
+
+        for state_name in states:
+            self._populate_list(state_name)
+
+        self._update_buttons()
+
+    def _show_empty_state(self, message):
+        self._rebuilding = True
+        self._notebook.Freeze()
+        while self._notebook.GetPageCount():
+            self._notebook.DeletePage(0)
+        self._tab_data.clear()
+        self._tab_lists.clear()
+        self._tab_searches.clear()
+        self._state_names = []
+
+        panel = wx.Panel(self._notebook)
+        panel.SetBackgroundColour(theme.BG_PRIMARY)
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        sizer.AddStretchSpacer()
+        lbl = wx.StaticText(panel, label=message, style=wx.ALIGN_CENTRE_HORIZONTAL)
+        lbl.SetFont(theme.font_lg())
+        lbl.SetForegroundColour(theme.TEXT_TERTIARY)
+        sizer.Add(lbl, 0, wx.ALIGN_CENTER | wx.ALL, theme.SPACE_XL)
+        sizer.AddStretchSpacer()
+        panel.SetSizer(sizer)
+        self._notebook.AddPage(panel, "  Sin datos  ")
+        self._rebuilding = False
+        self._notebook.Thaw()
         self._update_buttons()
 
     # ------------------------------------------------------------------
-    # Datos
+    # Búsqueda
     # ------------------------------------------------------------------
 
-    def _refresh_list(self, search_text=""):
-        """Recarga la lista desde la BD."""
-        if search_text.strip():
-            self._historial = repo.buscar_historial(search_text)
-        else:
-            self._historial = repo.get_historial_reciente()
-        self._populate_list()
+    def _create_search_box(self, parent, state_name):
+        search_panel = wx.Panel(parent)
+        search_panel.SetBackgroundColour(theme.BG_PRIMARY)
+        sz = wx.BoxSizer(wx.HORIZONTAL)
 
-    def _populate_list(self):
-        self._list.DeleteAllItems()
-        for i, h in enumerate(self._historial):
-            exists = os.path.exists(h["ruta_excel"]) if h["ruta_excel"] else False
-            nombre = h["nombre_proyecto"]
-            if not exists:
+        label = theme.create_text(search_panel, "Buscar:")
+        sz.Add(label, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, theme.SPACE_SM)
+
+        search = wx.TextCtrl(search_panel, style=wx.TE_PROCESS_ENTER, size=(-1, 32))
+        theme.style_textctrl(search)
+        try:
+            search.SetHint("Proyecto, cliente, localidad...")
+        except AttributeError:
+            pass
+        search.Bind(wx.EVT_TEXT, lambda e, s=state_name: self._on_search(s))
+        search.Bind(wx.EVT_TEXT_ENTER, lambda e, s=state_name: self._on_search(s))
+        sz.Add(search, 1, wx.EXPAND)
+
+        search_panel.SetSizer(sz)
+        return search_panel, search
+
+    def _on_search(self, state_name):
+        self._populate_list(state_name)
+
+    def _filter_rows(self, rows, query):
+        q = (query or "").strip().lower()
+        if not q:
+            return rows
+        out = []
+        for r in rows:
+            for k in _SEARCH_KEYS:
+                v = str(r.get(k, "") or "").lower()
+                if q in v:
+                    out.append(r)
+                    break
+        return out
+
+    # ------------------------------------------------------------------
+    # Poblar lista
+    # ------------------------------------------------------------------
+
+    def _populate_list(self, state_name):
+        list_ctrl = self._tab_lists.get(state_name)
+        if list_ctrl is None:
+            return
+        rows = self._tab_data.get(state_name, [])
+        search_ctrl = self._tab_searches.get(state_name)
+        query = search_ctrl.GetValue() if search_ctrl else ""
+        filtered = self._filter_rows(rows, query)
+
+        list_ctrl.DeleteAllItems()
+        for i, proj in enumerate(filtered):
+            has_excel = bool(proj.get("ruta_excel")) and os.path.exists(proj.get("ruta_excel", ""))
+            nombre = proj.get("nombre_proyecto", "")
+            if not has_excel:
                 nombre = f"\u26A0 {nombre}"
 
-            idx = self._list.InsertItem(i, nombre)
-            self._list.SetItem(idx, 1, h.get("cliente") or "")
-            self._list.SetItem(idx, 2, h.get("localidad") or "")
-            self._list.SetItem(idx, 3, h.get("tipo_obra") or "")
+            idx = list_ctrl.InsertItem(i, nombre)
+            list_ctrl.SetItem(idx, 1, proj.get("cliente", ""))
+            list_ctrl.SetItem(idx, 2, proj.get("localidad", ""))
+            list_ctrl.SetItem(idx, 3, proj.get("tipo_obra", ""))
 
-            fecha_raw = h.get("fecha_creacion") or ""
-            if len(fecha_raw) >= 10:
-                try:
-                    parts = fecha_raw[:10].split("-")
-                    fecha = f"{parts[2]}/{parts[1]}/{parts[0]}"
-                except (IndexError, ValueError):
-                    fecha = fecha_raw[:10]
-            else:
-                fecha = fecha_raw
-            self._list.SetItem(idx, 4, fecha)
+            fecha_raw = proj.get("fecha", "")
+            list_ctrl.SetItem(idx, 4, fecha_raw)
 
-            total = h.get("total_presupuesto")
+            total = proj.get("total")
             if total is not None:
-                t = f"{total:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-                self._list.SetItem(idx, 5, f"{t} \u20AC")
+                try:
+                    t = f"{float(total):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                    list_ctrl.SetItem(idx, 5, f"{t} \u20AC")
+                except (ValueError, TypeError):
+                    pass
 
-            self._list.SetItem(idx, 6, "\u2713" if h.get("usa_partidas_ia") else "")
+            if not has_excel:
+                list_ctrl.SetItemTextColour(idx, theme.TEXT_TERTIARY)
 
-            if not exists:
-                self._list.SetItemTextColour(idx, theme.TEXT_TERTIARY)
         self._update_buttons()
 
-    def _get_selected(self):
-        """Devuelve el dict del presupuesto seleccionado o None."""
-        idx = self._list.GetFirstSelected()
-        if idx < 0 or idx >= len(self._historial):
+    # ------------------------------------------------------------------
+    # Selección y helpers
+    # ------------------------------------------------------------------
+
+    def _current_state(self):
+        page = self._notebook.GetSelection()
+        if page < 0 or page >= len(self._state_names):
             return None
-        return self._historial[idx]
+        return self._state_names[page]
 
-    # ------------------------------------------------------------------
-    # Eventos de búsqueda
-    # ------------------------------------------------------------------
+    def _get_selected(self):
+        state = self._current_state()
+        if state is None:
+            return None
+        list_ctrl = self._tab_lists.get(state)
+        if list_ctrl is None:
+            return None
+        idx = list_ctrl.GetFirstSelected()
+        if idx < 0:
+            return None
 
-    def _on_search(self, event):
-        self._refresh_list(self._search.GetValue())
-
-    def _on_search_cancel(self, event):
-        self._search.SetValue("")
-        self._refresh_list()
-
-    # ------------------------------------------------------------------
-    # Selección y doble-clic
-    # ------------------------------------------------------------------
+        search_ctrl = self._tab_searches.get(state)
+        query = search_ctrl.GetValue() if search_ctrl else ""
+        visible = self._filter_rows(self._tab_data.get(state, []), query)
+        if idx >= len(visible):
+            return None
+        return visible[idx]
 
     def _on_selection_changed(self, event):
         self._update_buttons()
+        event.Skip()
+
+    def _on_tab_changed(self, event):
+        if not getattr(self, "_rebuilding", False):
+            self._update_buttons()
         event.Skip()
 
     def _update_buttons(self):
@@ -202,7 +363,7 @@ class BudgetDashboardFrame(wx.Frame):
         has_sel = selected is not None
         file_ok = has_sel and os.path.exists(selected.get("ruta_excel", ""))
         for btn in (self._btn_preview, self._btn_edit, self._btn_pdf,
-                    self._btn_open, self._btn_folder, self._btn_delete):
+                    self._btn_open, self._btn_folder):
             btn.Enable(has_sel)
         if has_sel and not file_ok:
             self._btn_preview.Enable(False)
@@ -221,9 +382,12 @@ class BudgetDashboardFrame(wx.Frame):
         selected = self._get_selected()
         if not selected:
             return
-        ruta = selected.get("ruta_excel", "")
+        ruta = os.path.normpath(selected.get("ruta_excel", ""))
         if not os.path.exists(ruta):
-            wx.MessageBox("El archivo ya no existe.", "Error", wx.OK | wx.ICON_WARNING)
+            wx.MessageBox(
+                f"El archivo ya no existe:\n{ruta}",
+                "Error", wx.OK | wx.ICON_WARNING,
+            )
             return
         from src.gui.budget_preview_dialog_wx import BudgetPreviewDialog
         dlg = BudgetPreviewDialog(self, ruta)
@@ -234,9 +398,12 @@ class BudgetDashboardFrame(wx.Frame):
         selected = self._get_selected()
         if not selected:
             return
-        ruta = selected.get("ruta_excel", "")
+        ruta = os.path.normpath(selected.get("ruta_excel", ""))
         if not os.path.exists(ruta):
-            wx.MessageBox("El archivo ya no existe.", "Error", wx.OK | wx.ICON_WARNING)
+            wx.MessageBox(
+                f"El archivo ya no existe:\n{ruta}",
+                "Error", wx.OK | wx.ICON_WARNING,
+            )
             return
 
         menu = wx.Menu()
@@ -251,7 +418,8 @@ class BudgetDashboardFrame(wx.Frame):
 
         self.Bind(wx.EVT_MENU, lambda e: self._edit_regen_all(ruta), id=id_regen)
         self.Bind(wx.EVT_MENU, lambda e: self._edit_add_partidas(ruta), id=id_add)
-        self.Bind(wx.EVT_MENU, lambda e: self._edit_regen_header(ruta), id=id_header)
+        numero = selected.get("numero", "")
+        self.Bind(wx.EVT_MENU, lambda e: self._edit_regen_header(ruta, numero), id=id_header)
 
         self._btn_edit.PopupMenu(menu)
         menu.Destroy()
@@ -260,9 +428,12 @@ class BudgetDashboardFrame(wx.Frame):
         selected = self._get_selected()
         if not selected:
             return
-        ruta = selected.get("ruta_excel", "")
+        ruta = os.path.normpath(selected.get("ruta_excel", ""))
         if not os.path.exists(ruta):
-            wx.MessageBox("El archivo ya no existe.", "Error", wx.OK | wx.ICON_WARNING)
+            wx.MessageBox(
+                f"El archivo ya no existe:\n{ruta}",
+                "Error", wx.OK | wx.ICON_WARNING,
+            )
             return
         from src.core.pdf_exporter import PDFExporter
         exporter = PDFExporter()
@@ -288,18 +459,20 @@ class BudgetDashboardFrame(wx.Frame):
         selected = self._get_selected()
         if not selected:
             return
-        ruta = selected.get("ruta_excel", "")
+        ruta = os.path.normpath(selected.get("ruta_excel", ""))
         if not os.path.exists(ruta):
-            wx.MessageBox("El archivo ya no existe.", "Error", wx.OK | wx.ICON_WARNING)
+            wx.MessageBox(
+                f"El archivo ya no existe:\n{ruta}",
+                "Error", wx.OK | wx.ICON_WARNING,
+            )
             return
-        repo.actualizar_acceso(ruta)
         self._open_file(ruta)
 
     def _on_open_folder(self, event):
         selected = self._get_selected()
         if not selected:
             return
-        folder = selected.get("ruta_carpeta") or ""
+        folder = selected.get("ruta_carpeta", "")
         if not folder or not os.path.isdir(folder):
             ruta = selected.get("ruta_excel", "")
             folder = os.path.dirname(ruta) if ruta else ""
@@ -308,26 +481,11 @@ class BudgetDashboardFrame(wx.Frame):
         else:
             wx.MessageBox("No se encontr\u00f3 la carpeta.", "Error", wx.OK | wx.ICON_WARNING)
 
-    def _on_delete(self, event):
-        selected = self._get_selected()
-        if not selected:
-            return
-        resp = wx.MessageBox(
-            f"\u00bfEliminar del historial?\n\n"
-            f"{selected['nombre_proyecto']}\n\n"
-            f"(El archivo no se borrar\u00e1)",
-            "Confirmar", wx.YES_NO | wx.ICON_QUESTION,
-        )
-        if resp == wx.YES:
-            repo.eliminar_historial(selected["id"])
-            self._refresh_list(self._search.GetValue())
-
     # ------------------------------------------------------------------
     # Edición
     # ------------------------------------------------------------------
 
     def _edit_regen_all(self, ruta):
-        """Regenerar todas las partidas con IA."""
         from src.gui.ai_budget_dialog_wx import AIBudgetDialog
         from src.gui.partidas_dialog_wx import SuggestedPartidasDialog
         from src.core.excel_manager import ExcelManager
@@ -354,21 +512,15 @@ class BudgetDashboardFrame(wx.Frame):
 
         em = ExcelManager()
         if em.insert_partidas_via_xml(ruta, selected_partidas):
-            from src.core.budget_reader import BudgetReader
-            reader = BudgetReader()
-            data = reader.read(ruta)
-            if data:
-                repo.actualizar_total(ruta, data["total"])
             wx.MessageBox(
                 f"Partidas regeneradas ({len(selected_partidas)}).",
                 "\u00c9xito", wx.OK,
             )
-            self._refresh_list(self._search.GetValue())
+            self._load_data()
         else:
             wx.MessageBox("Error al insertar partidas.", "Error", wx.OK | wx.ICON_ERROR)
 
     def _edit_add_partidas(self, ruta):
-        """Añadir más partidas con IA a un presupuesto existente."""
         from src.core.budget_reader import BudgetReader
         from src.gui.ai_budget_dialog_wx import AIBudgetDialog
         from src.gui.partidas_dialog_wx import SuggestedPartidasDialog
@@ -410,22 +562,18 @@ class BudgetDashboardFrame(wx.Frame):
 
         em = ExcelManager()
         if em.append_partidas_via_xml(ruta, selected_partidas):
-            data = reader.read(ruta)
-            if data:
-                repo.actualizar_total(ruta, data["total"])
             wx.MessageBox(
                 f"{len(selected_partidas)} partidas a\u00f1adidas.",
                 "\u00c9xito", wx.OK,
             )
-            self._refresh_list(self._search.GetValue())
+            self._load_data()
         else:
             wx.MessageBox("Error al a\u00f1adir partidas.", "Error", wx.OK | wx.ICON_ERROR)
 
-    def _edit_regen_header(self, ruta):
-        """Regenerar campos de cabecera del presupuesto."""
+    def _edit_regen_header(self, ruta, numero_proyecto=""):
         from src.core.excel_manager import ExcelManager
 
-        project_data, project_name = self._obtain_project_data()
+        project_data, project_name = self._obtain_project_data(preselect_numero=numero_proyecto)
         if not project_data:
             return
 
@@ -451,20 +599,8 @@ class BudgetDashboardFrame(wx.Frame):
 
         em = ExcelManager()
         if em.update_header_fields(ruta, excel_data):
-            selected = self._get_selected()
-            if selected:
-                repo.registrar_presupuesto({
-                    "nombre_proyecto": project_name or selected["nombre_proyecto"],
-                    "ruta_excel": ruta,
-                    "ruta_carpeta": selected.get("ruta_carpeta"),
-                    "fecha_creacion": selected.get("fecha_creacion"),
-                    "cliente": project_data.get("cliente", ""),
-                    "localidad": project_data.get("localidad", ""),
-                    "tipo_obra": project_data.get("tipo", ""),
-                    "numero_proyecto": project_data.get("numero", ""),
-                })
             wx.MessageBox("Campos actualizados.", "\u00c9xito", wx.OK)
-            self._refresh_list(self._search.GetValue())
+            self._load_data()
         else:
             wx.MessageBox("Error al actualizar campos.", "Error", wx.OK | wx.ICON_ERROR)
 
@@ -472,10 +608,9 @@ class BudgetDashboardFrame(wx.Frame):
     # Obtención de datos de proyecto (relación Excel o portapapeles)
     # ------------------------------------------------------------------
 
-    def _obtain_project_data(self):
-        """Obtiene ``(project_data, project_name)`` intentando primero el Excel de relación."""
+    def _obtain_project_data(self, preselect_numero=""):
         from src.gui.dialogs_wx import obtain_project_data
-        return obtain_project_data(self)
+        return obtain_project_data(self, preselect_numero=preselect_numero)
 
     # ------------------------------------------------------------------
     # Helpers
@@ -483,6 +618,7 @@ class BudgetDashboardFrame(wx.Frame):
 
     @staticmethod
     def _open_file(path):
+        path = os.path.normpath(path)
         try:
             if sys.platform == "darwin":
                 subprocess.run(["open", path], check=True)
@@ -490,5 +626,8 @@ class BudgetDashboardFrame(wx.Frame):
                 os.startfile(path)
             else:
                 subprocess.run(["xdg-open", path], check=True)
-        except Exception:
-            pass
+        except Exception as exc:
+            wx.MessageBox(
+                f"No se pudo abrir:\n{path}\n\nError: {exc}",
+                "Error al abrir", wx.OK | wx.ICON_ERROR,
+            )

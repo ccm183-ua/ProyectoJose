@@ -6,6 +6,7 @@ la plantilla 122-20, trabajando directamente con el XML interno para
 máxima compatibilidad (sin abrir con openpyxl, que puede alterar formato).
 """
 
+import io
 import os
 import re
 import zipfile
@@ -46,16 +47,23 @@ class BudgetReader:
             return None
 
         try:
-            sheet_xml = self._read_sheet(file_path)
+            file_bytes = self._load_file_bytes(file_path)
+            if file_bytes is None:
+                return None
+
+            sheet_xml = self._read_sheet(file_bytes)
             if not sheet_xml:
                 return None
 
-            shared_strings = self._read_shared_strings(file_path)
+            shared_strings = self._read_shared_strings(file_bytes)
             rows = self._extract_rows(sheet_xml)
 
             cabecera = self._extract_header(rows, shared_strings)
             partidas = self._extract_partidas(rows, shared_strings)
-            totals = self._extract_totals(partidas)
+
+            totals = self._read_totals_from_cells(rows, shared_strings)
+            if totals is None:
+                totals = self._calculate_totals(partidas)
 
             return {
                 "cabecera": cabecera,
@@ -67,9 +75,19 @@ class BudgetReader:
         except Exception:
             return None
 
-    def _read_sheet(self, file_path: str) -> Optional[str]:
+    @staticmethod
+    def _load_file_bytes(file_path: str) -> Optional[bytes]:
+        """Lee el archivo completo en memoria y cierra el handle de inmediato."""
         try:
-            with zipfile.ZipFile(file_path, "r") as z:
+            with open(file_path, "rb") as f:
+                return f.read()
+        except (IOError, OSError):
+            return None
+
+    @staticmethod
+    def _read_sheet(file_bytes: bytes) -> Optional[str]:
+        try:
+            with zipfile.ZipFile(io.BytesIO(file_bytes), "r") as z:
                 names = z.namelist()
                 for sheet in (SHEET_PRIMARY, SHEET_FALLBACK):
                     if sheet in names:
@@ -78,9 +96,10 @@ class BudgetReader:
             pass
         return None
 
-    def _read_shared_strings(self, file_path: str) -> List[str]:
+    @staticmethod
+    def _read_shared_strings(file_bytes: bytes) -> List[str]:
         try:
-            with zipfile.ZipFile(file_path, "r") as z:
+            with zipfile.ZipFile(io.BytesIO(file_bytes), "r") as z:
                 ss_path = "xl/sharedStrings.xml"
                 if ss_path not in z.namelist():
                     return []
@@ -213,8 +232,72 @@ class BudgetReader:
             })
         return partidas
 
-    def _extract_totals(self, partidas: List[Dict]) -> Dict:
-        """Calcula subtotal, IVA y total a partir de las partidas."""
+    # ------------------------------------------------------------------
+    # Totales
+    # ------------------------------------------------------------------
+
+    def _read_totals_from_cells(
+        self, rows: Dict[int, Dict], shared_strings: List[str]
+    ) -> Optional[Dict]:
+        """Lee subtotal, IVA y total directamente de las celdas del Excel.
+
+        Busca filas cuyo texto contenga patrones reconocibles
+        (``TOTAL PRESUPUESTO, I.V.A. INCLUIDO``, ``I.V.A.``, ``Total presupuesto``)
+        y lee el valor numérico de la columna I (o H/J como fallback).
+
+        Devuelve ``None`` si no encuentra al menos el total con IVA.
+        """
+        subtotal = None
+        iva = None
+        total = None
+
+        for row_num in sorted(rows.keys()):
+            if row_num < 15:
+                continue
+            cells = rows[row_num]
+
+            row_text = ""
+            for cell in cells.values():
+                val = self._get_cell_value(cell, shared_strings)
+                if val:
+                    row_text += " " + val
+            text_up = row_text.upper()
+
+            num_val = None
+            for col in ("I", "H", "J"):
+                if col in cells:
+                    num_val = self._get_cell_number(cells[col], shared_strings)
+                    if num_val is not None:
+                        break
+            if num_val is None:
+                continue
+
+            if "TOTAL" in text_up and "I.V.A" in text_up and "INCLUIDO" in text_up:
+                total = num_val
+            elif "I.V.A" in text_up and "TOTAL" not in text_up and "INCLUIDO" not in text_up:
+                iva = num_val
+            elif ("TOTAL PRESUPUESTO" in text_up
+                  and "PARCIAL" not in text_up
+                  and "I.V.A" not in text_up):
+                subtotal = num_val
+
+        if total is None:
+            return None
+
+        if subtotal is None and iva is not None:
+            subtotal = round(total - iva, 2)
+        elif iva is None and subtotal is not None:
+            iva = round(total - subtotal, 2)
+
+        return {
+            "subtotal": subtotal or 0,
+            "iva": iva or 0,
+            "total": total,
+        }
+
+    @staticmethod
+    def _calculate_totals(partidas: List[Dict]) -> Dict:
+        """Calcula subtotal, IVA y total a partir de las partidas (fallback)."""
         subtotal = sum(p["importe"] for p in partidas)
         iva = round(subtotal * 0.10, 2)
         total = round(subtotal + iva, 2)
