@@ -34,6 +34,31 @@ Se abre la ventana de la aplicación.
 - **Abrir presupuesto** y **Crear nuevo presupuesto** (desde plantilla, con datos y opción de carpetas).
 - **Gestionar base de datos:** pestañas Administración, Comunidad, Contacto (añadir, editar, eliminar). Base de datos en `~/Documents/cubiApp/datos.db` (o variable de entorno `CUBIAPP_DB_PATH`).
 
+## Variables de entorno
+
+| Variable | Descripción |
+|----------|-------------|
+| `CUBIAPP_GEMINI_KEY` | API key de Google Gemini para generar partidas con IA. También configurable desde la app. |
+| `CUBIAPP_DB_PATH` | Ruta personalizada para la base de datos SQLite. Por defecto: `datos.db` en la raíz del proyecto. |
+
+Consulta `.env.example` para ejemplos.
+
+## Tests
+
+```bash
+# Ejecutar toda la suite
+.venv/bin/python -m pytest
+
+# Con cobertura
+.venv/bin/python -m pytest --cov=src --cov-report=term-missing
+```
+
+**Windows:**
+
+```cmd
+.venv\Scripts\python -m pytest
+```
+
 ## Si algo falla
 
 - **"No se encontró .venv"** → Crea el entorno e instala: `python3 -m venv .venv` y `pip install -r requirements.txt`.

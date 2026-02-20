@@ -9,9 +9,12 @@ Trabaja directamente con el XML de sheet2 para máxima compatibilidad
 con la plantilla 122-20 PLANTILLA PRESUPUESTO.
 """
 
+import logging
 import re
 import zipfile
 from typing import Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 # Hoja de datos en la plantilla (PRESUP FINAL = sheet2)
 SHEET_12220 = "xl/worksheets/sheet2.xml"
@@ -44,7 +47,7 @@ class ExcelPartidasExtractor:
             rows = self._extract_rows(sheet_xml)
             return self._parse_partidas(rows, shared_strings)
         except Exception as e:
-            print(f"Error al extraer partidas del Excel: {e}")
+            logger.exception("Error al extraer partidas del Excel")
             return []
 
     def _read_sheet2(self, file_path: str) -> Optional[str]:

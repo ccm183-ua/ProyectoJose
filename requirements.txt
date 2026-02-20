@@ -12,5 +12,8 @@ google-genai>=1.0.0
 pytest==7.4.3
 pytest-cov==4.1.0
 
+# PDF Export (Windows COM automation)
+pywin32>=306; sys_platform == "win32"
+
 # Utilidades
 setuptools==69.0.2

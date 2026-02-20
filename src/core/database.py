@@ -82,12 +82,12 @@ def _migrate_administracion_nombre(conn: sqlite3.Connection) -> None:
         conn.commit()
 
 
-def _migrate_administracion_cif(conn: sqlite3.Connection) -> None:
-    """Añade la columna cif a administracion si no existe (BDs creadas antes del cambio)."""
-    cur = conn.execute("PRAGMA table_info(administracion)")
+def _migrate_comunidad_cif(conn: sqlite3.Connection) -> None:
+    """Añade la columna cif a comunidad si no existe (BDs creadas antes del cambio)."""
+    cur = conn.execute("PRAGMA table_info(comunidad)")
     columns = [row[1] for row in cur.fetchall()]
     if "cif" not in columns:
-        conn.execute("ALTER TABLE administracion ADD COLUMN cif TEXT")
+        conn.execute("ALTER TABLE comunidad ADD COLUMN cif TEXT")
         conn.commit()
 
 
@@ -102,14 +102,14 @@ def init_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(_SCHEMA_SQL)
     conn.commit()
     _migrate_administracion_nombre(conn)
-    _migrate_administracion_cif(conn)
+    _migrate_comunidad_cif(conn)
 
 
 # ---------------------------------------------------------------------------
 # Esquema según especificación:
 # - Contacto: id, nombre NOT NULL, telefono NOT NULL (c.alt), telefono2, email, notas (resto nullable)
-# - Comunidad: id, nombre NOT NULL UNIQUE (identificador), direccion, email, telefono, administracion_id
-# - Administración: id, nombre NOT NULL, cif, email (c.alt), telefono, direccion (resto nullable)
+# - Comunidad: id, nombre NOT NULL UNIQUE (identificador), cif, direccion, email, telefono, administracion_id
+# - Administración: id, nombre NOT NULL, email (c.alt), telefono, direccion (sin CIF)
 # Relaciones: Administración N:M Contacto, Comunidad N:M Contacto,
 #             Comunidad N:1 Administración (comunidad obligada a tener una)
 # ---------------------------------------------------------------------------
@@ -119,7 +119,6 @@ _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS administracion (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     nombre TEXT NOT NULL,
-    cif TEXT,
     email TEXT UNIQUE,
     telefono TEXT,
     direccion TEXT
@@ -129,6 +128,7 @@ CREATE TABLE IF NOT EXISTS administracion (
 CREATE TABLE IF NOT EXISTS comunidad (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     nombre TEXT NOT NULL UNIQUE,
+    cif TEXT,
     direccion TEXT,
     email TEXT,
     telefono TEXT,
@@ -164,6 +164,23 @@ CREATE INDEX IF NOT EXISTS idx_administracion_contacto_admin ON administracion_c
 CREATE INDEX IF NOT EXISTS idx_administracion_contacto_contacto ON administracion_contacto(contacto_id);
 CREATE INDEX IF NOT EXISTS idx_comunidad_contacto_comunidad ON comunidad_contacto(comunidad_id);
 CREATE INDEX IF NOT EXISTS idx_comunidad_contacto_contacto ON comunidad_contacto(contacto_id);
+
+-- Historial de presupuestos (creados y abiertos desde la app)
+CREATE TABLE IF NOT EXISTS historial_presupuesto (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nombre_proyecto TEXT NOT NULL,
+    ruta_excel TEXT NOT NULL UNIQUE,
+    ruta_carpeta TEXT,
+    fecha_creacion TEXT NOT NULL,
+    fecha_ultimo_acceso TEXT NOT NULL,
+    cliente TEXT,
+    localidad TEXT,
+    tipo_obra TEXT,
+    numero_proyecto TEXT,
+    usa_partidas_ia INTEGER DEFAULT 0,
+    total_presupuesto REAL
+);
+CREATE INDEX IF NOT EXISTS idx_historial_fecha ON historial_presupuesto(fecha_ultimo_acceso);
 """
 
 

@@ -124,6 +124,28 @@ def style_dialog(dialog):
     dialog.SetFont(font_base())
 
 
+def fit_dialog(dialog, min_w=400, min_h=300):
+    """Ajusta el diálogo a su contenido sin exceder la pantalla.
+
+    Llamar al final de _build_ui, después de añadir todos los controles.
+    """
+    dialog.Fit()
+    w, h = dialog.GetSize()
+    w = max(w + 20, min_w)
+    h = max(h + 10, min_h)
+
+    idx = wx.Display.GetFromWindow(dialog)
+    if idx < 0:
+        idx = 0
+    screen = wx.Display(idx).GetClientArea()
+    w = min(w, screen.GetWidth() - 40)
+    h = min(h, screen.GetHeight() - 40)
+
+    dialog.SetSize((w, h))
+    dialog.SetMinSize((min(min_w, w), min(min_h, h)))
+    dialog.CenterOnParent()
+
+
 # === BOTONES ===
 
 class ModernButton(wx.Panel):
@@ -319,6 +341,15 @@ def style_textctrl(textctrl):
     textctrl.SetBackgroundColour(BG_CARD)
     textctrl.SetForegroundColour(TEXT_PRIMARY)
     textctrl.SetFont(font_base())
+
+
+def create_input(parent, value="", size=(-1, 28)):
+    """Crea un TextCtrl con estilo moderno (borde plano, fondo blanco)."""
+    tc = wx.TextCtrl(parent, value=value, size=size, style=wx.BORDER_SIMPLE)
+    tc.SetBackgroundColour(BG_CARD)
+    tc.SetForegroundColour(TEXT_PRIMARY)
+    tc.SetFont(font_base())
+    return tc
 
 
 # === SEPARADORES ===

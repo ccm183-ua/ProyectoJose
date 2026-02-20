@@ -25,6 +25,7 @@ class MainFrame(wx.Frame):
         self.file_manager = FileManager()
         self.template_manager = TemplateManager()
         self._db_frame = None
+        self._dashboard_frame = None
         self._build_ui()
         self.Centre()
 
@@ -67,12 +68,12 @@ class MainFrame(wx.Frame):
         btn_create.Bind(wx.EVT_BUTTON, lambda e: self._create_budget())
         btn_sizer.Add(btn_create, 0, wx.ALIGN_CENTER | wx.BOTTOM, theme.SPACE_LG)
         
-        # Botón abrir - Botón nativo estilizado
-        btn_open = wx.Button(btn_container, label="Abrir presupuesto existente", size=(320, 46))
+        # Botón presupuestos existentes - Botón nativo estilizado
+        btn_open = wx.Button(btn_container, label="Presupuestos existentes", size=(320, 46))
         btn_open.SetFont(theme.font_base())
         btn_open.SetBackgroundColour(theme.BG_SECONDARY)
         btn_open.SetForegroundColour(theme.TEXT_PRIMARY)
-        btn_open.Bind(wx.EVT_BUTTON, lambda e: self._open_excel())
+        btn_open.Bind(wx.EVT_BUTTON, lambda e: self._open_dashboard())
         btn_sizer.Add(btn_open, 0, wx.ALIGN_CENTER | wx.BOTTOM, theme.SPACE_MD)
 
         # Botón base de datos - Botón nativo estilizado
@@ -119,6 +120,8 @@ class MainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, lambda e: self._open_ai_settings(), item_ai)
         item_templates = m_config.Append(wx.ID_ANY, "Gestionar plantillas...")
         self.Bind(wx.EVT_MENU, lambda e: self._open_template_manager(), item_templates)
+        item_paths = m_config.Append(wx.ID_ANY, "Rutas por defecto...")
+        self.Bind(wx.EVT_MENU, lambda e: self._open_default_paths(), item_paths)
         menubar.Append(m_config, "&Configuración")
 
         m_ayuda = wx.Menu()
@@ -152,6 +155,27 @@ class MainFrame(wx.Frame):
         self._db_frame = None
         event.Skip()
 
+    def _open_dashboard(self):
+        try:
+            from src.gui.budget_dashboard_wx import BudgetDashboardFrame
+            try:
+                if self._dashboard_frame is not None and self._dashboard_frame.IsShown():
+                    self._dashboard_frame.Raise()
+                    return
+            except RuntimeError:
+                self._dashboard_frame = None
+
+            self._dashboard_frame = BudgetDashboardFrame(self)
+            self._dashboard_frame.Bind(wx.EVT_CLOSE, self._on_dashboard_closed)
+            self._dashboard_frame.Show()
+            self._dashboard_frame.Raise()
+        except Exception as ex:
+            wx.MessageBox(f"Error al abrir el dashboard: {ex}", "Error", wx.OK | wx.ICON_ERROR)
+
+    def _on_dashboard_closed(self, event):
+        self._dashboard_frame = None
+        event.Skip()
+
     def _open_db_folder(self):
         try:
             path = db_module.get_db_path()
@@ -172,7 +196,9 @@ class MainFrame(wx.Frame):
             wx.MessageBox(f"Error: {ex}", "Error", wx.OK | wx.ICON_ERROR)
 
     def _open_excel(self):
-        with wx.FileDialog(self, "Abrir Presupuesto", wildcard="Excel (*.xlsx;*.xls)|*.xlsx;*.xls|Todos (*.*)|*.*", style=wx.FD_OPEN) as dlg:
+        from src.core.settings import Settings
+        default_dir = Settings().get_default_path(Settings.PATH_OPEN_BUDGETS) or ""
+        with wx.FileDialog(self, "Abrir Presupuesto", defaultDir=default_dir, wildcard="Excel (*.xlsx;*.xls)|*.xlsx;*.xls|Todos (*.*)|*.*", style=wx.FD_OPEN) as dlg:
             if dlg.ShowModal() != wx.ID_OK:
                 return
             path = dlg.GetPath()
@@ -181,6 +207,12 @@ class MainFrame(wx.Frame):
         try:
             budget = self.excel_manager.load_budget(path)
             if budget:
+                budget.close()
+                db_repository.registrar_presupuesto({
+                    "nombre_proyecto": os.path.splitext(os.path.basename(path))[0],
+                    "ruta_excel": path,
+                    "ruta_carpeta": os.path.dirname(path),
+                })
                 wx.MessageBox(f"Presupuesto abierto: {os.path.basename(path)}", "Éxito", wx.OK)
             else:
                 wx.MessageBox("No se pudo abrir el archivo Excel.", "Error", wx.OK | wx.ICON_ERROR)
@@ -188,18 +220,13 @@ class MainFrame(wx.Frame):
             wx.MessageBox(f"Error: {ex}", "Error", wx.OK | wx.ICON_ERROR)
 
     def _create_budget(self):
-        from src.gui.dialogs_wx import ProjectNameDialogWx
-        dlg = ProjectNameDialogWx(self)
-        if dlg.ShowModal() != wx.ID_OK:
-            dlg.Destroy()
-            return
-        project_data = dlg.get_project_data()
-        project_name = dlg.get_project_name()
-        dlg.Destroy()
+        project_data, project_name = self._obtain_project_data()
         if not project_data or not project_name:
             return
 
-        with wx.FileDialog(self, "Guardar Presupuesto", defaultFile=f"{sanitize_filename(project_name)}.xlsx", wildcard="Excel (*.xlsx)|*.xlsx|Todos (*.*)|*.*", style=wx.FD_SAVE) as fd:
+        from src.core.settings import Settings
+        save_default_dir = Settings().get_default_path(Settings.PATH_SAVE_BUDGETS) or ""
+        with wx.FileDialog(self, "Guardar Presupuesto", defaultDir=save_default_dir, defaultFile=f"{sanitize_filename(project_name)}.xlsx", wildcard="Excel (*.xlsx)|*.xlsx|Todos (*.*)|*.*", style=wx.FD_SAVE) as fd:
             if fd.ShowModal() != wx.ID_OK:
                 return
             save_path = fd.GetPath()
@@ -221,8 +248,8 @@ class MainFrame(wx.Frame):
             wx.MessageBox("No se encontró la plantilla.", "Error", wx.OK | wx.ICON_ERROR)
             return
 
-        # Buscar administración en la BDD a partir del campo "cliente"
-        admin_data = self._buscar_admin_para_presupuesto(project_data.get("cliente", ""))
+        # Buscar comunidad en la BDD a partir del campo "cliente"
+        comunidad_data = self._buscar_comunidad_para_presupuesto(project_data.get("cliente", ""))
 
         excel_data = {
             "nombre_obra": project_name,
@@ -238,31 +265,54 @@ class MainFrame(wx.Frame):
             "num_calle": project_data.get("num_calle", ""),
             "localidad": project_data.get("localidad", ""),
             "tipo": project_data.get("tipo", ""),
-            "admin_cif": admin_data.get("cif", "") if admin_data else "",
-            "admin_email": admin_data.get("email", "") if admin_data else "",
-            "admin_telefono": admin_data.get("telefono", "") if admin_data else "",
+            "admin_cif": comunidad_data.get("cif", "") if comunidad_data else "",
+            "admin_email": comunidad_data.get("email", "") if comunidad_data else "",
+            "admin_telefono": comunidad_data.get("telefono", "") if comunidad_data else "",
         }
         if not self.excel_manager.create_from_template(template_path, save_path, excel_data):
             wx.MessageBox("Error al crear el presupuesto.", "Error", wx.OK | wx.ICON_ERROR)
             return
 
-        # --- NUEVO: Flujo de generación de partidas con IA ---
+        # Registrar en historial
+        db_repository.registrar_presupuesto({
+            "nombre_proyecto": project_name,
+            "ruta_excel": save_path,
+            "ruta_carpeta": folder_path,
+            "cliente": project_data.get("cliente", ""),
+            "localidad": project_data.get("localidad", ""),
+            "tipo_obra": project_data.get("tipo", ""),
+            "numero_proyecto": project_data.get("numero", ""),
+        })
+
+        # --- Flujo de generación de partidas con IA ---
         self._offer_ai_partidas(save_path, project_data)
 
-    def _buscar_admin_para_presupuesto(self, nombre_cliente: str) -> dict | None:
+    def _obtain_project_data(self):
+        """Obtiene ``(project_data, project_name)`` intentando primero el Excel de relación."""
+        from src.gui.dialogs_wx import obtain_project_data
+        return obtain_project_data(self)
+
+    def _open_default_paths(self):
+        from src.gui.dialogs_wx import DefaultPathsDialog
+        dlg = DefaultPathsDialog(self)
+        dlg.ShowModal()
+        dlg.Destroy()
+
+    def _buscar_comunidad_para_presupuesto(self, nombre_cliente: str) -> dict | None:
         """
-        Busca una administración en la BDD cuyo nombre coincida con el campo
+        Busca una comunidad en la BDD cuyo nombre coincida con el campo
         'cliente' del proyecto. Muestra un diálogo de confirmación si se
         encuentra (exacta o fuzzy).
 
         Args:
-            nombre_cliente: Nombre del cliente/administración a buscar.
+            nombre_cliente: Nombre del cliente/comunidad a buscar.
 
         Returns:
-            Dict con los datos de la administración confirmada, o None.
+            Dict con los datos de la comunidad confirmada, o None.
         """
         from src.gui.dialogs_wx import (
-            AdminConfirmDialog, AdminFuzzySelectDialog, NuevaAdminDialog,
+            ComunidadConfirmDialog, ComunidadFuzzySelectDialog,
+            crear_comunidad_con_formulario,
         )
 
         if not nombre_cliente or not nombre_cliente.strip():
@@ -271,36 +321,32 @@ class MainFrame(wx.Frame):
         nombre = nombre_cliente.strip()
 
         # 1. Búsqueda exacta (case-insensitive)
-        admin = db_repository.buscar_administracion_por_nombre(nombre)
-        if admin:
-            dlg = AdminConfirmDialog(self, admin, nombre)
+        comunidad = db_repository.buscar_comunidad_por_nombre(nombre)
+        if comunidad:
+            dlg = ComunidadConfirmDialog(self, comunidad, nombre)
             resultado = dlg.ShowModal()
-            datos = dlg.get_admin_data() if resultado == wx.ID_OK else None
+            datos = dlg.get_comunidad_data() if resultado == wx.ID_OK else None
             dlg.Destroy()
             return datos
 
         # 2. Búsqueda fuzzy
-        fuzzy = db_repository.buscar_administraciones_fuzzy(nombre)
+        fuzzy = db_repository.buscar_comunidades_fuzzy(nombre)
         if fuzzy:
-            dlg = AdminFuzzySelectDialog(self, fuzzy, nombre)
+            dlg = ComunidadFuzzySelectDialog(self, fuzzy, nombre)
             resultado = dlg.ShowModal()
-            datos = dlg.get_admin_data() if resultado == wx.ID_OK else None
+            datos = dlg.get_comunidad_data() if resultado == wx.ID_OK else None
             dlg.Destroy()
             return datos
 
-        # 3. No se encontró nada → ofrecer crear nueva administración
+        # 3. No se encontró nada → ofrecer crear nueva comunidad
         resp = wx.MessageBox(
-            f'No se encontró ninguna administración con el nombre "{nombre}".\n\n'
-            "¿Desea añadir una nueva administración a la base de datos?",
-            "Administración no encontrada",
+            f'No se encontró ninguna comunidad con el nombre "{nombre}".\n\n'
+            "¿Desea añadir una nueva comunidad a la base de datos?",
+            "Comunidad no encontrada",
             wx.YES_NO | wx.ICON_QUESTION,
         )
         if resp == wx.YES:
-            dlg = NuevaAdminDialog(self, nombre_prefill=nombre)
-            resultado = dlg.ShowModal()
-            datos = dlg.get_admin_data() if resultado == wx.ID_OK else None
-            dlg.Destroy()
-            return datos
+            return crear_comunidad_con_formulario(self, nombre_prefill=nombre)
 
         return None
 
@@ -351,6 +397,15 @@ class MainFrame(wx.Frame):
         # Paso 3: Insertar partidas seleccionadas en el Excel via XML
         if selected:
             if self.excel_manager.insert_partidas_via_xml(excel_path, selected):
+                db_repository.registrar_presupuesto({
+                    "nombre_proyecto": project_data.get("nombre_obra", os.path.basename(excel_path)),
+                    "ruta_excel": excel_path,
+                    "usa_partidas_ia": True,
+                })
+                from src.core.budget_reader import BudgetReader
+                data = BudgetReader().read(excel_path)
+                if data:
+                    db_repository.actualizar_total(excel_path, data["total"])
                 wx.MessageBox(
                     f"Presupuesto creado con {len(selected)} partidas:\n{excel_path}",
                     "Éxito", wx.OK,
@@ -389,6 +444,17 @@ class MainFrame(wx.Frame):
         )
         if dlg.ShowModal() == wx.ID_OK:
             new_key = dlg.GetValue().strip()
+            if new_key and (len(new_key) < 10 or not new_key.startswith("AI")):
+                confirm = wx.MessageBox(
+                    "La clave introducida no parece tener el formato esperado "
+                    "(las claves de Gemini suelen empezar por 'AI' y tener ~39 caracteres).\n\n"
+                    "¿Guardar de todas formas?",
+                    "Formato sospechoso",
+                    wx.YES_NO | wx.ICON_WARNING,
+                )
+                if confirm != wx.YES:
+                    dlg.Destroy()
+                    return
             settings.save_api_key(new_key)
             if new_key:
                 wx.MessageBox("API key guardada correctamente.", "Configuración IA", wx.OK)

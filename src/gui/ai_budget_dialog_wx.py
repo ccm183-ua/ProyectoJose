@@ -20,11 +20,12 @@ from src.gui import theme
 class AIBudgetDialog(wx.Dialog):
     """Diálogo para configurar y lanzar la generación de partidas con IA."""
 
-    def __init__(self, parent, datos_proyecto=None):
+    def __init__(self, parent, datos_proyecto=None, context_extra=""):
         """
         Args:
             parent: Ventana padre.
             datos_proyecto: Diccionario con datos del proyecto (localidad, cliente, etc.).
+            context_extra: Texto adicional para el prompt (p.ej. partidas existentes).
         """
         super().__init__(
             parent,
@@ -34,10 +35,11 @@ class AIBudgetDialog(wx.Dialog):
         theme.style_dialog(self)
 
         self._datos_proyecto = datos_proyecto or {}
+        self._context_extra = context_extra or ""
         self._catalog = WorkTypeCatalog()
         self._settings = Settings()
         self._selected_plantilla = None
-        self._result = None  # Resultado de la generación
+        self._result = None
 
         self._build_ui()
         self.CenterOnParent()
@@ -219,18 +221,29 @@ class AIBudgetDialog(wx.Dialog):
 
     def _run_generation(self, tipo, descripcion):
         """Ejecuta la generación en un hilo separado."""
-        api_key = self._settings.get_api_key()
-        generator = BudgetGenerator(api_key=api_key)
+        try:
+            api_key = self._settings.get_api_key()
+            generator = BudgetGenerator(api_key=api_key)
 
-        result = generator.generate(
-            tipo_obra=tipo,
-            descripcion=descripcion,
-            plantilla=self._selected_plantilla,
-            datos_proyecto=self._datos_proyecto,
-        )
+            full_desc = descripcion
+            if self._context_extra:
+                full_desc = f"{descripcion}\n{self._context_extra}" if descripcion else self._context_extra
 
-        # Volver al hilo principal de la UI
-        wx.CallAfter(self._on_generation_complete, result)
+            result = generator.generate(
+                tipo_obra=tipo,
+                descripcion=full_desc,
+                plantilla=self._selected_plantilla,
+                datos_proyecto=self._datos_proyecto,
+            )
+
+            wx.CallAfter(self._on_generation_complete, result)
+        except Exception as exc:
+            error_result = {
+                'partidas': [],
+                'source': 'error',
+                'error': f"Error inesperado en la generación: {exc}",
+            }
+            wx.CallAfter(self._on_generation_complete, error_result)
 
     def _on_generation_complete(self, result):
         """Callback cuando la generación termina."""

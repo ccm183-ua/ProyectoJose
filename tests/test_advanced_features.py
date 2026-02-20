@@ -28,7 +28,7 @@ def temp_dir():
     """Fixture para crear un directorio temporal."""
     temp_path = tempfile.mkdtemp()
     yield temp_path
-    shutil.rmtree(temp_path)
+    shutil.rmtree(temp_path, ignore_errors=True)
 
 
 @pytest.fixture

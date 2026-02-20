@@ -7,9 +7,12 @@ modelos y manejo de errores amigable.
 """
 
 import json
+import logging
 import re
 import time
 from typing import Dict, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 
 # Modelos en orden de preferencia (cada uno tiene cuota independiente)
