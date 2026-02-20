@@ -15,6 +15,7 @@ from src.core import folder_scanner
 from src.core.project_data_resolver import build_relation_index, resolve_projects
 from src.core.settings import Settings
 from src.gui import theme
+from src.utils.helpers import run_in_background
 
 _COLUMNS = [
     ("Proyecto", 220),
@@ -94,6 +95,7 @@ class BudgetDashboardFrame(wx.Frame):
         self._notebook = wx.Notebook(main_panel)
         self._notebook.SetBackgroundColour(theme.BG_SECONDARY)
         self._notebook.SetFont(theme.font_base())
+        self._notebook.Bind(wx.EVT_NOTEBOOK_PAGE_CHANGED, self._on_tab_changed)
         main_sizer.Add(
             self._notebook, 1,
             wx.EXPAND | wx.LEFT | wx.RIGHT,
@@ -146,21 +148,34 @@ class BudgetDashboardFrame(wx.Frame):
             return
 
         self._subtitle.SetLabel(root_path)
+        self._show_empty_state("Cargando presupuestos\u2026")
+        self._set_toolbar_enabled(False)
 
-        wx.BeginBusyCursor()
-        try:
-            self._relation_index = build_relation_index()
+        def _scan():
+            rel_index = build_relation_index()
             states = folder_scanner.scan_root(root_path)
+            return rel_index, states
 
+        def _on_done(ok, payload):
+            self._set_toolbar_enabled(True)
+            if not ok:
+                self._show_empty_state(f"Error al cargar: {payload}")
+                return
+            rel_index, states = payload
+            self._relation_index = rel_index
             if not states:
                 self._show_empty_state(
                     "No se encontraron subcarpetas en:\n" + root_path
                 )
                 return
-
             self._rebuild_tabs(states, root_path)
-        finally:
-            wx.EndBusyCursor()
+
+        run_in_background(_scan, _on_done)
+
+    def _set_toolbar_enabled(self, enabled):
+        for btn in (self._btn_preview, self._btn_edit, self._btn_pdf,
+                    self._btn_open, self._btn_folder):
+            btn.Enable(enabled)
 
     def _rebuild_tabs(self, states, root_path):
         self._rebuilding = True
@@ -205,7 +220,6 @@ class BudgetDashboardFrame(wx.Frame):
             panel.SetSizer(sizer)
             self._notebook.AddPage(panel, f"  {state_name}  ")
 
-        self._notebook.Bind(wx.EVT_NOTEBOOK_PAGE_CHANGED, self._on_tab_changed)
         self._rebuilding = False
         self._notebook.Thaw()
 
@@ -444,16 +458,28 @@ class BudgetDashboardFrame(wx.Frame):
                 "Exportar PDF", wx.OK | wx.ICON_WARNING,
             )
             return
-        ok, result = exporter.export(ruta)
-        if ok:
-            resp = wx.MessageBox(
-                f"PDF generado:\n{result}\n\n\u00bfDesea abrirlo?",
-                "PDF exportado", wx.YES_NO | wx.ICON_INFORMATION,
-            )
-            if resp == wx.YES:
-                self._open_file(result)
-        else:
-            wx.MessageBox(f"Error al exportar PDF:\n{result}", "Error", wx.OK | wx.ICON_ERROR)
+
+        self._btn_pdf.Disable()
+        self._btn_pdf.SetLabel("Exportando\u2026")
+
+        def _on_pdf_done(ok_outer, payload):
+            self._btn_pdf.Enable()
+            self._btn_pdf.SetLabel("Exportar PDF")
+            if not ok_outer:
+                wx.MessageBox(f"Error al exportar PDF:\n{payload}", "Error", wx.OK | wx.ICON_ERROR)
+                return
+            ok, result = payload
+            if ok:
+                resp = wx.MessageBox(
+                    f"PDF generado:\n{result}\n\n\u00bfDesea abrirlo?",
+                    "PDF exportado", wx.YES_NO | wx.ICON_INFORMATION,
+                )
+                if resp == wx.YES:
+                    self._open_file(result)
+            else:
+                wx.MessageBox(f"Error al exportar PDF:\n{result}", "Error", wx.OK | wx.ICON_ERROR)
+
+        run_in_background(lambda: exporter.export(ruta), _on_pdf_done)
 
     def _on_open_excel(self, event):
         selected = self._get_selected()
@@ -486,6 +512,15 @@ class BudgetDashboardFrame(wx.Frame):
     # ------------------------------------------------------------------
 
     def _edit_regen_all(self, ruta):
+        confirm = wx.MessageBox(
+            "Esta acción reemplazará TODAS las partidas actuales del presupuesto "
+            "por las que genere la IA.\n\n¿Desea continuar?",
+            "Regenerar partidas",
+            wx.YES_NO | wx.ICON_WARNING,
+        )
+        if confirm != wx.YES:
+            return
+
         from src.gui.ai_budget_dialog_wx import AIBudgetDialog
         from src.gui.partidas_dialog_wx import SuggestedPartidasDialog
         from src.core.excel_manager import ExcelManager
@@ -571,6 +606,15 @@ class BudgetDashboardFrame(wx.Frame):
             wx.MessageBox("Error al a\u00f1adir partidas.", "Error", wx.OK | wx.ICON_ERROR)
 
     def _edit_regen_header(self, ruta, numero_proyecto=""):
+        confirm = wx.MessageBox(
+            "Esta acción sobrescribirá los campos de cabecera del presupuesto "
+            "(cliente, dirección, fecha, etc.).\n\n¿Desea continuar?",
+            "Regenerar campos",
+            wx.YES_NO | wx.ICON_WARNING,
+        )
+        if confirm != wx.YES:
+            return
+
         from src.core.excel_manager import ExcelManager
 
         project_data, project_name = self._obtain_project_data(preselect_numero=numero_proyecto)

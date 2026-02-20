@@ -7,6 +7,7 @@ Prioridad API key: variable de entorno > archivo local.
 
 import json
 import os
+import tempfile
 from typing import Dict, Optional
 
 
@@ -101,5 +102,16 @@ class Settings:
 
     def _save_config(self, config: dict):
         os.makedirs(self._config_dir, exist_ok=True)
-        with open(self._config_path, 'w', encoding='utf-8') as f:
-            json.dump(config, f, indent=2, ensure_ascii=False)
+        fd, tmp_path = tempfile.mkstemp(
+            dir=self._config_dir, suffix='.tmp', prefix='cfg_'
+        )
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                json.dump(config, f, indent=2, ensure_ascii=False)
+            os.replace(tmp_path, self._config_path)
+        except BaseException:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise

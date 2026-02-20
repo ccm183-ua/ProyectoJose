@@ -13,6 +13,7 @@ import wx
 
 from src.core.budget_reader import BudgetReader
 from src.gui import theme
+from src.utils.helpers import run_in_background
 
 
 class BudgetPreviewDialog(wx.Dialog):
@@ -70,20 +71,31 @@ class BudgetPreviewDialog(wx.Dialog):
         self.SetSizer(self._main_sizer)
 
     def _load_data(self):
-        reader = BudgetReader()
-        self._data = reader.read(self._file_path)
-        if not self._data:
-            lbl = theme.create_text(
-                self._scroll,
-                "No se pudo leer el presupuesto.",
-                muted=True,
-            )
-            self._scroll_sizer.Add(lbl, 0, wx.ALL, theme.SPACE_XL)
-            return
-        self._render_header()
-        self._render_partidas()
-        self._render_totals()
-        self._scroll.FitInside()
+        lbl_loading = theme.create_text(self._scroll, "Cargando presupuesto\u2026", muted=True)
+        self._scroll_sizer.Add(lbl_loading, 0, wx.ALL, theme.SPACE_XL)
+        self._scroll.Layout()
+
+        def _read():
+            return BudgetReader().read(self._file_path)
+
+        def _on_done(ok, payload):
+            self._scroll_sizer.Clear(True)
+            if not ok or not payload:
+                lbl = theme.create_text(
+                    self._scroll,
+                    "No se pudo leer el presupuesto.",
+                    muted=True,
+                )
+                self._scroll_sizer.Add(lbl, 0, wx.ALL, theme.SPACE_XL)
+                self._scroll.Layout()
+                return
+            self._data = payload
+            self._render_header()
+            self._render_partidas()
+            self._render_totals()
+            self._scroll.FitInside()
+
+        run_in_background(_read, _on_done)
 
     @staticmethod
     def _fmt_euro(value):
@@ -244,16 +256,29 @@ class BudgetPreviewDialog(wx.Dialog):
                 "Exportar PDF", wx.OK | wx.ICON_WARNING,
             )
             return
-        ok, result = exporter.export(self._file_path)
-        if ok:
-            resp = wx.MessageBox(
-                f"PDF generado:\n{result}\n\n\u00bfDesea abrirlo?",
-                "PDF exportado", wx.YES_NO | wx.ICON_INFORMATION,
-            )
-            if resp == wx.YES:
-                self._open_file(result)
-        else:
-            wx.MessageBox(f"Error al exportar PDF:\n{result}", "Error", wx.OK | wx.ICON_ERROR)
+
+        btn = event.GetEventObject()
+        btn.Disable()
+        btn.SetLabel("Exportando\u2026")
+
+        def _on_done(ok_outer, payload):
+            btn.Enable()
+            btn.SetLabel("Exportar PDF")
+            if not ok_outer:
+                wx.MessageBox(f"Error al exportar PDF:\n{payload}", "Error", wx.OK | wx.ICON_ERROR)
+                return
+            ok, result = payload
+            if ok:
+                resp = wx.MessageBox(
+                    f"PDF generado:\n{result}\n\n\u00bfDesea abrirlo?",
+                    "PDF exportado", wx.YES_NO | wx.ICON_INFORMATION,
+                )
+                if resp == wx.YES:
+                    self._open_file(result)
+            else:
+                wx.MessageBox(f"Error al exportar PDF:\n{result}", "Error", wx.OK | wx.ICON_ERROR)
+
+        run_in_background(lambda: exporter.export(self._file_path), _on_done)
 
     def _on_open_excel(self, event):
         self._open_file(self._file_path)
@@ -267,5 +292,8 @@ class BudgetPreviewDialog(wx.Dialog):
                 os.startfile(path)
             else:
                 subprocess.run(["xdg-open", path], check=True)
-        except Exception:
-            pass
+        except Exception as exc:
+            wx.MessageBox(
+                f"No se pudo abrir:\n{path}\n\nError: {exc}",
+                "Error al abrir", wx.OK | wx.ICON_ERROR,
+            )

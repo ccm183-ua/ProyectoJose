@@ -207,6 +207,7 @@ class MainFrame(wx.Frame):
         try:
             budget = self.excel_manager.load_budget(path)
             if budget:
+                budget.close()
                 db_repository.registrar_presupuesto({
                     "nombre_proyecto": os.path.splitext(os.path.basename(path))[0],
                     "ruta_excel": path,
@@ -443,6 +444,17 @@ class MainFrame(wx.Frame):
         )
         if dlg.ShowModal() == wx.ID_OK:
             new_key = dlg.GetValue().strip()
+            if new_key and (len(new_key) < 10 or not new_key.startswith("AI")):
+                confirm = wx.MessageBox(
+                    "La clave introducida no parece tener el formato esperado "
+                    "(las claves de Gemini suelen empezar por 'AI' y tener ~39 caracteres).\n\n"
+                    "¿Guardar de todas formas?",
+                    "Formato sospechoso",
+                    wx.YES_NO | wx.ICON_WARNING,
+                )
+                if confirm != wx.YES:
+                    dlg.Destroy()
+                    return
             settings.save_api_key(new_key)
             if new_key:
                 wx.MessageBox("API key guardada correctamente.", "Configuración IA", wx.OK)

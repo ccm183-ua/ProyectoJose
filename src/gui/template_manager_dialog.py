@@ -15,6 +15,7 @@ import wx
 from src.core.work_type_catalog import WorkTypeCatalog
 from src.core.excel_partidas_extractor import ExcelPartidasExtractor
 from src.gui import theme
+from src.utils.helpers import run_in_background
 
 
 class TemplateManagerDialog(wx.Dialog):
@@ -249,69 +250,69 @@ class TemplateManagerDialog(wx.Dialog):
         excel_path = file_dlg.GetPath()
         file_dlg.Destroy()
 
-        # Paso 3: Extraer partidas
-        wx.BeginBusyCursor()
-        partidas = self._extractor.extract(excel_path)
-        wx.EndBusyCursor()
+        # Paso 3: Extraer partidas en hilo para no bloquear la UI
+        self._btn_delete.Disable()
 
-        if not partidas:
-            wx.MessageBox(
-                f"No se encontraron partidas en el archivo:\n{os.path.basename(excel_path)}\n\n"
-                "Asegúrate de que el Excel tiene partidas con el formato de la plantilla "
-                "(número en col A, unidad en col B, descripción en col C, "
-                "cantidad en col G, precio en col H).",
-                "Sin partidas", wx.OK | wx.ICON_WARNING,
+        def _on_extract_done(ok, payload):
+            self._btn_delete.Enable(True)
+            if not ok or not payload:
+                wx.MessageBox(
+                    f"No se encontraron partidas en el archivo:\n{os.path.basename(excel_path)}\n\n"
+                    "Asegúrate de que el Excel tiene partidas con el formato de la plantilla "
+                    "(número en col A, unidad en col B, descripción en col C, "
+                    "cantidad en col G, precio en col H).",
+                    "Sin partidas", wx.OK | wx.ICON_WARNING,
+                )
+                return
+
+            partidas = payload
+            resumen = f"Se encontraron {len(partidas)} partidas en el Excel:\n\n"
+            for i, p in enumerate(partidas[:8]):
+                resumen += f"  {i+1}. {p['concepto'][:50]} ({p['unidad']}, {p['precio_ref']:.2f}€)\n"
+            if len(partidas) > 8:
+                resumen += f"  ... y {len(partidas) - 8} más\n"
+            resumen += f"\n¿Guardar como plantilla '{nombre}'?"
+
+            confirm = wx.MessageBox(
+                resumen,
+                "Confirmar importación",
+                wx.YES_NO | wx.ICON_QUESTION,
             )
-            return
+            if confirm != wx.YES:
+                return
 
-        # Paso 4: Mostrar resumen y confirmar
-        resumen = f"Se encontraron {len(partidas)} partidas en el Excel:\n\n"
-        for i, p in enumerate(partidas[:8]):
-            resumen += f"  {i+1}. {p['concepto'][:50]} ({p['unidad']}, {p['precio_ref']:.2f}€)\n"
-        if len(partidas) > 8:
-            resumen += f"  ... y {len(partidas) - 8} más\n"
-        resumen += f"\n¿Guardar como plantilla '{nombre}'?"
+            plantilla = {
+                'nombre': nombre,
+                'categoria': 'personalizada',
+                'descripcion': f"Plantilla importada desde {os.path.basename(excel_path)}",
+                'contexto_ia': (
+                    f"Presupuesto de tipo '{nombre}'. "
+                    f"Partidas de referencia importadas de un presupuesto real. "
+                    f"Usar como base para generar partidas similares adaptadas al caso concreto."
+                ),
+                'partidas_base': partidas,
+            }
 
-        confirm = wx.MessageBox(
-            resumen,
-            "Confirmar importación",
-            wx.YES_NO | wx.ICON_QUESTION,
-        )
-        if confirm != wx.YES:
-            return
+            if self._catalog.add_custom(plantilla):
+                wx.MessageBox(
+                    f"Plantilla '{nombre}' guardada con {len(partidas)} partidas.",
+                    "Plantilla creada", wx.OK | wx.ICON_INFORMATION,
+                )
+                self._refresh_list()
 
-        # Paso 5: Guardar plantilla
-        plantilla = {
-            'nombre': nombre,
-            'categoria': 'personalizada',
-            'descripcion': f"Plantilla importada desde {os.path.basename(excel_path)}",
-            'contexto_ia': (
-                f"Presupuesto de tipo '{nombre}'. "
-                f"Partidas de referencia importadas de un presupuesto real. "
-                f"Usar como base para generar partidas similares adaptadas al caso concreto."
-            ),
-            'partidas_base': partidas,
-        }
+                custom_names = self._catalog.get_custom_names()
+                predefined_count = len(self._catalog.get_predefined_names())
+                if nombre in custom_names:
+                    idx = predefined_count + custom_names.index(nombre)
+                    self._template_list.SetSelection(idx)
+                    self._on_select(None)
+            else:
+                wx.MessageBox(
+                    "Error al guardar la plantilla.",
+                    "Error", wx.OK | wx.ICON_ERROR,
+                )
 
-        if self._catalog.add_custom(plantilla):
-            wx.MessageBox(
-                f"Plantilla '{nombre}' guardada con {len(partidas)} partidas.",
-                "Plantilla creada", wx.OK | wx.ICON_INFORMATION,
-            )
-            self._refresh_list()
-
-            # Seleccionar la nueva plantilla en la lista
-            custom_names = self._catalog.get_custom_names()
-            predefined_count = len(self._catalog.get_predefined_names())
-            if nombre in custom_names:
-                idx = predefined_count + custom_names.index(nombre)
-                self._template_list.SetSelection(idx)
-                self._on_select(None)
-        else:
-            wx.MessageBox(
-                "Error al guardar la plantilla.",
-                "Error", wx.OK | wx.ICON_ERROR,
-            )
+        run_in_background(lambda: self._extractor.extract(excel_path), _on_extract_done)
 
     def _on_delete(self, event):
         """Elimina la plantilla personalizada seleccionada."""

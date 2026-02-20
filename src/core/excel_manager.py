@@ -2,6 +2,7 @@
 Gestor de archivos Excel.
 """
 
+import logging
 import os
 import re
 import shutil
@@ -12,8 +13,31 @@ from xml.sax.saxutils import escape as xml_escape
 from openpyxl import load_workbook
 from src.core.template_manager import TemplateManager
 
+logger = logging.getLogger(__name__)
+
 # Hoja de datos en la plantilla 122-20
 SHEET_12220 = "xl/worksheets/sheet1.xml"
+
+# Tipo de IVA aplicable a presupuestos
+IVA_RATE = 0.10
+
+# Filas de la plantilla 122-20 (sección de datos y totales en openpyxl)
+DATA_START_ROW = 12
+SUBTOTAL_ROW = 15
+IVA_ROW = 16
+TOTAL_ROW = 17
+
+# Rango de filas para partidas en la plantilla XML (1-indexed en sheet XML)
+PARTIDA_FIRST_ROW_XML = 17
+PARTIDA_LAST_ROW_XML = 57
+HEADER_FIRST_ROW_XML = 3
+HEADER_LAST_ROW_XML = 16
+
+# Altura de fila y anchura para conceptos multilínea
+MAX_CHARS_PER_LINE = 55
+DEFAULT_LINE_HEIGHT = 14.5
+MIN_ROW_HEIGHT = 30
+MAX_ROW_HEIGHT = 200
 
 
 def _replace_cell_in_sheet_xml(sheet_xml, ref, value):
@@ -155,7 +179,7 @@ class ExcelManager:
             return True
             
         except Exception as e:
-            print(f"Error al crear archivo Excel: {e}")
+            logger.exception("Error al crear archivo Excel")
             return False
 
     def _patch_sheet2_cells_12220(self, output_path, data, nombre_obra, direccion_solo_calle_numero):
@@ -293,7 +317,7 @@ class ExcelManager:
             return True
 
         except Exception as e:
-            print(f"Error al insertar partidas: {e}")
+            logger.exception("Error al insertar partidas")
             return False
 
     @staticmethod
@@ -520,9 +544,8 @@ class ExcelManager:
         r47 = 47 + offset  # "TOTAL PRESUPUESTO, I.V.A. INCLUIDO."
         r49 = 49 + offset  # Texto del importe en letras
 
-        iva_rate = 0.10
         total_sin_iva = grand_total
-        iva_amount = round(total_sin_iva * iva_rate, 2)
+        iva_amount = round(total_sin_iva * IVA_RATE, 2)
         total_con_iva = round(total_sin_iva + iva_amount, 2)
 
         sheet_xml = self._update_formula_ref(
@@ -772,7 +795,7 @@ class ExcelManager:
 
             return True
         except Exception as e:
-            print(f"Error al actualizar campos: {e}")
+            logger.exception("Error al actualizar campos")
             return False
 
     @staticmethod
@@ -1014,7 +1037,7 @@ class ExcelManager:
 
             return self.insert_partidas_via_xml(file_path, combined)
         except Exception as e:
-            print(f"Error al añadir partidas: {e}")
+            logger.exception("Error al añadir partidas")
             return False
 
     def load_budget(self, file_path):
@@ -1025,7 +1048,8 @@ class ExcelManager:
             file_path: Ruta del archivo Excel
             
         Returns:
-            Workbook: Objeto Workbook o None si hay error
+            Workbook: Objeto Workbook o None si hay error.
+                      El llamante debe cerrar el workbook con wb.close().
         """
         try:
             if not os.path.exists(file_path):
@@ -1033,7 +1057,7 @@ class ExcelManager:
             
             wb = load_workbook(file_path)
             return wb
-        except Exception as e:
+        except Exception:
             return None
     
     def add_budget_row(self, file_path, budget_row):
@@ -1047,20 +1071,17 @@ class ExcelManager:
         Returns:
             bool: True si se añadió correctamente, False en caso contrario
         """
+        wb = None
         try:
             wb = load_workbook(file_path)
             ws = wb.active
             
-            # Encontrar la última fila con datos antes de los totales (filas 15-17)
-            # Asumimos que los encabezados están en la fila 11
             start_row = 12
             last_data_row = start_row - 1
             total_row_start = None
             
-            # Buscar la última fila con datos y dónde empiezan los totales
-            for row_idx in range(start_row, min(ws.max_row + 10, 30)):  # Buscar hasta la fila 30
+            for row_idx in range(start_row, min(ws.max_row + 10, 30)):
                 cell_value = ws.cell(row=row_idx, column=1).value
-                # Detener si encontramos "SUBTOTAL", "IVA" o "TOTAL"
                 if cell_value:
                     cell_str = str(cell_value).upper()
                     if ('SUBTOTAL' in cell_str or 'IVA' in cell_str or 'TOTAL' in cell_str) and total_row_start is None:
@@ -1069,44 +1090,40 @@ class ExcelManager:
                 if cell_value is not None and cell_value != '':
                     last_data_row = row_idx
             
-            # Si no encontramos dónde empiezan los totales, asumimos fila 15
             if total_row_start is None:
                 total_row_start = 15
             
-            # Siempre insertar una nueva fila después de la última fila con datos
             if last_data_row < start_row:
-                # No hay datos, insertar en start_row
                 ws.insert_rows(start_row)
                 empty_row = start_row
             else:
-                # Insertar después de la última fila con datos, pero antes de los totales
                 empty_row = last_data_row + 1
-                # Solo insertar si no estamos en la fila de totales
                 if empty_row < total_row_start:
                     ws.insert_rows(empty_row)
                 else:
-                    # Si ya estamos en o después de los totales, insertar antes de ellos
                     ws.insert_rows(total_row_start)
                     empty_row = total_row_start
             
-            # Añadir datos
             ws.cell(row=empty_row, column=1).value = budget_row.get('concepto', '')
             ws.cell(row=empty_row, column=2).value = budget_row.get('cantidad', 0)
             ws.cell(row=empty_row, column=3).value = budget_row.get('unidad', '')
             ws.cell(row=empty_row, column=4).value = budget_row.get('precio_unitario', 0)
             ws.cell(row=empty_row, column=5).value = budget_row.get('importe', 0)
             
-            # Guardar el archivo
             wb.save(file_path)
+            wb.close()
+            wb = None
             
-            # Actualizar fórmulas de totales (esto recargará el archivo)
             self.recalculate_totals(file_path)
             
             return True
             
         except Exception as e:
-            print(f"Error al añadir fila: {e}")
+            logger.exception("Error al añadir fila")
             return False
+        finally:
+            if wb is not None:
+                wb.close()
     
     def modify_budget_row(self, file_path, row_index, new_data):
         """
@@ -1120,12 +1137,12 @@ class ExcelManager:
         Returns:
             bool: True si se modificó correctamente, False en caso contrario
         """
+        wb = None
         try:
             wb = load_workbook(file_path)
             ws = wb.active
             
-            # Modificar datos (row_index es 1-based, pero ajustamos para la fila real)
-            actual_row = 11 + row_index  # Asumiendo que los datos empiezan en fila 12
+            actual_row = 11 + row_index
             
             if actual_row <= ws.max_row:
                 ws.cell(row=actual_row, column=1).value = new_data.get('concepto', '')
@@ -1134,17 +1151,21 @@ class ExcelManager:
                 ws.cell(row=actual_row, column=4).value = new_data.get('precio_unitario', 0)
                 ws.cell(row=actual_row, column=5).value = new_data.get('importe', 0)
                 
-                # Recalcular totales
-                self.recalculate_totals(file_path)
-                
                 wb.save(file_path)
+                wb.close()
+                wb = None
+                
+                self.recalculate_totals(file_path)
                 return True
             
             return False
             
         except Exception as e:
-            print(f"Error al modificar fila: {e}")
+            logger.exception("Error al modificar fila")
             return False
+        finally:
+            if wb is not None:
+                wb.close()
     
     def delete_budget_row(self, file_path, row_index):
         """
@@ -1157,6 +1178,7 @@ class ExcelManager:
         Returns:
             bool: True si se eliminó correctamente, False en caso contrario
         """
+        wb = None
         try:
             wb = load_workbook(file_path)
             ws = wb.active
@@ -1166,17 +1188,21 @@ class ExcelManager:
             if actual_row <= ws.max_row:
                 ws.delete_rows(actual_row)
                 
-                # Recalcular totales
-                self.recalculate_totals(file_path)
-                
                 wb.save(file_path)
+                wb.close()
+                wb = None
+                
+                self.recalculate_totals(file_path)
                 return True
             
             return False
             
         except Exception as e:
-            print(f"Error al eliminar fila: {e}")
+            logger.exception("Error al eliminar fila")
             return False
+        finally:
+            if wb is not None:
+                wb.close()
     
     def recalculate_totals(self, file_path):
         """
@@ -1188,55 +1214,49 @@ class ExcelManager:
         Returns:
             bool: True si se recalculó correctamente, False en caso contrario
         """
+        wb = None
         try:
             wb = load_workbook(file_path)
             ws = wb.active
             
-            # Encontrar fila de inicio de datos (asumimos fila 12)
-            start_row = 12
+            start_row = DATA_START_ROW
             end_row = start_row - 1
             
-            # Buscar última fila con datos antes de los totales (filas 15-17)
-            # Buscar desde start_row hasta la fila 14 (antes de los totales)
-            for row_idx in range(start_row, 15):
+            for row_idx in range(start_row, SUBTOTAL_ROW):
                 if ws.cell(row=row_idx, column=1).value is not None and ws.cell(row=row_idx, column=1).value != '':
                     end_row = row_idx
             
-            # Si no encontramos datos en las filas 12-14, buscar más abajo
             if end_row < start_row:
-                # Buscar en un rango más amplio, pero antes de los totales
                 for row_idx in range(start_row, ws.max_row + 1):
-                    # Detener si encontramos "SUBTOTAL", "IVA" o "TOTAL"
                     cell_value = str(ws.cell(row=row_idx, column=1).value or '').upper()
                     if 'SUBTOTAL' in cell_value or 'IVA' in cell_value or 'TOTAL' in cell_value:
                         break
                     if ws.cell(row=row_idx, column=1).value is not None and ws.cell(row=row_idx, column=1).value != '':
                         end_row = row_idx
             
-            # Si aún no encontramos, usar max_row pero asegurarnos de que no sea una fila de totales
             if end_row < start_row:
-                end_row = min(ws.max_row, 14)  # Máximo hasta la fila 14
+                end_row = min(ws.max_row, SUBTOTAL_ROW - 1)
             
-            # Actualizar fórmula de subtotal (asumimos fila 15)
             if end_row >= start_row:
                 subtotal_formula = f"=SUM(E{start_row}:E{end_row})"
-                ws['E15'] = subtotal_formula
-                ws['E15'].number_format = '#,##0.00 €'
+                ws[f'E{SUBTOTAL_ROW}'] = subtotal_formula
+                ws[f'E{SUBTOTAL_ROW}'].number_format = '#,##0.00 €'
             
-            # Actualizar fórmula de IVA (asumimos fila 16)
-            ws['E16'] = '=E15*0.21'
-            ws['E16'].number_format = '#,##0.00 €'
+            ws[f'E{IVA_ROW}'] = f'=E{SUBTOTAL_ROW}*0.21'
+            ws[f'E{IVA_ROW}'].number_format = '#,##0.00 €'
             
-            # Actualizar fórmula de TOTAL (asumimos fila 17)
-            ws['E17'] = '=E15+E16'
-            ws['E17'].number_format = '#,##0.00 €'
+            ws[f'E{TOTAL_ROW}'] = f'=E{SUBTOTAL_ROW}+E{IVA_ROW}'
+            ws[f'E{TOTAL_ROW}'].number_format = '#,##0.00 €'
             
             wb.save(file_path)
             return True
             
         except Exception as e:
-            print(f"Error al recalcular totales: {e}")
+            logger.exception("Error al recalcular totales")
             return False
+        finally:
+            if wb is not None:
+                wb.close()
     
     def save_budget(self, file_path):
         """

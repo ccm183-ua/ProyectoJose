@@ -767,6 +767,24 @@ class DefaultPathsDialog(wx.Dialog):
 
     def _on_save(self, _event):
         from src.core.settings import Settings
+
+        warnings = []
+        for key, tc in self._fields.items():
+            path = tc.GetValue().strip()
+            if not path:
+                continue
+            if key == Settings.PATH_RELATION_FILE:
+                if not os.path.isfile(path):
+                    warnings.append(f"El archivo no existe: {path}")
+            else:
+                if not os.path.isdir(path):
+                    warnings.append(f"La carpeta no existe: {path}")
+
+        if warnings:
+            msg = "Se detectaron rutas que no existen:\n\n" + "\n".join(warnings) + "\n\n¿Guardar de todas formas?"
+            if wx.MessageBox(msg, "Rutas no válidas", wx.YES_NO | wx.ICON_WARNING) != wx.YES:
+                return
+
         for key, tc in self._fields.items():
             self._settings.set_default_path(key, tc.GetValue())
         self.EndModal(wx.ID_OK)

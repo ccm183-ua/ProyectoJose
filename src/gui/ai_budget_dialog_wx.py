@@ -221,22 +221,29 @@ class AIBudgetDialog(wx.Dialog):
 
     def _run_generation(self, tipo, descripcion):
         """Ejecuta la generación en un hilo separado."""
-        api_key = self._settings.get_api_key()
-        generator = BudgetGenerator(api_key=api_key)
+        try:
+            api_key = self._settings.get_api_key()
+            generator = BudgetGenerator(api_key=api_key)
 
-        full_desc = descripcion
-        if self._context_extra:
-            full_desc = f"{descripcion}\n{self._context_extra}" if descripcion else self._context_extra
+            full_desc = descripcion
+            if self._context_extra:
+                full_desc = f"{descripcion}\n{self._context_extra}" if descripcion else self._context_extra
 
-        result = generator.generate(
-            tipo_obra=tipo,
-            descripcion=full_desc,
-            plantilla=self._selected_plantilla,
-            datos_proyecto=self._datos_proyecto,
-        )
+            result = generator.generate(
+                tipo_obra=tipo,
+                descripcion=full_desc,
+                plantilla=self._selected_plantilla,
+                datos_proyecto=self._datos_proyecto,
+            )
 
-        # Volver al hilo principal de la UI
-        wx.CallAfter(self._on_generation_complete, result)
+            wx.CallAfter(self._on_generation_complete, result)
+        except Exception as exc:
+            error_result = {
+                'partidas': [],
+                'source': 'error',
+                'error': f"Error inesperado en la generación: {exc}",
+            }
+            wx.CallAfter(self._on_generation_complete, error_result)
 
     def _on_generation_complete(self, result):
         """Callback cuando la generación termina."""

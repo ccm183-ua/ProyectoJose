@@ -12,6 +12,12 @@ from typing import Optional, List, Dict, Tuple
 
 from src.core import database
 
+# Umbral de similitud para búsqueda fuzzy (0.0 – 1.0)
+FUZZY_MATCH_THRESHOLD = 0.55
+
+# Límite de registros en consultas de historial
+HISTORIAL_DEFAULT_LIMIT = 50
+
 _CP_RE = re.compile(
     r"\b[Cc]\.?\s*[Pp]\.?\s*",
 )
@@ -198,7 +204,7 @@ def buscar_administracion_por_nombre(nombre: str) -> Optional[Dict]:
         conn.close()
 
 
-def buscar_administraciones_fuzzy(nombre: str, umbral: float = 0.55) -> List[Dict]:
+def buscar_administraciones_fuzzy(nombre: str, umbral: float = FUZZY_MATCH_THRESHOLD) -> List[Dict]:
     """Busca administraciones cuyo nombre sea similar al dado (fuzzy matching).
 
     Usa difflib.SequenceMatcher para calcular la similitud. Solo devuelve
@@ -424,7 +430,7 @@ def _row_to_comunidad(r) -> Dict:
     }
 
 
-def buscar_comunidades_fuzzy(nombre: str, umbral: float = 0.55) -> List[Dict]:
+def buscar_comunidades_fuzzy(nombre: str, umbral: float = FUZZY_MATCH_THRESHOLD) -> List[Dict]:
     """Busca comunidades cuyo nombre sea similar al dado (fuzzy matching).
 
     Usa difflib.SequenceMatcher para calcular la similitud. Antes de
@@ -726,13 +732,10 @@ def set_administracion_contacto(contacto_id: int, administracion_ids: List[int])
     try:
         conn.execute("DELETE FROM administracion_contacto WHERE contacto_id=?", (contacto_id,))
         for aid in administracion_ids:
-            err = _ejecutar(
-                conn,
+            conn.execute(
                 "INSERT INTO administracion_contacto (administracion_id, contacto_id) VALUES (?, ?)",
                 (aid, contacto_id),
             )
-            if err:
-                return err
         conn.commit()
         return None
     except sqlite3.IntegrityError as e:
@@ -748,13 +751,10 @@ def set_comunidad_contacto(contacto_id: int, comunidad_ids: List[int]) -> Option
     try:
         conn.execute("DELETE FROM comunidad_contacto WHERE contacto_id=?", (contacto_id,))
         for cid in comunidad_ids:
-            err = _ejecutar(
-                conn,
+            conn.execute(
                 "INSERT INTO comunidad_contacto (comunidad_id, contacto_id) VALUES (?, ?)",
                 (cid, contacto_id),
             )
-            if err:
-                return err
         conn.commit()
         return None
     except sqlite3.IntegrityError as e:
@@ -878,7 +878,7 @@ def registrar_presupuesto(datos: Dict) -> Tuple[Optional[int], Optional[str]]:
         conn.close()
 
 
-def get_historial_reciente(limit: int = 50) -> List[Dict]:
+def get_historial_reciente(limit: int = HISTORIAL_DEFAULT_LIMIT) -> List[Dict]:
     """Lista los presupuestos más recientes del historial.
 
     Args:

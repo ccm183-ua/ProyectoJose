@@ -4,6 +4,7 @@ Punto de entrada principal de cubiApp (app de escritorio con wxPython).
 """
 
 import io
+import logging
 import os
 import sys
 import tempfile
@@ -64,7 +65,7 @@ def get_or_create_ico():
         
         return ico_path
     except Exception as e:
-        print(f"Error creando .ico: {e}")
+        logging.getLogger(__name__).debug("Error creando .ico: %s", e)
         return None
 
 
@@ -112,10 +113,27 @@ def set_window_icon(frame):
                     icon.CopyFromBitmap(bmp)
                     frame.SetIcon(icon)
         except Exception as e:
-            print(f"Error cargando icono: {e}")
+            logging.getLogger(__name__).debug("Error cargando icono: %s", e)
+
+
+def _setup_logging():
+    log_dir = APP_BASE / ".cubiapp_logs"
+    log_dir.mkdir(exist_ok=True)
+    log_file = log_dir / "cubiapp.log"
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        handlers=[
+            logging.FileHandler(str(log_file), encoding="utf-8"),
+            logging.StreamHandler(sys.stderr),
+        ],
+    )
 
 
 def main():
+    _setup_logging()
+
     # Configurar AppID de Windows ANTES de crear la app
     setup_windows_app_id()
     

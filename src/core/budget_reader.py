@@ -7,14 +7,23 @@ máxima compatibilidad (sin abrir con openpyxl, que puede alterar formato).
 """
 
 import io
+import logging
 import os
 import re
 import zipfile
 from typing import Dict, List, Optional
 
+logger = logging.getLogger(__name__)
+
 
 SHEET_PRIMARY = "xl/worksheets/sheet1.xml"
 SHEET_FALLBACK = "xl/worksheets/sheet2.xml"
+
+# Primera fila (1-indexed) que puede contener partidas en la plantilla 122-20
+PARTIDA_START_ROW = 17
+
+# Tipo de IVA por defecto para el cálculo de totales
+IVA_RATE = 0.10
 
 HEADER_CELLS = {
     "E5": "numero",
@@ -73,6 +82,7 @@ class BudgetReader:
                 "total": totals["total"],
             }
         except Exception:
+            logger.exception("Error al leer presupuesto: %s", self._file_path)
             return None
 
     @staticmethod
@@ -299,6 +309,6 @@ class BudgetReader:
     def _calculate_totals(partidas: List[Dict]) -> Dict:
         """Calcula subtotal, IVA y total a partir de las partidas (fallback)."""
         subtotal = sum(p["importe"] for p in partidas)
-        iva = round(subtotal * 0.10, 2)
+        iva = round(subtotal * IVA_RATE, 2)
         total = round(subtotal + iva, 2)
         return {"subtotal": round(subtotal, 2), "iva": iva, "total": total}

@@ -4,6 +4,7 @@ Funciones auxiliares y utilidades.
 
 import re
 import os
+import threading
 
 
 def sanitize_filename(filename):
@@ -71,9 +72,28 @@ def get_template_path():
     Returns:
         str: Ruta absoluta de la plantilla
     """
-    # Obtener directorio del proyecto
     current_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.dirname(os.path.dirname(current_dir))
     template_path = os.path.join(project_root, 'templates', '122-20 PLANTILLA PRESUPUESTO.xlsx')
     
     return template_path
+
+
+def run_in_background(work_fn, callback):
+    """Ejecuta *work_fn* en un hilo y entrega el resultado a *callback* en el hilo de wx.
+
+    ``callback`` recibe ``(True, result)`` si *work_fn* tuvo éxito o
+    ``(False, exception)`` si lanzó una excepción.
+    """
+    import wx
+
+    def _worker():
+        try:
+            result = work_fn()
+            wx.CallAfter(callback, True, result)
+        except Exception as exc:
+            wx.CallAfter(callback, False, exc)
+
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+    return t
