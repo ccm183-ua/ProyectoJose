@@ -423,16 +423,9 @@ class BudgetDashboardFrame(wx.Frame):
 
     def _edit_regen_header(self, ruta):
         """Regenerar campos de cabecera del presupuesto."""
-        from src.gui.dialogs_wx import ProjectNameDialogWx
         from src.core.excel_manager import ExcelManager
 
-        dlg = ProjectNameDialogWx(self)
-        if dlg.ShowModal() != wx.ID_OK:
-            dlg.Destroy()
-            return
-        project_data = dlg.get_project_data()
-        project_name = dlg.get_project_name()
-        dlg.Destroy()
+        project_data, project_name = self._obtain_project_data()
         if not project_data:
             return
 
@@ -474,6 +467,15 @@ class BudgetDashboardFrame(wx.Frame):
             self._refresh_list(self._search.GetValue())
         else:
             wx.MessageBox("Error al actualizar campos.", "Error", wx.OK | wx.ICON_ERROR)
+
+    # ------------------------------------------------------------------
+    # Obtención de datos de proyecto (relación Excel o portapapeles)
+    # ------------------------------------------------------------------
+
+    def _obtain_project_data(self):
+        """Obtiene ``(project_data, project_name)`` intentando primero el Excel de relación."""
+        from src.gui.dialogs_wx import obtain_project_data
+        return obtain_project_data(self)
 
     # ------------------------------------------------------------------
     # Helpers

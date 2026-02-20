@@ -120,6 +120,8 @@ class MainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, lambda e: self._open_ai_settings(), item_ai)
         item_templates = m_config.Append(wx.ID_ANY, "Gestionar plantillas...")
         self.Bind(wx.EVT_MENU, lambda e: self._open_template_manager(), item_templates)
+        item_paths = m_config.Append(wx.ID_ANY, "Rutas por defecto...")
+        self.Bind(wx.EVT_MENU, lambda e: self._open_default_paths(), item_paths)
         menubar.Append(m_config, "&Configuración")
 
         m_ayuda = wx.Menu()
@@ -194,7 +196,9 @@ class MainFrame(wx.Frame):
             wx.MessageBox(f"Error: {ex}", "Error", wx.OK | wx.ICON_ERROR)
 
     def _open_excel(self):
-        with wx.FileDialog(self, "Abrir Presupuesto", wildcard="Excel (*.xlsx;*.xls)|*.xlsx;*.xls|Todos (*.*)|*.*", style=wx.FD_OPEN) as dlg:
+        from src.core.settings import Settings
+        default_dir = Settings().get_default_path(Settings.PATH_OPEN_BUDGETS) or ""
+        with wx.FileDialog(self, "Abrir Presupuesto", defaultDir=default_dir, wildcard="Excel (*.xlsx;*.xls)|*.xlsx;*.xls|Todos (*.*)|*.*", style=wx.FD_OPEN) as dlg:
             if dlg.ShowModal() != wx.ID_OK:
                 return
             path = dlg.GetPath()
@@ -215,18 +219,13 @@ class MainFrame(wx.Frame):
             wx.MessageBox(f"Error: {ex}", "Error", wx.OK | wx.ICON_ERROR)
 
     def _create_budget(self):
-        from src.gui.dialogs_wx import ProjectNameDialogWx
-        dlg = ProjectNameDialogWx(self)
-        if dlg.ShowModal() != wx.ID_OK:
-            dlg.Destroy()
-            return
-        project_data = dlg.get_project_data()
-        project_name = dlg.get_project_name()
-        dlg.Destroy()
+        project_data, project_name = self._obtain_project_data()
         if not project_data or not project_name:
             return
 
-        with wx.FileDialog(self, "Guardar Presupuesto", defaultFile=f"{sanitize_filename(project_name)}.xlsx", wildcard="Excel (*.xlsx)|*.xlsx|Todos (*.*)|*.*", style=wx.FD_SAVE) as fd:
+        from src.core.settings import Settings
+        save_default_dir = Settings().get_default_path(Settings.PATH_SAVE_BUDGETS) or ""
+        with wx.FileDialog(self, "Guardar Presupuesto", defaultDir=save_default_dir, defaultFile=f"{sanitize_filename(project_name)}.xlsx", wildcard="Excel (*.xlsx)|*.xlsx|Todos (*.*)|*.*", style=wx.FD_SAVE) as fd:
             if fd.ShowModal() != wx.ID_OK:
                 return
             save_path = fd.GetPath()
@@ -286,6 +285,17 @@ class MainFrame(wx.Frame):
 
         # --- Flujo de generación de partidas con IA ---
         self._offer_ai_partidas(save_path, project_data)
+
+    def _obtain_project_data(self):
+        """Obtiene ``(project_data, project_name)`` intentando primero el Excel de relación."""
+        from src.gui.dialogs_wx import obtain_project_data
+        return obtain_project_data(self)
+
+    def _open_default_paths(self):
+        from src.gui.dialogs_wx import DefaultPathsDialog
+        dlg = DefaultPathsDialog(self)
+        dlg.ShowModal()
+        dlg.Destroy()
 
     def _buscar_comunidad_para_presupuesto(self, nombre_cliente: str) -> dict | None:
         """

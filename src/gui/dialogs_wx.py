@@ -2,7 +2,10 @@
 Diálogos wxPython para cubiApp.
 """
 
+import os
+
 import wx
+
 from src.core.project_parser import ProjectParser
 from src.core import db_repository
 from src.utils.project_name_generator import ProjectNameGenerator
@@ -360,3 +363,324 @@ class ProjectNameDialogWx(wx.Dialog):
 
     def get_project_name(self):
         return self.project_name
+
+
+# ---------------------------------------------------------------------------
+# Función compartida: obtener datos de proyecto (relación Excel → portapapeles)
+# ---------------------------------------------------------------------------
+
+def obtain_project_data(parent) -> tuple:
+    """Obtiene ``(project_data, project_name)`` usando primero el Excel de
+    relación (si está configurado) y después el portapapeles como fallback.
+
+    Devuelve ``(None, None)`` si el usuario cancela.
+    """
+    from src.core.settings import Settings
+
+    settings = Settings()
+    relation_path = settings.get_default_path(Settings.PATH_RELATION_FILE)
+
+    if relation_path and os.path.isfile(relation_path):
+        try:
+            from src.core.excel_relation_reader import ExcelRelationReader
+
+            budgets, err = ExcelRelationReader().read(relation_path)
+            if not err and budgets:
+                sel_dlg = BudgetSelectorDialog(parent, budgets)
+                result = sel_dlg.ShowModal()
+                if result == wx.ID_OK:
+                    data = sel_dlg.get_project_data()
+                    name = sel_dlg.get_project_name()
+                    sel_dlg.Destroy()
+                    return data, name
+                use_clipboard = sel_dlg.used_clipboard_fallback()
+                sel_dlg.Destroy()
+                if not use_clipboard:
+                    return None, None
+            elif err:
+                wx.MessageBox(
+                    f"No se pudo leer el Excel de relación:\n{err}\n\n"
+                    "Se usará el portapapeles como alternativa.",
+                    "Aviso", wx.OK | wx.ICON_WARNING,
+                )
+        except Exception as exc:
+            wx.MessageBox(
+                f"Error leyendo el Excel de relación:\n{exc}\n\n"
+                "Se usará el portapapeles como alternativa.",
+                "Aviso", wx.OK | wx.ICON_WARNING,
+            )
+
+    dlg = ProjectNameDialogWx(parent)
+    if dlg.ShowModal() != wx.ID_OK:
+        dlg.Destroy()
+        return None, None
+    project_data = dlg.get_project_data()
+    project_name = dlg.get_project_name()
+    dlg.Destroy()
+    return project_data, project_name
+
+
+# ---------------------------------------------------------------------------
+# Selector de presupuesto desde Excel de relación
+# ---------------------------------------------------------------------------
+
+ID_BTN_CLIPBOARD_FALLBACK = wx.NewIdRef()
+
+
+class BudgetSelectorDialog(wx.Dialog):
+    """Muestra los presupuestos leídos del Excel de relación y permite elegir uno."""
+
+    def __init__(self, parent, budgets: list):
+        super().__init__(parent, title="Seleccionar Presupuesto",
+                         style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
+        theme.style_dialog(self)
+        self._budgets = budgets
+        self._filtered: list = list(budgets)
+        self.project_data = None
+        self.project_name = None
+        self._use_clipboard = False
+        self.name_generator = ProjectNameGenerator()
+        self._build_ui()
+
+    def _build_ui(self):
+        panel = wx.Panel(self)
+        theme.style_panel(panel)
+        sizer = wx.BoxSizer(wx.VERTICAL)
+
+        title = theme.create_title(panel, "Crear Presupuesto desde Relación", "xl")
+        sizer.Add(title, 0, wx.ALL, theme.SPACE_XL)
+
+        inst = theme.create_text(
+            panel,
+            "Selecciona un presupuesto de la lista o utiliza el portapapeles como alternativa."
+        )
+        inst.Wrap(680)
+        sizer.Add(inst, 0, wx.LEFT | wx.RIGHT, theme.SPACE_XL)
+
+        # Campo de búsqueda
+        search_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        lbl_search = wx.StaticText(panel, label="Buscar:")
+        lbl_search.SetFont(theme.get_font_medium())
+        lbl_search.SetForegroundColour(theme.TEXT_PRIMARY)
+        search_sizer.Add(lbl_search, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, theme.SPACE_SM)
+        self._search = wx.TextCtrl(panel, size=(300, -1))
+        theme.style_textctrl(self._search)
+        self._search.Bind(wx.EVT_TEXT, self._on_filter)
+        search_sizer.Add(self._search, 1, wx.EXPAND)
+        sizer.Add(search_sizer, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, theme.SPACE_XL)
+
+        # Lista
+        self._list = wx.ListCtrl(panel, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
+        theme.style_listctrl(self._list)
+        cols = [("Nº", 50), ("Fecha", 85), ("Cliente", 200), ("Calle", 200),
+                ("Localidad", 100), ("Tipo", 160), ("Importe", 80)]
+        for idx, (name, width) in enumerate(cols):
+            self._list.InsertColumn(idx, name, width=width)
+        self._populate_list(self._budgets)
+        self._list.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self._on_item_activated)
+        sizer.Add(self._list, 1, wx.EXPAND | wx.ALL, theme.SPACE_XL)
+
+        # Separador
+        sizer.Add(theme.create_divider(panel), 0, wx.EXPAND | wx.LEFT | wx.RIGHT, theme.SPACE_XL)
+
+        # Botones
+        btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        btn_cancel = wx.Button(panel, wx.ID_CANCEL, "Cancelar", size=(120, 44))
+        btn_cancel.SetFont(theme.font_base())
+        btn_clipboard = wx.Button(panel, ID_BTN_CLIPBOARD_FALLBACK,
+                                  "Pegar desde portapapeles", size=(210, 44))
+        btn_clipboard.SetFont(theme.font_base())
+        btn_ok = wx.Button(panel, wx.ID_OK, "Crear presupuesto seleccionado", size=(240, 44))
+        btn_ok.SetFont(theme.get_font_medium())
+        btn_ok.SetBackgroundColour(theme.ACCENT_PRIMARY)
+        btn_ok.SetForegroundColour(theme.TEXT_INVERSE)
+        btn_ok.SetDefault()
+
+        btn_sizer.Add(btn_cancel, 0, wx.RIGHT, theme.SPACE_MD)
+        btn_sizer.Add(btn_clipboard, 0, wx.RIGHT, theme.SPACE_MD)
+        btn_sizer.Add(btn_ok, 0)
+        sizer.Add(btn_sizer, 0, wx.ALIGN_RIGHT | wx.ALL, theme.SPACE_XL)
+
+        panel.SetSizer(sizer)
+        dialog_sizer = wx.BoxSizer(wx.VERTICAL)
+        dialog_sizer.Add(panel, 1, wx.EXPAND)
+        self.SetSizer(dialog_sizer)
+        theme.fit_dialog(self, 920, 560)
+
+        self.Bind(wx.EVT_BUTTON, self._on_ok, id=wx.ID_OK)
+        self.Bind(wx.EVT_BUTTON, self._on_clipboard, id=ID_BTN_CLIPBOARD_FALLBACK)
+
+    # ── Populate / filter ─────────────────────────────────────────
+
+    def _populate_list(self, items: list):
+        self._list.DeleteAllItems()
+        for i, b in enumerate(items):
+            pos = self._list.InsertItem(i, str(b.get("numero", "")))
+            self._list.SetItem(pos, 1, b.get("fecha", ""))
+            self._list.SetItem(pos, 2, b.get("cliente", ""))
+            self._list.SetItem(pos, 3, b.get("calle", ""))
+            self._list.SetItem(pos, 4, b.get("localidad", ""))
+            self._list.SetItem(pos, 5, b.get("tipo", ""))
+            self._list.SetItem(pos, 6, b.get("importe", ""))
+
+    def _on_filter(self, _event):
+        query = self._search.GetValue().strip().lower()
+        if not query:
+            self._filtered = list(self._budgets)
+        else:
+            self._filtered = [
+                b for b in self._budgets
+                if query in " ".join(str(v) for v in b.values()).lower()
+            ]
+        self._populate_list(self._filtered)
+
+    # ── Selección ─────────────────────────────────────────────────
+
+    def _get_selected_budget(self):
+        sel = self._list.GetFirstSelected()
+        if sel < 0 or sel >= len(self._filtered):
+            return None
+        return self._filtered[sel]
+
+    def _on_item_activated(self, _event):
+        """Doble-clic en un item equivale a pulsar OK."""
+        self._on_ok(None)
+
+    def _on_ok(self, _event):
+        budget = self._get_selected_budget()
+        if budget is None:
+            wx.MessageBox("Selecciona un presupuesto de la lista.", "Aviso", wx.OK)
+            return
+        self.project_data = {k: v for k, v in budget.items() if k != "importe"}
+        self.project_name = self.name_generator.generate_project_name(self.project_data)
+        self.EndModal(wx.ID_OK)
+
+    def _on_clipboard(self, _event):
+        self._use_clipboard = True
+        self.EndModal(wx.ID_CANCEL)
+
+    # ── Acceso público ────────────────────────────────────────────
+
+    def used_clipboard_fallback(self) -> bool:
+        return self._use_clipboard
+
+    def get_project_data(self):
+        return self.project_data
+
+    def get_project_name(self):
+        return self.project_name
+
+
+# ---------------------------------------------------------------------------
+# Diálogo de configuración de rutas por defecto
+# ---------------------------------------------------------------------------
+
+class DefaultPathsDialog(wx.Dialog):
+    """Permite al usuario configurar las 3 rutas por defecto de la aplicación."""
+
+    def __init__(self, parent):
+        super().__init__(parent, title="Rutas por defecto",
+                         style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
+        theme.style_dialog(self)
+        from src.core.settings import Settings
+        self._settings = Settings()
+        self._fields: dict = {}
+        self._build_ui()
+
+    def _build_ui(self):
+        panel = wx.Panel(self)
+        theme.style_panel(panel)
+        sizer = wx.BoxSizer(wx.VERTICAL)
+
+        title = theme.create_title(panel, "Rutas por defecto", "xl")
+        sizer.Add(title, 0, wx.ALL, theme.SPACE_XL)
+
+        inst = theme.create_text(
+            panel,
+            "Configura las carpetas y archivos por defecto que se usarán "
+            "al abrir y guardar presupuestos."
+        )
+        inst.Wrap(520)
+        sizer.Add(inst, 0, wx.LEFT | wx.RIGHT, theme.SPACE_XL)
+        sizer.AddSpacer(theme.SPACE_LG)
+
+        from src.core.settings import Settings
+        descriptions = [
+            (Settings.PATH_SAVE_BUDGETS,
+             "Carpeta para guardar presupuestos nuevos:", "dir"),
+            (Settings.PATH_OPEN_BUDGETS,
+             "Carpeta para abrir presupuestos existentes:", "dir"),
+            (Settings.PATH_RELATION_FILE,
+             "Archivo Excel de relación de presupuestos:", "file"),
+        ]
+
+        for key, label_text, mode in descriptions:
+            lbl = wx.StaticText(panel, label=label_text)
+            lbl.SetFont(theme.get_font_medium())
+            lbl.SetForegroundColour(theme.TEXT_PRIMARY)
+            sizer.Add(lbl, 0, wx.LEFT | wx.TOP, theme.SPACE_XL)
+
+            row = wx.BoxSizer(wx.HORIZONTAL)
+            tc = wx.TextCtrl(panel, style=wx.TE_READONLY, size=(-1, 32))
+            tc.SetBackgroundColour(theme.BG_SECONDARY)
+            tc.SetFont(theme.font_base())
+            current = self._settings.get_default_path(key) or ""
+            tc.SetValue(current)
+            row.Add(tc, 1, wx.EXPAND | wx.RIGHT, theme.SPACE_SM)
+
+            btn_browse = wx.Button(panel, label="Examinar...", size=(100, 32))
+            btn_browse.SetFont(theme.font_base())
+            btn_browse.Bind(wx.EVT_BUTTON,
+                            lambda e, k=key, t=tc, m=mode: self._browse(k, t, m))
+            row.Add(btn_browse, 0, wx.RIGHT, theme.SPACE_SM)
+
+            btn_clear = wx.Button(panel, label="Limpiar", size=(80, 32))
+            btn_clear.SetFont(theme.font_base())
+            btn_clear.Bind(wx.EVT_BUTTON, lambda e, t=tc: t.SetValue(""))
+            row.Add(btn_clear, 0)
+
+            sizer.Add(row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, theme.SPACE_XL)
+            self._fields[key] = tc
+
+        sizer.AddSpacer(theme.SPACE_LG)
+        sizer.Add(theme.create_divider(panel), 0, wx.EXPAND | wx.LEFT | wx.RIGHT, theme.SPACE_XL)
+
+        btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        btn_cancel = wx.Button(panel, wx.ID_CANCEL, "Cancelar", size=(130, 44))
+        btn_cancel.SetFont(theme.font_base())
+        btn_save = wx.Button(panel, wx.ID_OK, "Guardar", size=(130, 44))
+        btn_save.SetFont(theme.get_font_medium())
+        btn_save.SetBackgroundColour(theme.ACCENT_PRIMARY)
+        btn_save.SetForegroundColour(theme.TEXT_INVERSE)
+        btn_save.SetDefault()
+        btn_sizer.Add(btn_cancel, 0, wx.RIGHT, theme.SPACE_MD)
+        btn_sizer.Add(btn_save, 0)
+        sizer.Add(btn_sizer, 0, wx.ALIGN_RIGHT | wx.ALL, theme.SPACE_XL)
+
+        panel.SetSizer(sizer)
+        dialog_sizer = wx.BoxSizer(wx.VERTICAL)
+        dialog_sizer.Add(panel, 1, wx.EXPAND)
+        self.SetSizer(dialog_sizer)
+        theme.fit_dialog(self, 620, 480)
+
+        self.Bind(wx.EVT_BUTTON, self._on_save, id=wx.ID_OK)
+
+    def _browse(self, key: str, textctrl: wx.TextCtrl, mode: str):
+        if mode == "dir":
+            dlg = wx.DirDialog(self, "Selecciona una carpeta",
+                               defaultPath=textctrl.GetValue(),
+                               style=wx.DD_DEFAULT_STYLE | wx.DD_DIR_MUST_EXIST)
+        else:
+            dlg = wx.FileDialog(self, "Selecciona el archivo Excel",
+                                defaultDir=os.path.dirname(textctrl.GetValue()) if textctrl.GetValue() else "",
+                                wildcard="Archivos Excel (*.xlsx)|*.xlsx",
+                                style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST)
+        if dlg.ShowModal() == wx.ID_OK:
+            textctrl.SetValue(dlg.GetPath())
+        dlg.Destroy()
+
+    def _on_save(self, _event):
+        from src.core.settings import Settings
+        for key, tc in self._fields.items():
+            self._settings.set_default_path(key, tc.GetValue())
+        self.EndModal(wx.ID_OK)
