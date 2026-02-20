@@ -9,11 +9,22 @@ BudgetReader carga los archivos completamente en memoria antes de parsearlos,
 evitando así bloqueos de archivo que impedirían abrirlos con WPS/Excel.
 """
 
+import re
 from typing import Dict, List, Optional
 
 from src.core.budget_reader import BudgetReader
 from src.core.excel_relation_reader import ExcelRelationReader
 from src.core.settings import Settings
+
+_RE_OBRA_PREFIX = re.compile(r"^Obra:\s*", re.IGNORECASE)
+
+
+def _strip_obra_prefix(value: str) -> str:
+    """Elimina el prefijo 'Obra: ' que se escribe en el Excel, dejando solo el texto útil."""
+    cleaned = _RE_OBRA_PREFIX.sub("", value).strip()
+    if cleaned.endswith("."):
+        cleaned = cleaned[:-1].strip()
+    return cleaned
 
 
 def resolve_projects(
@@ -104,7 +115,8 @@ def _fill_from_budget(entry: Dict, reader: BudgetReader, ruta: str) -> None:
     cab = data.get("cabecera", {})
     entry["cliente"] = cab.get("cliente", "")
     entry["localidad"] = cab.get("direccion", "")
-    entry["tipo_obra"] = cab.get("obra", "")
+    raw_obra = cab.get("obra", "")
+    entry["tipo_obra"] = _strip_obra_prefix(raw_obra)
     entry["fecha"] = cab.get("fecha", "")
     if data.get("total") is not None:
         entry["total"] = data["total"]

@@ -10,7 +10,12 @@ Permite al usuario:
 
 import os
 
-import wx
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QDialog, QFileDialog, QHBoxLayout, QHeaderView, QInputDialog, QLabel,
+    QListWidget, QMessageBox, QPushButton, QTableWidget, QTableWidgetItem,
+    QVBoxLayout, QWidget,
+)
 
 from src.core.work_type_catalog import WorkTypeCatalog
 from src.core.excel_partidas_extractor import ExcelPartidasExtractor
@@ -18,250 +23,217 @@ from src.gui import theme
 from src.utils.helpers import run_in_background
 
 
-class TemplateManagerDialog(wx.Dialog):
+class TemplateManagerDialog(QDialog):
     """Diálogo para gestionar plantillas de presupuesto."""
 
-    def __init__(self, parent):
-        super().__init__(
-            parent,
-            title="Gestionar Plantillas de Presupuesto",
-            style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER,
-        )
-        theme.style_dialog(self)
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Gestionar Plantillas de Presupuesto")
 
         self._catalog = WorkTypeCatalog()
         self._extractor = ExcelPartidasExtractor()
 
         self._build_ui()
         self._refresh_list()
-        self.CenterOnParent()
 
     def _build_ui(self):
-        panel = wx.Panel(self)
-        theme.style_panel(panel)
-        main_sizer = wx.BoxSizer(wx.VERTICAL)
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
 
-        # --- Título ---
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(theme.SPACE_XL, theme.SPACE_XL, theme.SPACE_XL, theme.SPACE_XL)
+        layout.setSpacing(theme.SPACE_SM)
+
         title = theme.create_title(panel, "Gestionar Plantillas", "xl")
-        main_sizer.Add(title, 0, wx.ALL, theme.SPACE_XL)
+        layout.addWidget(title)
 
         subtitle = theme.create_text(
             panel,
             "Gestiona tu biblioteca de plantillas de presupuesto. "
             "Las plantillas personalizadas se crean importando las partidas "
-            "desde un presupuesto Excel ya existente."
+            "desde un presupuesto Excel ya existente.",
         )
-        subtitle.Wrap(560)
-        main_sizer.Add(subtitle, 0, wx.LEFT | wx.RIGHT, theme.SPACE_XL)
+        subtitle.setWordWrap(True)
+        layout.addWidget(subtitle)
+        layout.addSpacing(theme.SPACE_MD)
 
-        main_sizer.AddSpacer(theme.SPACE_LG)
+        content_layout = QHBoxLayout()
 
-        # --- Contenido principal: lista + detalle ---
-        content_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        # Panel izquierdo
+        left_layout = QVBoxLayout()
+        lbl_list = QLabel("Plantillas disponibles:", panel)
+        lbl_list.setFont(theme.get_font_medium())
+        lbl_list.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; background: transparent;")
+        left_layout.addWidget(lbl_list)
 
-        # Panel izquierdo: lista de plantillas
-        left_sizer = wx.BoxSizer(wx.VERTICAL)
+        self._template_list = QListWidget(panel)
+        self._template_list.setFont(theme.font_base())
+        self._template_list.setMinimumWidth(280)
+        self._template_list.currentRowChanged.connect(self._on_select)
+        left_layout.addWidget(self._template_list, 1)
 
-        lbl_list = wx.StaticText(panel, label="Plantillas disponibles:")
-        lbl_list.SetFont(theme.get_font_medium())
-        lbl_list.SetForegroundColour(theme.TEXT_PRIMARY)
-        left_sizer.Add(lbl_list, 0, wx.BOTTOM, theme.SPACE_SM)
+        btn_list_layout = QHBoxLayout()
+        btn_add = QPushButton("+ Añadir desde Excel", panel)
+        btn_add.setFont(theme.get_font_medium())
+        btn_add.setFixedHeight(38)
+        btn_add.setProperty("class", "primary")
+        btn_add.clicked.connect(self._on_add)
+        btn_list_layout.addWidget(btn_add)
 
-        self._template_list = wx.ListBox(panel, size=(280, 280))
-        self._template_list.SetFont(theme.font_base())
-        self._template_list.SetBackgroundColour(theme.BG_CARD)
-        left_sizer.Add(self._template_list, 1, wx.EXPAND)
+        self._btn_delete = QPushButton("Eliminar", panel)
+        self._btn_delete.setFont(theme.font_base())
+        self._btn_delete.setFixedHeight(38)
+        self._btn_delete.setEnabled(False)
+        self._btn_delete.clicked.connect(self._on_delete)
+        btn_list_layout.addWidget(self._btn_delete)
 
-        # Botones debajo de la lista
-        btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        left_layout.addLayout(btn_list_layout)
+        content_layout.addLayout(left_layout)
+        content_layout.addSpacing(theme.SPACE_LG)
 
-        btn_add = wx.Button(panel, label="+ Añadir desde Excel", size=(160, 38))
-        btn_add.SetFont(theme.get_font_medium())
-        btn_add.SetBackgroundColour(theme.ACCENT_PRIMARY)
-        btn_add.SetForegroundColour(theme.TEXT_INVERSE)
+        # Panel derecho
+        right_layout = QVBoxLayout()
+        lbl_detail = QLabel("Partidas de la plantilla:", panel)
+        lbl_detail.setFont(theme.get_font_medium())
+        lbl_detail.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; background: transparent;")
+        right_layout.addWidget(lbl_detail)
 
-        self._btn_delete = wx.Button(panel, label="Eliminar", size=(90, 38))
-        self._btn_delete.SetFont(theme.font_base())
-        self._btn_delete.Enable(False)
+        self._detail_table = QTableWidget(panel)
+        self._detail_table.setColumnCount(3)
+        self._detail_table.setHorizontalHeaderLabels(["Concepto", "Ud.", "Precio ref."])
+        self._detail_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self._detail_table.setColumnWidth(1, 50)
+        self._detail_table.setColumnWidth(2, 90)
+        self._detail_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._detail_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._detail_table.setAlternatingRowColors(True)
+        self._detail_table.verticalHeader().setVisible(False)
+        self._detail_table.setFont(theme.font_sm())
+        self._detail_table.setMinimumWidth(320)
+        right_layout.addWidget(self._detail_table, 1)
 
-        btn_sizer.Add(btn_add, 0, wx.RIGHT, theme.SPACE_SM)
-        btn_sizer.Add(self._btn_delete, 0)
-
-        left_sizer.Add(btn_sizer, 0, wx.TOP, theme.SPACE_MD)
-
-        content_sizer.Add(left_sizer, 0, wx.EXPAND | wx.RIGHT, theme.SPACE_LG)
-
-        # Panel derecho: detalle de la plantilla seleccionada
-        right_sizer = wx.BoxSizer(wx.VERTICAL)
-
-        lbl_detail = wx.StaticText(panel, label="Partidas de la plantilla:")
-        lbl_detail.SetFont(theme.get_font_medium())
-        lbl_detail.SetForegroundColour(theme.TEXT_PRIMARY)
-        right_sizer.Add(lbl_detail, 0, wx.BOTTOM, theme.SPACE_SM)
-
-        self._detail_list = wx.ListCtrl(
-            panel, style=wx.LC_REPORT | wx.LC_SINGLE_SEL, size=(320, 280)
-        )
-        self._detail_list.SetFont(theme.font_sm())
-        self._detail_list.SetBackgroundColour(theme.BG_CARD)
-        self._detail_list.InsertColumn(0, "Concepto", width=180)
-        self._detail_list.InsertColumn(1, "Ud.", width=40)
-        self._detail_list.InsertColumn(2, "Precio ref.", width=80)
-        right_sizer.Add(self._detail_list, 1, wx.EXPAND)
-
-        # Contador de partidas
         self._lbl_count = theme.create_text(panel, "", muted=True)
-        right_sizer.Add(self._lbl_count, 0, wx.TOP, theme.SPACE_SM)
+        right_layout.addWidget(self._lbl_count)
 
-        content_sizer.Add(right_sizer, 1, wx.EXPAND)
+        content_layout.addLayout(right_layout, 1)
+        layout.addLayout(content_layout, 1)
 
-        main_sizer.Add(
-            content_sizer, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, theme.SPACE_XL
-        )
+        layout.addSpacing(theme.SPACE_MD)
+        layout.addWidget(theme.create_divider(panel))
+        layout.addSpacing(theme.SPACE_MD)
 
-        # --- Separador + Cerrar ---
-        main_sizer.AddSpacer(theme.SPACE_LG)
-        main_sizer.Add(
-            theme.create_divider(panel), 0,
-            wx.EXPAND | wx.LEFT | wx.RIGHT, theme.SPACE_XL
-        )
-        main_sizer.AddSpacer(theme.SPACE_LG)
+        btn_close = QPushButton("Cerrar", panel)
+        btn_close.setFont(theme.font_base())
+        btn_close.setFixedSize(100, 40)
+        btn_close.clicked.connect(self.accept)
+        close_layout = QHBoxLayout()
+        close_layout.addStretch()
+        close_layout.addWidget(btn_close)
+        layout.addLayout(close_layout)
 
-        btn_close = wx.Button(panel, wx.ID_CLOSE, "Cerrar", size=(100, 40))
-        btn_close.SetFont(theme.font_base())
-        main_sizer.Add(btn_close, 0, wx.ALIGN_RIGHT | wx.RIGHT | wx.BOTTOM, theme.SPACE_XL)
+        main_layout.addWidget(panel)
 
-        panel.SetSizer(main_sizer)
-
-        dialog_sizer = wx.BoxSizer(wx.VERTICAL)
-        dialog_sizer.Add(panel, 1, wx.EXPAND)
-        self.SetSizer(dialog_sizer)
-
-        self.SetMinSize((700, 520))
-        self.SetSize((740, 560))
-
-        # Eventos
-        self._template_list.Bind(wx.EVT_LISTBOX, self._on_select)
-        btn_add.Bind(wx.EVT_BUTTON, self._on_add)
-        self._btn_delete.Bind(wx.EVT_BUTTON, self._on_delete)
-        self.Bind(wx.EVT_BUTTON, lambda e: self.EndModal(wx.ID_CLOSE), id=wx.ID_CLOSE)
+        self.setMinimumSize(700, 520)
+        self.resize(740, 560)
 
     def _refresh_list(self):
-        """Recarga la lista de plantillas."""
-        self._template_list.Clear()
-        self._detail_list.DeleteAllItems()
-        self._lbl_count.SetLabel("")
-        self._btn_delete.Enable(False)
+        self._template_list.clear()
+        self._detail_table.setRowCount(0)
+        self._lbl_count.setText("")
+        self._btn_delete.setEnabled(False)
 
         predefined = self._catalog.get_predefined_names()
         custom = self._catalog.get_custom_names()
 
         for name in predefined:
-            self._template_list.Append(f"  {name}")
+            self._template_list.addItem(f"  {name}")
         for name in custom:
-            self._template_list.Append(f"* {name}")
+            self._template_list.addItem(f"* {name}")
 
-    def _on_select(self, event):
-        """Muestra las partidas de la plantilla seleccionada."""
-        sel = self._template_list.GetSelection()
-        if sel == wx.NOT_FOUND:
-            self._detail_list.DeleteAllItems()
-            self._lbl_count.SetLabel("")
-            self._btn_delete.Enable(False)
+    def _on_select(self, row):
+        if row < 0:
+            self._detail_table.setRowCount(0)
+            self._lbl_count.setText("")
+            self._btn_delete.setEnabled(False)
             return
 
-        display_name = self._template_list.GetString(sel)
-        # Quitar prefijo "  " o "* "
+        display_name = self._template_list.item(row).text()
         nombre = display_name[2:]
         is_custom = display_name.startswith("* ")
 
-        self._btn_delete.Enable(is_custom)
+        self._btn_delete.setEnabled(is_custom)
 
         plantilla = self._catalog.get_by_name(nombre)
-        self._detail_list.DeleteAllItems()
+        self._detail_table.setRowCount(0)
 
         if not plantilla:
-            self._lbl_count.SetLabel("")
+            self._lbl_count.setText("")
             return
 
         partidas = plantilla.get('partidas_base', [])
+        self._detail_table.setRowCount(len(partidas))
         for i, p in enumerate(partidas):
-            idx = self._detail_list.InsertItem(i, p.get('concepto', ''))
-            self._detail_list.SetItem(idx, 1, p.get('unidad', 'ud'))
+            self._detail_table.setItem(i, 0, QTableWidgetItem(p.get('concepto', '')))
+            self._detail_table.setItem(i, 1, QTableWidgetItem(p.get('unidad', 'ud')))
             precio = p.get('precio_ref', 0)
-            self._detail_list.SetItem(idx, 2, f"{precio:.2f} €")
+            price_item = QTableWidgetItem(f"{precio:.2f} €")
+            price_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            self._detail_table.setItem(i, 2, price_item)
 
-        self._lbl_count.SetLabel(f"{len(partidas)} partidas")
+        self._lbl_count.setText(f"{len(partidas)} partidas")
 
-    def _on_add(self, event):
-        """Abre el flujo para añadir una plantilla desde un Excel."""
-        # Paso 1: Pedir nombre de la plantilla
-        name_dlg = wx.TextEntryDialog(
+    def _on_add(self):
+        nombre, ok = QInputDialog.getText(
             self,
+            "Nueva plantilla personalizada",
             "Nombre para la nueva plantilla:\n\n"
             "Ejemplo: Reforma cocina completa, Sustitución ascensor, etc.",
-            "Nueva plantilla personalizada",
         )
-        if name_dlg.ShowModal() != wx.ID_OK:
-            name_dlg.Destroy()
+        if not ok or not nombre:
             return
-
-        nombre = name_dlg.GetValue().strip()
-        name_dlg.Destroy()
-
+        nombre = nombre.strip()
         if not nombre:
-            wx.MessageBox(
-                "El nombre no puede estar vacío.",
-                "Error", wx.OK | wx.ICON_WARNING,
-            )
+            QMessageBox.warning(self, "Error", "El nombre no puede estar vacío.")
             return
 
-        # Comprobar si ya existe
         existing = self._catalog.get_by_name(nombre)
         if existing and not existing.get('personalizada'):
-            wx.MessageBox(
+            QMessageBox.warning(
+                self, "Nombre duplicado",
                 f"Ya existe una plantilla predefinida con ese nombre:\n'{nombre}'.\n\n"
                 "Elige un nombre diferente.",
-                "Nombre duplicado", wx.OK | wx.ICON_WARNING,
             )
             return
 
         if existing and existing.get('personalizada'):
-            confirm = wx.MessageBox(
+            confirm = QMessageBox.question(
+                self, "Reemplazar plantilla",
                 f"Ya existe una plantilla personalizada con ese nombre:\n'{nombre}'.\n\n"
                 "¿Deseas reemplazarla?",
-                "Reemplazar plantilla",
-                wx.YES_NO | wx.ICON_QUESTION,
             )
-            if confirm != wx.YES:
+            if confirm != QMessageBox.StandardButton.Yes:
                 return
 
-        # Paso 2: Seleccionar archivo Excel
-        file_dlg = wx.FileDialog(
+        excel_path, _ = QFileDialog.getOpenFileName(
             self,
             "Selecciona el presupuesto Excel para importar partidas",
-            wildcard="Archivos Excel (*.xlsx)|*.xlsx",
-            style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST,
+            "", "Archivos Excel (*.xlsx)",
         )
-        if file_dlg.ShowModal() != wx.ID_OK:
-            file_dlg.Destroy()
+        if not excel_path:
             return
 
-        excel_path = file_dlg.GetPath()
-        file_dlg.Destroy()
+        self._btn_delete.setEnabled(False)
 
-        # Paso 3: Extraer partidas en hilo para no bloquear la UI
-        self._btn_delete.Disable()
-
-        def _on_extract_done(ok, payload):
-            self._btn_delete.Enable(True)
-            if not ok or not payload:
-                wx.MessageBox(
+        def _on_extract_done(ok_flag, payload):
+            self._btn_delete.setEnabled(True)
+            if not ok_flag or not payload:
+                QMessageBox.warning(
+                    self, "Sin partidas",
                     f"No se encontraron partidas en el archivo:\n{os.path.basename(excel_path)}\n\n"
                     "Asegúrate de que el Excel tiene partidas con el formato de la plantilla "
                     "(número en col A, unidad en col B, descripción en col C, "
                     "cantidad en col G, precio en col H).",
-                    "Sin partidas", wx.OK | wx.ICON_WARNING,
                 )
                 return
 
@@ -273,12 +245,10 @@ class TemplateManagerDialog(wx.Dialog):
                 resumen += f"  ... y {len(partidas) - 8} más\n"
             resumen += f"\n¿Guardar como plantilla '{nombre}'?"
 
-            confirm = wx.MessageBox(
-                resumen,
-                "Confirmar importación",
-                wx.YES_NO | wx.ICON_QUESTION,
+            confirm = QMessageBox.question(
+                self, "Confirmar importación", resumen,
             )
-            if confirm != wx.YES:
+            if confirm != QMessageBox.StandardButton.Yes:
                 return
 
             plantilla = {
@@ -294,9 +264,9 @@ class TemplateManagerDialog(wx.Dialog):
             }
 
             if self._catalog.add_custom(plantilla):
-                wx.MessageBox(
+                QMessageBox.information(
+                    self, "Plantilla creada",
                     f"Plantilla '{nombre}' guardada con {len(partidas)} partidas.",
-                    "Plantilla creada", wx.OK | wx.ICON_INFORMATION,
                 )
                 self._refresh_list()
 
@@ -304,49 +274,38 @@ class TemplateManagerDialog(wx.Dialog):
                 predefined_count = len(self._catalog.get_predefined_names())
                 if nombre in custom_names:
                     idx = predefined_count + custom_names.index(nombre)
-                    self._template_list.SetSelection(idx)
-                    self._on_select(None)
+                    self._template_list.setCurrentRow(idx)
             else:
-                wx.MessageBox(
-                    "Error al guardar la plantilla.",
-                    "Error", wx.OK | wx.ICON_ERROR,
-                )
+                QMessageBox.critical(self, "Error", "Error al guardar la plantilla.")
 
         run_in_background(lambda: self._extractor.extract(excel_path), _on_extract_done)
 
-    def _on_delete(self, event):
-        """Elimina la plantilla personalizada seleccionada."""
-        sel = self._template_list.GetSelection()
-        if sel == wx.NOT_FOUND:
+    def _on_delete(self):
+        row = self._template_list.currentRow()
+        if row < 0:
             return
 
-        display_name = self._template_list.GetString(sel)
+        display_name = self._template_list.item(row).text()
         if not display_name.startswith("* "):
-            wx.MessageBox(
+            QMessageBox.warning(
+                self, "No permitido",
                 "Solo se pueden eliminar plantillas personalizadas.",
-                "No permitido", wx.OK | wx.ICON_WARNING,
             )
             return
 
         nombre = display_name[2:]
 
-        confirm = wx.MessageBox(
+        confirm = QMessageBox.warning(
+            self, "Confirmar eliminación",
             f"¿Eliminar la plantilla personalizada '{nombre}'?\n\n"
             "Esta acción no se puede deshacer.",
-            "Confirmar eliminación",
-            wx.YES_NO | wx.ICON_WARNING,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
-        if confirm != wx.YES:
+        if confirm != QMessageBox.StandardButton.Yes:
             return
 
         if self._catalog.remove_custom(nombre):
-            wx.MessageBox(
-                f"Plantilla '{nombre}' eliminada.",
-                "Eliminada", wx.OK | wx.ICON_INFORMATION,
-            )
+            QMessageBox.information(self, "Eliminada", f"Plantilla '{nombre}' eliminada.")
             self._refresh_list()
         else:
-            wx.MessageBox(
-                "Error al eliminar la plantilla.",
-                "Error", wx.OK | wx.ICON_ERROR,
-            )
+            QMessageBox.critical(self, "Error", "Error al eliminar la plantilla.")

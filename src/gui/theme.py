@@ -1,95 +1,85 @@
 """
-Tema visual premium para cubiApp (wxPython).
+Tema visual premium para cubiApp (PySide6).
 Diseño moderno, limpio y profesional estilo app de escritorio.
 """
 
-import wx
 import sys
+from pathlib import Path
 
-# === PALETA DE COLORES PREMIUM ===
+from PySide6.QtCore import Qt, QSize
+from PySide6.QtGui import QColor, QFont, QFontDatabase
+from PySide6.QtWidgets import (
+    QApplication, QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget,
+)
 
-# Fondos
-BG_DARK = wx.Colour(15, 23, 42)           # Slate 900 - fondo oscuro
-BG_PRIMARY = wx.Colour(248, 250, 252)      # Slate 50 - fondo principal claro
-BG_SECONDARY = wx.Colour(241, 245, 249)    # Slate 100 - fondo secundario
-BG_CARD = wx.Colour(255, 255, 255)         # Blanco puro
-BG_ELEVATED = wx.Colour(255, 255, 255)     # Para elementos elevados
-BG_HOVER = wx.Colour(236, 240, 245)        # Hover
+# === PALETA DE COLORES (hex strings) ===
 
-# Texto
-TEXT_PRIMARY = wx.Colour(15, 23, 42)       # Slate 900
-TEXT_SECONDARY = wx.Colour(71, 85, 105)    # Slate 600
-TEXT_TERTIARY = wx.Colour(148, 163, 184)   # Slate 400
-TEXT_INVERSE = wx.Colour(248, 250, 252)    # Para fondos oscuros
+BG_DARK = "#0f172a"
+BG_PRIMARY = "#f8fafc"
+BG_SECONDARY = "#f1f5f9"
+BG_CARD = "#ffffff"
+BG_ELEVATED = "#ffffff"
+BG_HOVER = "#ecf0f5"
 
-# Colores de acento - Violet/Indigo moderno
-ACCENT_PRIMARY = wx.Colour(99, 102, 241)   # Indigo 500
-ACCENT_DARK = wx.Colour(79, 70, 229)       # Indigo 600
-ACCENT_LIGHT = wx.Colour(238, 242, 255)    # Indigo 50
-ACCENT_GRADIENT_START = wx.Colour(99, 102, 241)
-ACCENT_GRADIENT_END = wx.Colour(139, 92, 246)  # Violet 500
+TEXT_PRIMARY = "#0f172a"
+TEXT_SECONDARY = "#475569"
+TEXT_TERTIARY = "#94a3b8"
+TEXT_INVERSE = "#f8fafc"
+TEXT_MUTED = TEXT_TERTIARY
 
-# Estados
-SUCCESS = wx.Colour(16, 185, 129)          # Emerald 500
-SUCCESS_BG = wx.Colour(236, 253, 245)      # Emerald 50
-WARNING = wx.Colour(245, 158, 11)          # Amber 500
-WARNING_BG = wx.Colour(255, 251, 235)      # Amber 50
-ERROR = wx.Colour(239, 68, 68)             # Red 500
-ERROR_BG = wx.Colour(254, 242, 242)        # Red 50
+ACCENT_PRIMARY = "#6366f1"
+ACCENT_DARK = "#4f46e5"
+ACCENT_LIGHT = "#eef2ff"
 
-# Bordes
-BORDER_LIGHT = wx.Colour(226, 232, 240)    # Slate 200
-BORDER_DEFAULT = wx.Colour(203, 213, 225)  # Slate 300
-BORDER_FOCUS = ACCENT_PRIMARY
+SUCCESS = "#10b981"
+SUCCESS_BG = "#ecfdf5"
+WARNING = "#f59e0b"
+WARNING_BG = "#fffbeb"
+ERROR = "#ef4444"
+ERROR_BG = "#fef2f2"
 
-# Sombras (simuladas con colores)
-SHADOW_COLOR = wx.Colour(15, 23, 42, 25)   # Slate 900 con transparencia
+BORDER_LIGHT = "#e2e8f0"
+BORDER_DEFAULT = "#cbd5e1"
 
+# === COLORES COMO QColor (para uso programático) ===
+
+def qcolor(hex_str: str) -> QColor:
+    return QColor(hex_str)
 
 # === CONFIGURACIÓN DE FUENTES ===
 
-def get_system_font():
-    """Obtiene la mejor fuente del sistema."""
+def _system_font_family() -> str:
     if sys.platform == "win32":
         return "Segoe UI"
-    elif sys.platform == "darwin":
-        return "Helvetica Neue"  # -apple-system no funciona con wxPython
+    if sys.platform == "darwin":
+        return "Helvetica Neue"
     return "Ubuntu"
 
-FONT_FAMILY = get_system_font()
+FONT_FAMILY = _system_font_family()
 
-def create_font(size=10, weight=wx.FONTWEIGHT_NORMAL):
-    """Crea una fuente con la familia del sistema."""
-    font = wx.Font(size, wx.FONTFAMILY_SWISS, wx.FONTSTYLE_NORMAL, weight)
-    font.SetFaceName(FONT_FAMILY)
-    return font
 
-def font_xs():
-    return create_font(9)
+def create_font(size: int = 10, weight: QFont.Weight = QFont.Weight.Normal) -> QFont:
+    f = QFont(FONT_FAMILY, size)
+    f.setWeight(weight)
+    return f
 
-def font_sm():
-    return create_font(10)
+def font_xs()   : return create_font(9)
+def font_sm()   : return create_font(10)
+def font_base() : return create_font(11)
+def font_lg()   : return create_font(13)
+def font_xl()   : return create_font(16, QFont.Weight.Medium)
+def font_2xl()  : return create_font(20, QFont.Weight.Bold)
+def font_3xl()  : return create_font(26, QFont.Weight.Bold)
+def font_display(): return create_font(32, QFont.Weight.Bold)
 
-def font_base():
-    return create_font(11)
-
-def font_lg():
-    return create_font(13)
-
-def font_xl():
-    return create_font(16, wx.FONTWEIGHT_MEDIUM)
-
-def font_2xl():
-    return create_font(20, wx.FONTWEIGHT_BOLD)
-
-def font_3xl():
-    return create_font(26, wx.FONTWEIGHT_BOLD)
-
-def font_display():
-    return create_font(32, wx.FONTWEIGHT_BOLD)
-
+def get_font_normal(size=11):  return create_font(size)
+def get_font_medium(size=11):  return create_font(size, QFont.Weight.Medium)
+def get_font_bold(size=11):    return create_font(size, QFont.Weight.Bold)
+def get_font_title(size=20):   return create_font(size, QFont.Weight.Bold)
+def get_font_subtitle(size=13):return create_font(size)
 
 # === ESPACIADO ===
+
 SPACE_XS = 4
 SPACE_SM = 8
 SPACE_MD = 12
@@ -98,382 +88,127 @@ SPACE_XL = 24
 SPACE_2XL = 32
 SPACE_3XL = 48
 
-
 # === BORDES REDONDEADOS ===
+
 RADIUS_SM = 4
 RADIUS_MD = 8
 RADIUS_LG = 12
 RADIUS_XL = 16
 
+# === CARGAR HOJA DE ESTILOS ===
 
-# === APLICAR ESTILOS BASE ===
+def load_stylesheet():
+    qss_path = Path(__file__).parent / "styles.qss"
+    if qss_path.exists():
+        qss = qss_path.read_text(encoding="utf-8")
+        QApplication.instance().setStyleSheet(qss)
 
-def style_frame(frame):
-    """Aplica estilo base a un frame."""
-    frame.SetBackgroundColour(BG_PRIMARY)
-    frame.SetFont(font_base())
+# === WIDGET HELPERS ===
 
-def style_panel(panel, elevated=False):
-    """Aplica estilo a un panel."""
-    panel.SetBackgroundColour(BG_ELEVATED if elevated else BG_PRIMARY)
-    panel.SetFont(font_base())
-
-def style_dialog(dialog):
-    """Aplica estilo a un diálogo."""
-    dialog.SetBackgroundColour(BG_PRIMARY)
-    dialog.SetFont(font_base())
-
-
-def fit_dialog(dialog, min_w=400, min_h=300):
-    """Ajusta el diálogo a su contenido sin exceder la pantalla.
-
-    Llamar al final de _build_ui, después de añadir todos los controles.
-    """
-    dialog.Fit()
-    w, h = dialog.GetSize()
-    w = max(w + 20, min_w)
-    h = max(h + 10, min_h)
-
-    idx = wx.Display.GetFromWindow(dialog)
-    if idx < 0:
-        idx = 0
-    screen = wx.Display(idx).GetClientArea()
-    w = min(w, screen.GetWidth() - 40)
-    h = min(h, screen.GetHeight() - 40)
-
-    dialog.SetSize((w, h))
-    dialog.SetMinSize((min(min_w, w), min(min_h, h)))
-    dialog.CenterOnParent()
-
-
-# === BOTONES ===
-
-class ModernButton(wx.Panel):
-    """Botón moderno con efectos hover."""
-    
-    def __init__(self, parent, label, size=(-1, 44), variant="default", on_click=None):
-        super().__init__(parent, size=size)
-        self.label = label
-        self.variant = variant
-        self.on_click = on_click
-        self.hovered = False
-        self.pressed = False
-        
-        self._setup_colors()
-        self.SetBackgroundStyle(wx.BG_STYLE_PAINT)
-        
-        self.Bind(wx.EVT_PAINT, self._on_paint)
-        self.Bind(wx.EVT_ENTER_WINDOW, self._on_enter)
-        self.Bind(wx.EVT_LEAVE_WINDOW, self._on_leave)
-        self.Bind(wx.EVT_LEFT_DOWN, self._on_mouse_down)
-        self.Bind(wx.EVT_LEFT_UP, self._on_mouse_up)
-    
-    def _setup_colors(self):
-        if self.variant == "primary":
-            self.bg_normal = ACCENT_PRIMARY
-            self.bg_hover = ACCENT_DARK
-            self.fg_color = TEXT_INVERSE
-        elif self.variant == "success":
-            self.bg_normal = SUCCESS
-            self.bg_hover = wx.Colour(5, 150, 105)
-            self.fg_color = TEXT_INVERSE
-        elif self.variant == "ghost":
-            self.bg_normal = BG_PRIMARY
-            self.bg_hover = BG_HOVER
-            self.fg_color = ACCENT_PRIMARY
-        else:  # default
-            self.bg_normal = BG_CARD
-            self.bg_hover = BG_HOVER
-            self.fg_color = TEXT_PRIMARY
-    
-    def _on_paint(self, event):
-        dc = wx.AutoBufferedPaintDC(self)
-        gc = wx.GraphicsContext.Create(dc)
-        if not gc:
-            return
-        
-        w, h = self.GetSize()
-        
-        # Color de fondo según estado
-        if self.pressed:
-            bg = self.bg_hover
-        elif self.hovered:
-            bg = self.bg_hover
-        else:
-            bg = self.bg_normal
-        
-        # Dibujar fondo redondeado - sin bordes
-        gc.SetBrush(wx.Brush(bg))
-        gc.SetPen(wx.TRANSPARENT_PEN)
-        
-        path = gc.CreatePath()
-        path.AddRoundedRectangle(0, 0, w, h, RADIUS_MD)
-        gc.DrawPath(path)
-        
-        # Dibujar texto
-        gc.SetFont(font_base(), self.fg_color)
-        tw, th = gc.GetTextExtent(self.label)
-        gc.DrawText(self.label, (w - tw) / 2, (h - th) / 2)
-    
-    def _on_enter(self, event):
-        self.hovered = True
-        self.SetCursor(wx.Cursor(wx.CURSOR_HAND))
-        self.Refresh()
-    
-    def _on_leave(self, event):
-        self.hovered = False
-        self.pressed = False
-        self.Refresh()
-    
-    def _on_mouse_down(self, event):
-        self.pressed = True
-        self.Refresh()
-    
-    def _on_mouse_up(self, event):
-        if self.pressed and self.hovered:
-            if self.on_click:
-                self.on_click()
-        self.pressed = False
-        self.Refresh()
-
-
-def create_button(parent, label, size=(-1, 44), variant="default", on_click=None):
-    """Crea un botón moderno."""
-    return ModernButton(parent, label, size, variant, on_click)
-
-
-# === CARDS ===
-
-class Card(wx.Panel):
-    """Panel tipo tarjeta con sombra sutil."""
-    
-    def __init__(self, parent, padding=SPACE_LG):
-        super().__init__(parent)
-        self.padding = padding
-        self.SetBackgroundStyle(wx.BG_STYLE_PAINT)
-        self.Bind(wx.EVT_PAINT, self._on_paint)
-        
-        # Sizer interno con padding
-        self.inner_sizer = wx.BoxSizer(wx.VERTICAL)
-        outer_sizer = wx.BoxSizer(wx.VERTICAL)
-        outer_sizer.Add(self.inner_sizer, 1, wx.EXPAND | wx.ALL, padding)
-        self.SetSizer(outer_sizer)
-    
-    def _on_paint(self, event):
-        dc = wx.AutoBufferedPaintDC(self)
-        gc = wx.GraphicsContext.Create(dc)
-        if not gc:
-            return
-        
-        w, h = self.GetSize()
-        
-        # Sombra sutil
-        gc.SetBrush(wx.Brush(wx.Colour(0, 0, 0, 8)))
-        gc.SetPen(wx.TRANSPARENT_PEN)
-        path = gc.CreatePath()
-        path.AddRoundedRectangle(2, 3, w-4, h-4, RADIUS_LG)
-        gc.DrawPath(path)
-        
-        # Fondo blanco
-        gc.SetBrush(wx.Brush(BG_CARD))
-        gc.SetPen(wx.Pen(BORDER_LIGHT, 1))
-        path = gc.CreatePath()
-        path.AddRoundedRectangle(0, 0, w-1, h-2, RADIUS_LG)
-        gc.DrawPath(path)
-    
-    def GetInnerSizer(self):
-        return self.inner_sizer
-
-
-# === TEXTOS ===
-
-def create_title(parent, text, size="2xl"):
-    """Crea un título estilizado."""
-    label = wx.StaticText(parent, label=text)
-    if size == "display":
-        label.SetFont(font_display())
-    elif size == "3xl":
-        label.SetFont(font_3xl())
-    elif size == "2xl":
-        label.SetFont(font_2xl())
-    elif size == "xl":
-        label.SetFont(font_xl())
-    else:
-        label.SetFont(font_lg())
-    label.SetForegroundColour(TEXT_PRIMARY)
+def create_title(parent: QWidget, text: str, size: str = "2xl") -> QLabel:
+    label = QLabel(text, parent)
+    fonts = {
+        "display": font_display, "3xl": font_3xl, "2xl": font_2xl,
+        "xl": font_xl, "lg": font_lg,
+    }
+    label.setFont(fonts.get(size, font_lg)())
+    label.setStyleSheet(f"color: {TEXT_PRIMARY}; background: transparent;")
     return label
 
-def create_subtitle(parent, text):
-    """Crea un subtítulo."""
-    label = wx.StaticText(parent, label=text)
-    label.SetFont(font_lg())
-    label.SetForegroundColour(TEXT_SECONDARY)
+def create_subtitle(parent: QWidget, text: str) -> QLabel:
+    label = QLabel(text, parent)
+    label.setFont(font_lg())
+    label.setStyleSheet(f"color: {TEXT_SECONDARY}; background: transparent;")
     return label
 
-def create_text(parent, text, muted=False):
-    """Crea texto normal."""
-    label = wx.StaticText(parent, label=text)
-    label.SetFont(font_base())
-    label.SetForegroundColour(TEXT_TERTIARY if muted else TEXT_SECONDARY)
+def create_text(parent: QWidget, text: str, muted: bool = False) -> QLabel:
+    label = QLabel(text, parent)
+    label.setFont(font_base())
+    color = TEXT_TERTIARY if muted else TEXT_SECONDARY
+    label.setStyleSheet(f"color: {color}; background: transparent;")
     return label
 
-def create_caption(parent, text):
-    """Crea texto pequeño."""
-    label = wx.StaticText(parent, label=text)
-    label.SetFont(font_sm())
-    label.SetForegroundColour(TEXT_TERTIARY)
+def create_form_label(parent: QWidget, text: str) -> QLabel:
+    label = QLabel(text, parent)
+    label.setFont(create_font(10, QFont.Weight.Medium))
+    label.setStyleSheet(f"color: {TEXT_PRIMARY}; background: transparent;")
     return label
 
+def create_caption(parent: QWidget, text: str) -> QLabel:
+    label = QLabel(text, parent)
+    label.setFont(font_sm())
+    label.setStyleSheet(f"color: {TEXT_TERTIARY}; background: transparent;")
+    return label
 
-# === LISTAS ===
-
-def style_listctrl(listctrl):
-    """Aplica estilo a un ListCtrl."""
-    listctrl.SetBackgroundColour(BG_CARD)
-    listctrl.SetForegroundColour(TEXT_PRIMARY)
-    listctrl.SetFont(font_base())
-
-
-# === INPUTS ===
-
-def style_textctrl(textctrl):
-    """Aplica estilo a un TextCtrl."""
-    textctrl.SetBackgroundColour(BG_CARD)
-    textctrl.SetForegroundColour(TEXT_PRIMARY)
-    textctrl.SetFont(font_base())
-
-
-def create_input(parent, value="", size=(-1, 28)):
-    """Crea un TextCtrl con estilo moderno (borde plano, fondo blanco)."""
-    tc = wx.TextCtrl(parent, value=value, size=size, style=wx.BORDER_SIMPLE)
-    tc.SetBackgroundColour(BG_CARD)
-    tc.SetForegroundColour(TEXT_PRIMARY)
-    tc.SetFont(font_base())
-    return tc
-
-
-# === SEPARADORES ===
-
-def create_divider(parent, vertical=False):
-    """Crea un separador."""
-    style = wx.LI_VERTICAL if vertical else wx.LI_HORIZONTAL
-    line = wx.StaticLine(parent, style=style)
+def create_divider(parent: QWidget) -> QFrame:
+    line = QFrame(parent)
+    line.setProperty("class", "divider")
+    line.setFrameShape(QFrame.Shape.HLine)
+    line.setFixedHeight(1)
     return line
 
+def create_input(parent: QWidget, value: str = "") -> "QLineEdit":
+    from PySide6.QtWidgets import QLineEdit
+    le = QLineEdit(value, parent)
+    le.setFont(font_base())
+    le.setMinimumHeight(28)
+    return le
 
-# === BADGES ===
 
-class Badge(wx.Panel):
-    """Badge/etiqueta pequeña."""
-    
-    def __init__(self, parent, text, variant="default"):
+class Card(QFrame):
+    """Panel tipo tarjeta con estilo moderno via QSS."""
+
+    def __init__(self, parent: QWidget = None, padding: int = SPACE_LG):
         super().__init__(parent)
-        self.text = text
-        self.variant = variant
-        self.SetBackgroundStyle(wx.BG_STYLE_PAINT)
-        self.Bind(wx.EVT_PAINT, self._on_paint)
-        
-        # Calcular tamaño
-        dc = wx.ClientDC(self)
-        dc.SetFont(font_xs())
-        tw, th = dc.GetTextExtent(text)
-        self.SetMinSize((tw + 16, th + 8))
-    
-    def _on_paint(self, event):
-        dc = wx.AutoBufferedPaintDC(self)
-        gc = wx.GraphicsContext.Create(dc)
-        if not gc:
-            return
-        
-        w, h = self.GetSize()
-        
-        # Colores según variante
-        if self.variant == "success":
-            bg, fg = SUCCESS_BG, SUCCESS
-        elif self.variant == "warning":
-            bg, fg = WARNING_BG, WARNING
-        elif self.variant == "error":
-            bg, fg = ERROR_BG, ERROR
-        elif self.variant == "primary":
-            bg, fg = ACCENT_LIGHT, ACCENT_PRIMARY
-        else:
-            bg, fg = BG_SECONDARY, TEXT_SECONDARY
-        
-        # Fondo
-        gc.SetBrush(wx.Brush(bg))
-        gc.SetPen(wx.TRANSPARENT_PEN)
-        path = gc.CreatePath()
-        path.AddRoundedRectangle(0, 0, w, h, h/2)
-        gc.DrawPath(path)
-        
-        # Texto
-        gc.SetFont(font_xs(), fg)
-        tw, th = gc.GetTextExtent(self.text)
-        gc.DrawText(self.text, (w - tw) / 2, (h - th) / 2)
+        self.setProperty("class", "card")
+        self._inner_layout = QVBoxLayout()
+        self._inner_layout.setContentsMargins(padding, padding, padding, padding)
+        self._inner_layout.setSpacing(SPACE_XS)
+        self.setLayout(self._inner_layout)
+
+    def get_inner_layout(self) -> QVBoxLayout:
+        return self._inner_layout
 
 
-# === NOTEBOOK/TABS ===
+# === APLICAR ESTILOS (compat con código antiguo que llama style_*) ===
 
-def style_notebook(notebook):
-    """Aplica estilo a un Notebook."""
-    notebook.SetBackgroundColour(BG_SECONDARY)
-    notebook.SetForegroundColour(TEXT_PRIMARY)
-    notebook.SetFont(font_base())
+def style_frame(frame):  pass
+def style_panel(panel, elevated=False): pass
+def style_dialog(dialog): pass
+def style_listctrl(listctrl): pass
+def style_textctrl(textctrl): pass
+def style_notebook(notebook): pass
+def style_button_primary(btn):
+    btn.setProperty("class", "primary")
+    btn.setFont(get_font_medium())
+    btn.style().unpolish(btn)
+    btn.style().polish(btn)
 
-
-# === TOOLBAR ===
-
-def create_toolbar_panel(parent):
-    """Crea un panel de toolbar."""
-    toolbar = wx.Panel(parent)
-    toolbar.SetBackgroundColour(BG_SECONDARY)
-    return toolbar
-
-
-# === HELPERS / COMPATIBILIDAD ===
-
-def get_font_normal(size=11):
-    """Compatibilidad con código antiguo."""
-    return create_font(size)
-
-def get_font_medium(size=11):
-    """Compatibilidad con código antiguo."""
-    return create_font(size, wx.FONTWEIGHT_MEDIUM)
-
-def get_font_bold(size=11):
-    """Compatibilidad con código antiguo."""
-    return create_font(size, wx.FONTWEIGHT_BOLD)
-
-def get_font_title(size=20):
-    """Compatibilidad con código antiguo."""
-    return create_font(size, wx.FONTWEIGHT_BOLD)
-
-def get_font_subtitle(size=13):
-    """Compatibilidad con código antiguo."""
-    return create_font(size)
-
-# Funciones de compatibilidad para código antiguo
-def apply_theme_to_frame(frame):
-    """Alias para style_frame."""
-    style_frame(frame)
-
-def apply_theme_to_panel(panel):
-    """Alias para style_panel."""
-    style_panel(panel)
-
-def apply_theme_to_dialog(dialog):
-    """Alias para style_dialog."""
-    style_dialog(dialog)
-
+def apply_theme_to_frame(frame): pass
+def apply_theme_to_panel(panel): pass
+def apply_theme_to_dialog(dialog): pass
 def create_styled_title(parent, text):
-    """Alias para create_title con tamaño xl."""
     return create_title(parent, text, "xl")
 
-def style_button_primary(btn):
-    """Estiliza un botón como primario."""
-    btn.SetBackgroundColour(ACCENT_PRIMARY)
-    btn.SetForegroundColour(TEXT_INVERSE)
-    btn.SetFont(get_font_medium())
+def create_toolbar_panel(parent):
+    w = QWidget(parent)
+    w.setProperty("class", "toolbar")
+    return w
 
-# Color de texto para compatibilidad
-TEXT_MUTED = TEXT_TERTIARY
+def fit_dialog(dialog, min_w=400, min_h=300):
+    dialog.adjustSize()
+    w = max(dialog.width() + 20, min_w)
+    h = max(dialog.height() + 10, min_h)
+    screen = QApplication.primaryScreen()
+    if screen:
+        avail = screen.availableGeometry()
+        w = min(w, avail.width() - 40)
+        h = min(h, avail.height() - 40)
+    dialog.resize(w, h)
+    dialog.setMinimumSize(min(min_w, w), min(min_h, h))
+    if dialog.parentWidget():
+        parent_geo = dialog.parentWidget().geometry()
+        dialog.move(
+            parent_geo.x() + (parent_geo.width() - w) // 2,
+            parent_geo.y() + (parent_geo.height() - h) // 2,
+        )
