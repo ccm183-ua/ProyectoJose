@@ -7,18 +7,13 @@ import subprocess
 import sys
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
-    QFileDialog, QHBoxLayout, QInputDialog, QMainWindow, QMessageBox,
+    QFileDialog, QInputDialog, QMainWindow, QMessageBox,
     QPushButton, QVBoxLayout, QWidget,
 )
 
-from src.core.excel_manager import ExcelManager
-from src.core.file_manager import FileManager
-from src.core.template_manager import TemplateManager
 from src.core import database as db_module
-from src.core import db_repository
-from src.utils.helpers import sanitize_filename
+from src.core.services import BudgetService, DatabaseService
 from src.gui import theme
 
 
@@ -27,9 +22,8 @@ class MainFrame(QMainWindow):
         super().__init__(parent)
         self.setWindowTitle(title)
         self.resize(520, 520)
-        self.excel_manager = ExcelManager()
-        self.file_manager = FileManager()
-        self.template_manager = TemplateManager()
+        self._budget_svc = BudgetService()
+        self._db_svc = DatabaseService()
         self._db_frame = None
         self._dashboard_frame = None
         self._build_ui()
@@ -141,7 +135,7 @@ class MainFrame(QMainWindow):
 
     def _open_db_manager(self):
         try:
-            from src.gui.db_manager_wx import DBManagerFrame
+            from src.gui.db_manager import DBManagerFrame
             if self._db_frame is not None:
                 try:
                     if self._db_frame.isVisible():
@@ -160,7 +154,7 @@ class MainFrame(QMainWindow):
 
     def _open_dashboard(self, refresh=False):
         try:
-            from src.gui.budget_dashboard_wx import BudgetDashboardFrame
+            from src.gui.budget_dashboard import BudgetDashboardFrame
             if self._dashboard_frame is not None:
                 try:
                     if self._dashboard_frame.isVisible():
@@ -208,14 +202,7 @@ class MainFrame(QMainWindow):
         if not path:
             return
         try:
-            budget = self.excel_manager.load_budget(path)
-            if budget:
-                budget.close()
-                db_repository.registrar_presupuesto({
-                    "nombre_proyecto": os.path.splitext(os.path.basename(path))[0],
-                    "ruta_excel": path,
-                    "ruta_carpeta": os.path.dirname(path),
-                })
+            if self._budget_svc.open_budget(path):
                 QMessageBox.information(self, "Éxito", f"Presupuesto abierto: {os.path.basename(path)}")
             else:
                 QMessageBox.critical(self, "Error", "No se pudo abrir el archivo Excel.")
@@ -228,28 +215,18 @@ class MainFrame(QMainWindow):
             return
 
         from src.core.settings import Settings
+        from src.utils.helpers import sanitize_filename
         save_default_dir = Settings().get_default_path(Settings.PATH_SAVE_BUDGETS) or ""
         save_path, _ = QFileDialog.getSaveFileName(
-            self, "Guardar Presupuesto", os.path.join(save_default_dir, f"{sanitize_filename(project_name)}.xlsx"),
+            self, "Guardar Presupuesto",
+            os.path.join(save_default_dir, f"{sanitize_filename(project_name)}.xlsx"),
             "Excel (*.xlsx);;Todos (*.*)",
         )
         if not save_path:
             return
 
-        subfolders = ["FOTOS", "PLANOS", "PROYECTO", "MEDICIONES", "PRESUPUESTOS"]
-        folder_name = sanitize_filename(project_name)
+        template_path = self._budget_svc.get_template_path()
         save_dir = os.path.dirname(save_path)
-        folder_path = os.path.join(save_dir, folder_name)
-        if not self.file_manager.create_folder(folder_path):
-            QMessageBox.critical(self, "Error", "No se pudo crear la carpeta.")
-            return
-        self.file_manager.create_subfolders(folder_path, subfolders)
-        save_path = os.path.join(folder_path, f"{folder_name}.xlsx")
-
-        template_path = self.template_manager.get_template_path()
-        if not os.path.exists(template_path):
-            QMessageBox.critical(self, "Error", "No se encontró la plantilla.")
-            return
 
         partes_dir = [
             p for p in [
@@ -264,96 +241,69 @@ class MainFrame(QMainWindow):
         comunidad_data = self._buscar_comunidad_para_presupuesto(
             project_data.get("cliente", ""), direccion=direccion_proyecto,
         )
+        admin_data = self._db_svc.get_admin_para_comunidad(comunidad_data)
 
-        admin_data = None
-        if comunidad_data and comunidad_data.get("administracion_id"):
-            admin_data = db_repository.get_administracion_por_id(
-                comunidad_data["administracion_id"],
-            )
-
-        excel_data = {
-            "nombre_obra": project_name,
-            "direccion": project_data.get("calle", ""),
-            "numero": project_data.get("num_calle", ""),
-            "codigo_postal": project_data.get("codigo_postal", ""),
-            "descripcion": project_data.get("tipo", ""),
-            "numero_proyecto": project_data.get("numero", ""),
-            "fecha": project_data.get("fecha", ""),
-            "cliente": project_data.get("cliente", ""),
-            "mediacion": project_data.get("mediacion", ""),
-            "calle": project_data.get("calle", ""),
-            "num_calle": project_data.get("num_calle", ""),
-            "localidad": project_data.get("localidad", ""),
-            "tipo": project_data.get("tipo", ""),
-            "admin_cif": comunidad_data.get("cif", "") if comunidad_data else "",
-            "admin_email": admin_data.get("email", "") if admin_data else "",
-            "admin_telefono": admin_data.get("telefono", "") if admin_data else "",
-        }
-        if not self.excel_manager.create_from_template(template_path, save_path, excel_data):
-            QMessageBox.critical(self, "Error", "Error al crear el presupuesto.")
+        result = self._budget_svc.create_budget(
+            project_data, project_name, save_dir, template_path,
+            comunidad_data=comunidad_data, admin_data=admin_data,
+        )
+        if not result.success:
+            QMessageBox.critical(self, "Error", result.error)
             return
 
-        db_repository.registrar_presupuesto({
-            "nombre_proyecto": project_name,
-            "ruta_excel": save_path,
-            "ruta_carpeta": folder_path,
-            "cliente": project_data.get("cliente", ""),
-            "localidad": project_data.get("localidad", ""),
-            "tipo_obra": project_data.get("tipo", ""),
-            "numero_proyecto": project_data.get("numero", ""),
-        })
-
-        self._offer_ai_partidas(save_path, project_data)
+        self._offer_ai_partidas(result.excel_path, project_data)
         self._open_dashboard(refresh=True)
 
     def _obtain_project_data(self):
-        from src.gui.dialogs_wx import obtain_project_data
+        from src.gui.dialogs import obtain_project_data
         return obtain_project_data(self)
 
     def _open_default_paths(self):
-        from src.gui.dialogs_wx import DefaultPathsDialog
+        from src.gui.dialogs import DefaultPathsDialog
         dlg = DefaultPathsDialog(self)
         dlg.exec()
 
     def _buscar_comunidad_para_presupuesto(self, nombre_cliente: str, direccion: str = "") -> dict | None:
-        from src.gui.dialogs_wx import (
+        from src.gui.dialogs import (
             ComunidadConfirmDialog, ComunidadFuzzySelectDialog,
             crear_comunidad_con_formulario,
         )
 
-        if not nombre_cliente or not nombre_cliente.strip():
-            return None
+        exacta, fuzzy = self._db_svc.buscar_comunidad(nombre_cliente)
 
-        nombre = nombre_cliente.strip()
-
-        comunidad = db_repository.buscar_comunidad_por_nombre(nombre)
-        if comunidad:
-            dlg = ComunidadConfirmDialog(self, comunidad, nombre)
+        if exacta:
+            dlg = ComunidadConfirmDialog(self, exacta, nombre_cliente.strip())
             if dlg.exec() == QMessageBox.DialogCode.Accepted.value:
                 return dlg.get_comunidad_data()
             return None
 
-        fuzzy = db_repository.buscar_comunidades_fuzzy(nombre)
         if fuzzy:
-            dlg = ComunidadFuzzySelectDialog(self, fuzzy, nombre, direccion_prefill=direccion)
+            dlg = ComunidadFuzzySelectDialog(
+                self, fuzzy, nombre_cliente.strip(), direccion_prefill=direccion,
+            )
             if dlg.exec() == QMessageBox.DialogCode.Accepted.value:
                 return dlg.get_comunidad_data()
+            return None
+
+        if not nombre_cliente or not nombre_cliente.strip():
             return None
 
         resp = QMessageBox.question(
             self,
             "Comunidad no encontrada",
-            f'No se encontró ninguna comunidad con el nombre "{nombre}".\n\n'
+            f'No se encontró ninguna comunidad con el nombre "{nombre_cliente.strip()}".\n\n'
             "¿Desea añadir una nueva comunidad a la base de datos?",
         )
         if resp == QMessageBox.StandardButton.Yes:
-            return crear_comunidad_con_formulario(self, nombre_prefill=nombre, direccion_prefill=direccion)
+            return crear_comunidad_con_formulario(
+                self, nombre_prefill=nombre_cliente.strip(), direccion_prefill=direccion,
+            )
 
         return None
 
     def _offer_ai_partidas(self, excel_path, project_data):
-        from src.gui.ai_budget_dialog_wx import AIBudgetDialog
-        from src.gui.partidas_dialog_wx import SuggestedPartidasDialog
+        from src.gui.ai_budget_dialog import AIBudgetDialog
+        from src.gui.partidas_dialog import SuggestedPartidasDialog
 
         ai_dlg = AIBudgetDialog(self, datos_proyecto=project_data)
         if ai_dlg.exec() != 1:
@@ -383,16 +333,7 @@ class MainFrame(QMainWindow):
         selected = partidas_dlg.get_selected_partidas()
 
         if selected:
-            if self.excel_manager.insert_partidas_via_xml(excel_path, selected):
-                db_repository.registrar_presupuesto({
-                    "nombre_proyecto": project_data.get("nombre_obra", os.path.basename(excel_path)),
-                    "ruta_excel": excel_path,
-                    "usa_partidas_ia": True,
-                })
-                from src.core.budget_reader import BudgetReader
-                data = BudgetReader().read(excel_path)
-                if data:
-                    db_repository.actualizar_total(excel_path, data["total"])
+            if self._budget_svc.insert_partidas(excel_path, selected, project_data):
                 QMessageBox.information(
                     self, "Éxito",
                     f"Presupuesto creado con {len(selected)} partidas:\n{excel_path}",

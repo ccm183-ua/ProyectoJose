@@ -14,7 +14,9 @@ import os
 import sqlite3
 import subprocess
 import sys
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterator
 
 
 def get_db_path() -> Path:
@@ -71,6 +73,22 @@ def connect(read_only: bool = False) -> sqlite3.Connection:
         init_schema(conn)
 
     return conn
+
+
+@contextmanager
+def get_connection(read_only: bool = False) -> Iterator[sqlite3.Connection]:
+    """Context manager que abre y cierra automáticamente la conexión SQLite.
+
+    Uso::
+
+        with get_connection() as conn:
+            conn.execute("SELECT ...")
+    """
+    conn = connect(read_only=read_only)
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 def _migrate_administracion_nombre(conn: sqlite3.Connection) -> None:

@@ -369,7 +369,7 @@ main()
                 pythoncom.CoInitialize()
                 com_initialized = True
             except Exception:
-                pass
+                logger.debug("No se pudo inicializar COM (pythoncom)")
 
             import win32com.client
             excel = win32com.client.Dispatch("Excel.Application")
@@ -390,16 +390,16 @@ main()
                 try:
                     wb.Close(SaveChanges=False)
                 except Exception:
-                    pass
+                    logger.debug("Error al cerrar workbook COM")
             if excel:
                 try:
                     excel.Quit()
                 except Exception:
-                    pass
+                    logger.debug("Error al cerrar Excel COM")
             if com_initialized:
                 try:
                     import pythoncom as _pc
                     _pc.CoUninitialize()
                 except Exception:
-                    pass
+                    logger.debug("Error al liberar COM")
 

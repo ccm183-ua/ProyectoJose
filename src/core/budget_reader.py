@@ -20,6 +20,12 @@ import re
 import zipfile
 from typing import Dict, List, Optional
 
+from src.core.xlsx_cell_utils import (
+    extract_rows,
+    get_cell_number,
+    get_cell_value,
+    read_shared_strings_from_bytes,
+)
 from src.utils.budget_utils import normalize_project_num
 from src.utils.spanish_number_parser import extract_total_from_asciende
 
@@ -199,79 +205,20 @@ class BudgetReader:
 
     @staticmethod
     def _read_shared_strings(file_bytes: bytes) -> List[str]:
-        try:
-            with zipfile.ZipFile(io.BytesIO(file_bytes), "r") as z:
-                ss_path = "xl/sharedStrings.xml"
-                if ss_path not in z.namelist():
-                    return []
-                ss_xml = z.read(ss_path).decode("utf-8")
-                strings = []
-                for si_match in re.finditer(r'<si>(.*?)</si>', ss_xml, re.DOTALL):
-                    texts = re.findall(r'<t[^>]*>([^<]*)</t>', si_match.group(1))
-                    strings.append(''.join(texts))
-                return strings
-        except (zipfile.BadZipFile, IOError, OSError):
-            return []
+        return read_shared_strings_from_bytes(file_bytes)
 
-    def _extract_rows(self, sheet_xml: str) -> Dict[int, Dict]:
+    @staticmethod
+    def _extract_rows(sheet_xml: str) -> Dict[int, Dict]:
         """Extrae filas como {row_num: {col: cell_info}}."""
-        rows = {}
-        for row_match in re.finditer(
-            r'<row r="(\d+)"[^>]*?(?:/>|>(.*?)</row>)', sheet_xml, re.DOTALL
-        ):
-            row_num = int(row_match.group(1))
-            row_content = row_match.group(2)
-            if not row_content:
-                continue
-            cells = {}
-            for cell_match in re.finditer(
-                r'<c r="([A-Z]+)\d+"([^>]*?)(?:/>|>(.*?)</c>)',
-                row_content, re.DOTALL,
-            ):
-                col = cell_match.group(1)
-                cells[col] = {
-                    "attrs": cell_match.group(2),
-                    "inner": cell_match.group(3) or "",
-                }
-            if cells:
-                rows[row_num] = cells
-        return rows
+        return extract_rows(sheet_xml)
 
-    def _get_cell_value(self, cell_info: Dict, shared_strings: List[str]) -> str:
-        attrs = cell_info.get("attrs", "")
-        inner = cell_info.get("inner", "")
+    @staticmethod
+    def _get_cell_value(cell_info: Dict, shared_strings: List[str]) -> str:
+        return get_cell_value(cell_info, shared_strings)
 
-        # Rich text: concatenate all <t> inside <r> runs within <is>
-        is_match = re.search(r'<is>(.*?)</is>', inner, re.DOTALL)
-        if is_match:
-            is_content = is_match.group(1)
-            texts = re.findall(r'<t[^>]*>([^<]*)</t>', is_content)
-            if texts:
-                return ' '.join(t.strip() for t in texts if t.strip())
-
-        # Shared string
-        if 't="s"' in attrs:
-            v_match = re.search(r'<v>(\d+)</v>', inner)
-            if v_match:
-                idx = int(v_match.group(1))
-                if 0 <= idx < len(shared_strings):
-                    return shared_strings[idx].strip()
-
-        # Direct value
-        v_match = re.search(r'<v>([^<]+)</v>', inner)
-        if v_match:
-            return v_match.group(1).strip()
-
-        return ""
-
-    def _get_cell_number(self, cell_info: Dict, shared_strings: List[str]) -> Optional[float]:
-        value = self._get_cell_value(cell_info, shared_strings)
-        if not value:
-            return None
-        try:
-            return float(value)
-        except (ValueError, TypeError):
-            return None
+    @staticmethod
+    def _get_cell_number(cell_info: Dict, shared_strings: List[str]) -> Optional[float]:
+        return get_cell_number(cell_info, shared_strings)
 
     def _extract_header(self, rows: Dict[int, Dict], shared_strings: List[str]) -> Dict:
         """Extrae los datos de cabecera de las celdas conocidas."""

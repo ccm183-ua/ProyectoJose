@@ -903,7 +903,7 @@ class BudgetDashboardFrame(QMainWindow):
         if not os.path.exists(ruta):
             QMessageBox.warning(self, "Error", f"El archivo ya no existe:\n{ruta}")
             return
-        from src.gui.budget_preview_dialog_wx import BudgetPreviewDialog
+        from src.gui.budget_preview_dialog import BudgetPreviewDialog
         dlg = BudgetPreviewDialog(self, ruta)
         dlg.show()
 
@@ -1006,9 +1006,9 @@ class BudgetDashboardFrame(QMainWindow):
         if confirm != QMessageBox.StandardButton.Yes:
             return
 
-        from src.gui.ai_budget_dialog_wx import AIBudgetDialog
-        from src.gui.partidas_dialog_wx import SuggestedPartidasDialog
-        from src.core.excel_manager import ExcelManager
+        from src.gui.ai_budget_dialog import AIBudgetDialog
+        from src.gui.partidas_dialog import SuggestedPartidasDialog
+        from src.core.services import BudgetService
 
         ai_dlg = AIBudgetDialog(self)
         if ai_dlg.exec() != 1:
@@ -1025,8 +1025,8 @@ class BudgetDashboardFrame(QMainWindow):
         if not selected_partidas:
             return
 
-        em = ExcelManager()
-        if em.insert_partidas_via_xml(ruta, selected_partidas):
+        svc = BudgetService()
+        if svc.insert_partidas(ruta, selected_partidas):
             QMessageBox.information(
                 self, "\u00c9xito", f"Partidas regeneradas ({len(selected_partidas)})."
             )
@@ -1035,13 +1035,12 @@ class BudgetDashboardFrame(QMainWindow):
             QMessageBox.critical(self, "Error", "Error al insertar partidas.")
 
     def _edit_add_partidas(self, ruta):
-        from src.core.budget_reader import BudgetReader
-        from src.gui.ai_budget_dialog_wx import AIBudgetDialog
-        from src.gui.partidas_dialog_wx import SuggestedPartidasDialog
-        from src.core.excel_manager import ExcelManager
+        from src.gui.ai_budget_dialog import AIBudgetDialog
+        from src.gui.partidas_dialog import SuggestedPartidasDialog
+        from src.core.services import BudgetService
 
-        reader = BudgetReader()
-        existing = reader.read(ruta)
+        svc = BudgetService()
+        existing = svc.read_budget(ruta)
         existing_partidas = existing["partidas"] if existing else []
 
         context = ""
@@ -1069,8 +1068,7 @@ class BudgetDashboardFrame(QMainWindow):
         if not selected_partidas:
             return
 
-        em = ExcelManager()
-        if em.append_partidas_via_xml(ruta, selected_partidas):
+        if svc.append_partidas(ruta, selected_partidas):
             QMessageBox.information(
                 self, "\u00c9xito",
                 f"{len(selected_partidas)} partidas a\u00f1adidas."
@@ -1089,7 +1087,7 @@ class BudgetDashboardFrame(QMainWindow):
         if confirm != QMessageBox.StandardButton.Yes:
             return
 
-        from src.core.excel_manager import ExcelManager
+        from src.core.services import BudgetService, DatabaseService
 
         project_data, project_name = self._obtain_project_data(
             preselect_numero=numero_proyecto
@@ -1112,12 +1110,8 @@ class BudgetDashboardFrame(QMainWindow):
                 project_data.get("cliente", ""), direccion=direccion_proyecto,
             )
 
-        from src.core import db_repository
-        admin_data = None
-        if comunidad_data and comunidad_data.get("administracion_id"):
-            admin_data = db_repository.get_administracion_por_id(
-                comunidad_data["administracion_id"],
-            )
+        db_svc = DatabaseService()
+        admin_data = db_svc.get_admin_para_comunidad(comunidad_data)
 
         excel_data = {
             "nombre_obra": project_name or "",
@@ -1133,15 +1127,15 @@ class BudgetDashboardFrame(QMainWindow):
             "admin_telefono": admin_data.get("telefono", "") if admin_data else "",
         }
 
-        em = ExcelManager()
-        if em.update_header_fields(ruta, excel_data):
+        svc = BudgetService()
+        if svc.update_header_fields(ruta, excel_data):
             QMessageBox.information(self, "\u00c9xito", "Campos actualizados.")
             self._load_data()
         else:
             QMessageBox.critical(self, "Error", "Error al actualizar campos.")
 
     def _obtain_project_data(self, preselect_numero=""):
-        from src.gui.dialogs_wx import obtain_project_data
+        from src.gui.dialogs import obtain_project_data
         return obtain_project_data(self, preselect_numero=preselect_numero)
 
     # ------------------------------------------------------------------

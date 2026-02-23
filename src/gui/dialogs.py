@@ -23,7 +23,7 @@ from src.gui import theme
 # ---------------------------------------------------------------------------
 
 def crear_comunidad_con_formulario(parent, nombre_prefill: str = "", direccion_prefill: str = "") -> dict | None:
-    from src.gui.db_manager_wx import ComunidadFormDialog
+    from src.gui.comunidad_form_dialog import ComunidadFormDialog
 
     initial = {}
     if nombre_prefill:
