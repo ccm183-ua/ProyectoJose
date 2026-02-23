@@ -158,12 +158,14 @@ class MainFrame(QMainWindow):
         except Exception as ex:
             QMessageBox.critical(self, "Error", f"Error al abrir la base de datos: {ex}")
 
-    def _open_dashboard(self):
+    def _open_dashboard(self, refresh=False):
         try:
             from src.gui.budget_dashboard_wx import BudgetDashboardFrame
             if self._dashboard_frame is not None:
                 try:
                     if self._dashboard_frame.isVisible():
+                        if refresh:
+                            self._dashboard_frame._load_data()
                         self._dashboard_frame.raise_()
                         self._dashboard_frame.activateWindow()
                         return
@@ -263,6 +265,12 @@ class MainFrame(QMainWindow):
             project_data.get("cliente", ""), direccion=direccion_proyecto,
         )
 
+        admin_data = None
+        if comunidad_data and comunidad_data.get("administracion_id"):
+            admin_data = db_repository.get_administracion_por_id(
+                comunidad_data["administracion_id"],
+            )
+
         excel_data = {
             "nombre_obra": project_name,
             "direccion": project_data.get("calle", ""),
@@ -278,8 +286,8 @@ class MainFrame(QMainWindow):
             "localidad": project_data.get("localidad", ""),
             "tipo": project_data.get("tipo", ""),
             "admin_cif": comunidad_data.get("cif", "") if comunidad_data else "",
-            "admin_email": comunidad_data.get("email", "") if comunidad_data else "",
-            "admin_telefono": comunidad_data.get("telefono", "") if comunidad_data else "",
+            "admin_email": admin_data.get("email", "") if admin_data else "",
+            "admin_telefono": admin_data.get("telefono", "") if admin_data else "",
         }
         if not self.excel_manager.create_from_template(template_path, save_path, excel_data):
             QMessageBox.critical(self, "Error", "Error al crear el presupuesto.")
@@ -296,6 +304,7 @@ class MainFrame(QMainWindow):
         })
 
         self._offer_ai_partidas(save_path, project_data)
+        self._open_dashboard(refresh=True)
 
     def _obtain_project_data(self):
         from src.gui.dialogs_wx import obtain_project_data

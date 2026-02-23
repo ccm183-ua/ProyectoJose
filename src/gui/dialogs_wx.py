@@ -472,6 +472,18 @@ def obtain_project_data(parent, preselect_numero: str = "") -> tuple:
 # Selector de presupuesto desde Excel de relación
 # ---------------------------------------------------------------------------
 
+
+class _NumericItem(QTableWidgetItem):
+    """QTableWidgetItem que ordena por valor numérico almacenado en UserRole."""
+
+    def __lt__(self, other):
+        a = self.data(Qt.ItemDataRole.UserRole)
+        b = other.data(Qt.ItemDataRole.UserRole) if other else None
+        if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+            return a < b
+        return super().__lt__(other)
+
+
 class BudgetSelectorDialog(QDialog):
     """Muestra los presupuestos leídos del Excel de relación y permite elegir uno."""
 
@@ -521,6 +533,7 @@ class BudgetSelectorDialog(QDialog):
         for i, (_, w) in enumerate(cols):
             self._table.setColumnWidth(i, w)
         self._table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self._table.setSortingEnabled(True)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -560,22 +573,34 @@ class BudgetSelectorDialog(QDialog):
         theme.fit_dialog(self, 920, 520)
 
     def _populate_table(self, items: list):
+        self._table.setSortingEnabled(False)
         self._table.setRowCount(len(items))
-        select_row = -1
+        select_numero = self._preselect_numero
         for i, b in enumerate(items):
-            self._table.setItem(i, 0, QTableWidgetItem(str(b.get("numero", ""))))
+            numero_str = str(b.get("numero", ""))
+            num_item = _NumericItem()
+            num_item.setText(numero_str)
+            try:
+                num_item.setData(Qt.ItemDataRole.UserRole, float(numero_str))
+            except (ValueError, TypeError):
+                num_item.setData(Qt.ItemDataRole.UserRole, -1.0)
+            num_item.setData(Qt.ItemDataRole.UserRole + 1, i)
+            self._table.setItem(i, 0, num_item)
             self._table.setItem(i, 1, QTableWidgetItem(b.get("fecha", "")))
             self._table.setItem(i, 2, QTableWidgetItem(b.get("cliente", "")))
             self._table.setItem(i, 3, QTableWidgetItem(b.get("calle", "")))
             self._table.setItem(i, 4, QTableWidgetItem(b.get("localidad", "")))
             self._table.setItem(i, 5, QTableWidgetItem(b.get("tipo", "")))
             self._table.setItem(i, 6, QTableWidgetItem(b.get("importe", "")))
-            if (self._preselect_numero
-                    and str(b.get("numero", "")).strip() == self._preselect_numero):
-                select_row = i
-        if select_row >= 0:
-            self._table.selectRow(select_row)
-            self._table.scrollToItem(self._table.item(select_row, 0))
+        self._table.setSortingEnabled(True)
+        self._table.sortItems(0, Qt.SortOrder.DescendingOrder)
+        if select_numero:
+            for row in range(self._table.rowCount()):
+                item = self._table.item(row, 0)
+                if item and item.text().strip() == select_numero:
+                    self._table.selectRow(row)
+                    self._table.scrollToItem(item)
+                    break
 
     def _on_filter(self):
         query = self._search.text().strip().lower()
@@ -590,10 +615,16 @@ class BudgetSelectorDialog(QDialog):
 
     def _on_ok(self):
         row = self._table.currentRow()
-        if row < 0 or row >= len(self._filtered):
+        if row < 0:
             QMessageBox.information(self, "Aviso", "Selecciona un presupuesto de la lista.")
             return
-        budget = self._filtered[row]
+        item = self._table.item(row, 0)
+        if item is None:
+            return
+        data_idx = item.data(Qt.ItemDataRole.UserRole + 1)
+        if data_idx is None or data_idx >= len(self._filtered):
+            return
+        budget = self._filtered[data_idx]
         self.project_data = {k: v for k, v in budget.items() if k != "importe"}
         self.project_name = self.name_generator.generate_project_name(self.project_data)
         self.accept()

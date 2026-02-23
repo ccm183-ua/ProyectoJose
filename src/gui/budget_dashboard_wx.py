@@ -36,6 +36,7 @@ from src.utils.helpers import run_in_background
 # ── Columnas del modo presupuestos ────────────────────────────────────
 
 _COLUMNS = [
+    ("Nº", 70),
     ("Proyecto", 220),
     ("Cliente", 160),
     ("Localidad", 120),
@@ -496,31 +497,34 @@ class BudgetDashboardFrame(QMainWindow):
             if not has_excel:
                 nombre = f"\u26A0 {nombre}"
 
-            # Columna 0: Proyecto (sort numérico por nº de proyecto, ej: 71-26 → 260071)
             numero = proj.get("numero", "")
             sort_key = _project_sort_key(numero)
-            item_name = _SortableItem(nombre, sort_key)
-            # Almacenar referencia al dict original para recuperarlo tras sorting
-            item_name.setData(_DATA_REF_ROLE, i)
-            table.setItem(i, 0, item_name)
 
-            # Columna 1: Cliente
+            # Columna 0: Nº (número de proyecto, sort numérico)
+            item_num = _SortableItem(numero, sort_key)
+            item_num.setData(_DATA_REF_ROLE, i)
+            table.setItem(i, 0, item_num)
+
+            # Columna 1: Proyecto
+            table.setItem(i, 1, _SortableItem(nombre, sort_key))
+
+            # Columna 2: Cliente
             cliente = proj.get("cliente", "")
-            table.setItem(i, 1, _SortableItem(cliente, cliente.lower()))
+            table.setItem(i, 2, _SortableItem(cliente, cliente.lower()))
 
-            # Columna 2: Localidad
+            # Columna 3: Localidad
             localidad = proj.get("localidad", "")
-            table.setItem(i, 2, _SortableItem(localidad, localidad.lower()))
+            table.setItem(i, 3, _SortableItem(localidad, localidad.lower()))
 
-            # Columna 3: Tipo obra
+            # Columna 4: Tipo obra
             tipo = proj.get("tipo_obra", "")
-            table.setItem(i, 3, _SortableItem(tipo, tipo.lower()))
+            table.setItem(i, 4, _SortableItem(tipo, tipo.lower()))
 
-            # Columna 4: Fecha
+            # Columna 5: Fecha
             fecha_raw = proj.get("fecha", "")
-            table.setItem(i, 4, _SortableItem(fecha_raw, fecha_raw))
+            table.setItem(i, 5, _SortableItem(fecha_raw, fecha_raw))
 
-            # Columna 5: Total (sort numérico)
+            # Columna 6: Total (sort numérico)
             total = proj.get("total")
             total_text = ""
             sort_total = 0.0
@@ -543,7 +547,7 @@ class BudgetDashboardFrame(QMainWindow):
                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
             )
             total_item.setFont(theme.get_font_bold(9))
-            table.setItem(i, 5, total_item)
+            table.setItem(i, 6, total_item)
 
             # Color según estado del presupuesto
             datos_ok = proj.get("datos_completos", True)
@@ -563,7 +567,7 @@ class BudgetDashboardFrame(QMainWindow):
                             "El Excel puede estar dañado o tener un formato inesperado."
                         )
 
-        # Re-habilitar sort y aplicar orden por defecto: Proyecto descendente
+        # Re-habilitar sort y aplicar orden por defecto: Nº descendente (últimos primero)
         table.setSortingEnabled(True)
         table.sortItems(0, Qt.SortOrder.DescendingOrder)
 
@@ -1093,8 +1097,24 @@ class BudgetDashboardFrame(QMainWindow):
 
         comunidad_data = None
         if hasattr(self._parent, "_buscar_comunidad_para_presupuesto"):
+            partes_dir = [
+                p for p in [
+                    project_data.get("calle", ""),
+                    project_data.get("num_calle", ""),
+                    project_data.get("codigo_postal", ""),
+                    project_data.get("localidad", ""),
+                ] if p
+            ]
+            direccion_proyecto = ", ".join(partes_dir)
             comunidad_data = self._parent._buscar_comunidad_para_presupuesto(
-                project_data.get("cliente", "")
+                project_data.get("cliente", ""), direccion=direccion_proyecto,
+            )
+
+        from src.core import db_repository
+        admin_data = None
+        if comunidad_data and comunidad_data.get("administracion_id"):
+            admin_data = db_repository.get_administracion_por_id(
+                comunidad_data["administracion_id"],
             )
 
         excel_data = {
@@ -1107,8 +1127,8 @@ class BudgetDashboardFrame(QMainWindow):
             "codigo_postal": project_data.get("codigo_postal", ""),
             "tipo": project_data.get("tipo", ""),
             "admin_cif": comunidad_data.get("cif", "") if comunidad_data else "",
-            "admin_email": comunidad_data.get("email", "") if comunidad_data else "",
-            "admin_telefono": comunidad_data.get("telefono", "") if comunidad_data else "",
+            "admin_email": admin_data.get("email", "") if admin_data else "",
+            "admin_telefono": admin_data.get("telefono", "") if admin_data else "",
         }
 
         em = ExcelManager()
