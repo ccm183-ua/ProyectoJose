@@ -10,7 +10,25 @@ from datetime import datetime, timedelta
 
 _RE_OBRA_PREFIX = re.compile(r"^Obra:\s*", re.IGNORECASE)
 
-_EXCEL_EPOCH = datetime(1899, 12, 30)
+EXCEL_EPOCH = datetime(1899, 12, 30)
+
+# Regex para extraer (número, año) de formatos como "71-26", "71/26", "120/20"
+RE_PROJECT_NUM = re.compile(r"(\d{1,4})[/-](\d{2})")
+
+
+def normalize_project_num(value: str) -> str:
+    """Normaliza un número de proyecto a formato ``N-YY`` para comparación.
+
+    Acepta formatos como ``71-26``, ``71/26``, ``120/20``, ``06-26``, etc.
+    Elimina ceros iniciales para que ``06-26`` y ``6/26`` se consideren iguales.
+    Devuelve cadena vacía si no se puede parsear.
+    """
+    m = RE_PROJECT_NUM.search(value or "")
+    if not m:
+        return ""
+    num = str(int(m.group(1)))
+    year = m.group(2)
+    return f"{num}-{year}"
 
 
 def normalize_date(value: str) -> str:
@@ -24,11 +42,10 @@ def normalize_date(value: str) -> str:
     text = str(value).strip()
     if not text:
         return ""
-    # Intentar convertir serial de Excel
     try:
         num = float(text)
         if 1 < num < 200000:
-            dt = _EXCEL_EPOCH + timedelta(days=int(num))
+            dt = EXCEL_EPOCH + timedelta(days=int(num))
             return dt.strftime("%d-%m-%y")
     except (ValueError, TypeError, OverflowError):
         pass

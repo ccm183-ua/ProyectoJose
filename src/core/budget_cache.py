@@ -21,24 +21,26 @@ Principios:
 
 import logging
 import os
-import re
 from datetime import datetime
 from typing import Dict, List, Optional
 
 from src.core.budget_reader import BudgetReader
 from src.core.db_repository import (
+    actualizar_estado_presupuesto,
     buscar_administracion_por_nombre,
     buscar_comunidad_por_nombre,
     get_presupuesto_por_ruta,
     limpiar_presupuestos_huerfanos,
     upsert_presupuesto,
 )
-from src.utils.budget_utils import normalize_date, strip_obra_prefix
+from src.utils.budget_utils import (
+    RE_PROJECT_NUM,
+    normalize_date,
+    normalize_project_num,
+    strip_obra_prefix,
+)
 
 logger = logging.getLogger(__name__)
-
-# Regex para extraer (número, año) de formatos como "71-26", "71/26", "120/20"
-_RE_PROJECT_NUM = re.compile(r"(\d{1,4})[/-](\d{2})")
 
 
 def _get_file_mtime_iso(filepath: str) -> Optional[str]:
@@ -48,21 +50,6 @@ def _get_file_mtime_iso(filepath: str) -> Optional[str]:
         return datetime.fromtimestamp(stat.st_mtime).isoformat()
     except (OSError, ValueError):
         return None
-
-
-def _normalize_project_num(value: str) -> str:
-    """Normaliza un número de proyecto a formato ``N-YY`` para comparación.
-
-    Acepta formatos como ``71-26``, ``71/26``, ``120/20``, ``06-26``, etc.
-    Elimina ceros iniciales para que ``06-26`` y ``6/26`` se consideren iguales.
-    Devuelve cadena vacía si no se puede parsear.
-    """
-    m = _RE_PROJECT_NUM.search(value or "")
-    if not m:
-        return ""
-    num = str(int(m.group(1)))  # Eliminar ceros iniciales
-    year = m.group(2)
-    return f"{num}-{year}"
 
 
 def _is_template_data(excel_numero: str, expected_numero: str) -> bool:
@@ -82,8 +69,8 @@ def _is_template_data(excel_numero: str, expected_numero: str) -> bool:
     if not excel_numero or not expected_numero:
         return False  # Si no hay datos para comparar, no podemos afirmar que sea plantilla
 
-    norm_excel = _normalize_project_num(excel_numero)
-    norm_expected = _normalize_project_num(expected_numero)
+    norm_excel = normalize_project_num(excel_numero)
+    norm_expected = normalize_project_num(expected_numero)
 
     if not norm_excel or not norm_expected:
         return False  # No se pudo parsear alguno; no asumimos plantilla
@@ -146,7 +133,6 @@ def sync_presupuestos(
             if cached.get("estado") != state_name and state_name:
                 cached["estado"] = state_name
                 try:
-                    from src.core.db_repository import actualizar_estado_presupuesto
                     actualizar_estado_presupuesto(ruta_excel, state_name)
                 except Exception:
                     logger.debug("No se pudo actualizar estado en cache para %s", ruta_excel)
@@ -170,7 +156,7 @@ def sync_presupuestos(
             logger.exception("Error al guardar en cache: %s", ruta_excel)
 
         # Rellenar la entrada para la UI
-        _fill_entry_from_cache_data(entry, datos_cache)
+        _fill_entry_from_cache(entry, datos_cache)
         result.append(entry)
 
     return result
@@ -214,25 +200,14 @@ def _empty_entry(proj: Dict, state_name: str = "") -> Dict:
 
 
 def _fill_entry_from_cache(entry: Dict, cached: Dict) -> None:
-    """Rellena la entrada de la UI a partir de datos de la cache (DB)."""
+    """Rellena la entrada de la UI a partir de un dict de datos (cache DB o recién construido)."""
     entry["cliente"] = cached.get("cliente", "")
     entry["localidad"] = cached.get("localidad", "")
     entry["tipo_obra"] = cached.get("tipo_obra", "")
     entry["fecha"] = cached.get("fecha", "")
     entry["total"] = cached.get("total")
-    entry["datos_completos"] = cached.get("datos_completos", False)
+    entry["datos_completos"] = bool(cached.get("datos_completos", False))
     entry["estado"] = cached.get("estado", entry.get("estado", ""))
-
-
-def _fill_entry_from_cache_data(entry: Dict, datos: Dict) -> None:
-    """Rellena la entrada de la UI a partir del dict que se guardó en cache."""
-    entry["cliente"] = datos.get("cliente", "")
-    entry["localidad"] = datos.get("localidad", "")
-    entry["tipo_obra"] = datos.get("tipo_obra", "")
-    entry["fecha"] = datos.get("fecha", "")
-    entry["total"] = datos.get("total")
-    entry["datos_completos"] = bool(datos.get("datos_completos"))
-    entry["estado"] = datos.get("estado", entry.get("estado", ""))
 
 
 def _lookup_relation(
@@ -250,7 +225,7 @@ def _lookup_relation(
     if numero in relation_index:
         return relation_index[numero]
     # 2. Solo número sin año: "1-26" → "1", "06-26" → "6"
-    m = _RE_PROJECT_NUM.search(numero)
+    m = RE_PROJECT_NUM.search(numero)
     if m:
         just_num = str(int(m.group(1)))
         if just_num in relation_index:

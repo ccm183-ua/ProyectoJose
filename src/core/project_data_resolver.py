@@ -15,9 +15,6 @@ from typing import Dict, List, Optional
 from src.core.budget_cache import cleanup_orphaned_cache, sync_presupuestos
 from src.core.excel_relation_reader import ExcelRelationReader
 from src.core.settings import Settings
-# Re-exportar para mantener compatibilidad con código que las importe de aquí
-from src.utils.budget_utils import normalize_date as _normalize_date  # noqa: F401
-from src.utils.budget_utils import strip_obra_prefix as _strip_obra_prefix  # noqa: F401
 
 
 def resolve_projects(

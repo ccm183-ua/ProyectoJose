@@ -22,10 +22,14 @@ from src.gui import theme
 # Diálogos de confirmación / selección de comunidad (flujo presupuesto)
 # ---------------------------------------------------------------------------
 
-def crear_comunidad_con_formulario(parent, nombre_prefill: str = "") -> dict | None:
+def crear_comunidad_con_formulario(parent, nombre_prefill: str = "", direccion_prefill: str = "") -> dict | None:
     from src.gui.db_manager_wx import ComunidadFormDialog
 
-    initial = {"nombre": nombre_prefill} if nombre_prefill else {}
+    initial = {}
+    if nombre_prefill:
+        initial["nombre"] = nombre_prefill
+    if direccion_prefill:
+        initial["direccion"] = direccion_prefill
     dlg = ComunidadFormDialog(parent, "Nueva Comunidad", initial=initial)
     result = None
     if dlg.exec() == 1:
@@ -136,11 +140,12 @@ class ComunidadConfirmDialog(QDialog):
 class ComunidadFuzzySelectDialog(QDialog):
     """Diálogo que muestra coincidencias fuzzy y permite al usuario elegir una comunidad."""
 
-    def __init__(self, parent, resultados: list, nombre_buscado: str):
+    def __init__(self, parent, resultados: list, nombre_buscado: str, direccion_prefill: str = ""):
         super().__init__(parent)
         self.setWindowTitle("Coincidencias aproximadas")
         self._resultados = resultados
         self._nombre_buscado = nombre_buscado
+        self._direccion_prefill = direccion_prefill
         self._selected_comunidad = None
         self._build_ui()
 
@@ -223,7 +228,10 @@ class ComunidadFuzzySelectDialog(QDialog):
         self.accept()
 
     def _on_nueva_comunidad(self):
-        result = crear_comunidad_con_formulario(self, nombre_prefill=self._nombre_buscado)
+        result = crear_comunidad_con_formulario(
+            self, nombre_prefill=self._nombre_buscado,
+            direccion_prefill=self._direccion_prefill,
+        )
         if result:
             self._selected_comunidad = result
             self.accept()

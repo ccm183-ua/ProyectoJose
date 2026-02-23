@@ -9,14 +9,13 @@ from src.core.project_data_resolver import (
     resolve_projects,
     build_relation_index,
 )
-from src.utils.budget_utils import normalize_date, strip_obra_prefix
+from src.utils.budget_utils import normalize_date, normalize_project_num, strip_obra_prefix
 from src.core.budget_cache import (
     _empty_entry,
     _fill_entry_from_cache,
     _get_file_mtime_iso,
     _is_template_data,
     _lookup_relation,
-    _normalize_project_num,
 )
 
 
@@ -102,29 +101,28 @@ class TestGetFileMtimeIso:
 
 class TestNormalizeProjectNum:
     def test_dash_format(self):
-        assert _normalize_project_num("71-26") == "71-26"
+        assert normalize_project_num("71-26") == "71-26"
 
     def test_slash_format(self):
-        assert _normalize_project_num("71/26") == "71-26"
+        assert normalize_project_num("71/26") == "71-26"
 
     def test_three_digit(self):
-        assert _normalize_project_num("120/20") == "120-20"
+        assert normalize_project_num("120/20") == "120-20"
 
     def test_empty(self):
-        assert _normalize_project_num("") == ""
+        assert normalize_project_num("") == ""
 
     def test_no_match(self):
-        assert _normalize_project_num("abc") == ""
+        assert normalize_project_num("abc") == ""
 
     def test_embedded_in_text(self):
-        assert _normalize_project_num("Presupuesto 71/26 reforma") == "71-26"
+        assert normalize_project_num("Presupuesto 71/26 reforma") == "71-26"
 
     def test_leading_zeros_stripped(self):
-        assert _normalize_project_num("06-26") == "6-26"
+        assert normalize_project_num("06-26") == "6-26"
 
     def test_leading_zeros_match(self):
-        # "06-26" (carpeta) y "6/26" (Excel) deben normalizar igual
-        assert _normalize_project_num("06-26") == _normalize_project_num("6/26")
+        assert normalize_project_num("06-26") == normalize_project_num("6/26")
 
 
 class TestIsTemplateData:

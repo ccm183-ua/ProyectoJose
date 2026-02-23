@@ -13,7 +13,6 @@ Funcionalidades:
 """
 
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -31,6 +30,7 @@ from src.core.budget_cache import cleanup_orphaned_cache
 from src.core.project_data_resolver import build_relation_index, resolve_projects
 from src.core.settings import Settings
 from src.gui import theme
+from src.utils.budget_utils import RE_PROJECT_NUM
 from src.utils.helpers import run_in_background
 
 # ── Columnas del modo presupuestos ────────────────────────────────────
@@ -90,8 +90,6 @@ def _sort_tabs(states: list[str]) -> list[str]:
 
 # ── Parseo de número de proyecto para ordenación numérica ─────────────
 
-_RE_PROJECT_NUM = re.compile(r"(\d{1,4})-(\d{2})")
-
 
 def _project_sort_key(numero: str) -> float:
     """Convierte un número de proyecto como '71-26' en un valor numérico
@@ -103,7 +101,7 @@ def _project_sort_key(numero: str) -> float:
         '8-26'  → 260008
     Si no se puede parsear, devuelve -1 para que quede al final.
     """
-    m = _RE_PROJECT_NUM.search(numero)
+    m = RE_PROJECT_NUM.search(numero)
     if m:
         num = int(m.group(1))
         year = int(m.group(2))
@@ -336,73 +334,26 @@ class BudgetDashboardFrame(QMainWindow):
             self._tab_searches[state_name] = search_ctrl
 
             if self._explorer_mode:
-                # --- Modo explorador ---
                 explorer_data = folder_scanner.scan_explorer(state_dir)
                 self._tab_data[state_name] = explorer_data
-
-                table = QTableWidget(tab_widget)
-                table.setColumnCount(len(_EXPLORER_COLUMNS))
-                table.setHorizontalHeaderLabels([c[0] for c in _EXPLORER_COLUMNS])
-                for i, (_, w) in enumerate(_EXPLORER_COLUMNS):
-                    table.setColumnWidth(i, w)
-
-                hdr = table.horizontalHeader()
-                hdr.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-                hdr.setStretchLastSection(True)
-
-                table.setSortingEnabled(True)
-                table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-                table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
-                table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-                table.setAlternatingRowColors(True)
-                table.verticalHeader().setVisible(False)
-                table.doubleClicked.connect(self._on_explorer_dblclick)
-                table.itemSelectionChanged.connect(self._update_buttons)
-                table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-                table.customContextMenuRequested.connect(
-                    lambda pos, sn=state_name: self._on_explorer_context_menu(pos, sn)
+                table = self._create_base_table(
+                    tab_widget, _EXPLORER_COLUMNS,
+                    self._on_explorer_dblclick,
+                    self._on_explorer_context_menu, state_name,
                 )
-                tab_layout.addWidget(table, 1)
-
-                self._tab_tables[state_name] = table
-                self._notebook.addTab(tab_widget, f"  {state_name}  ")
             else:
-                # --- Modo presupuestos (original) ---
                 scanned = folder_scanner.scan_projects(state_dir)
                 resolved = resolve_projects(scanned, self._relation_index, state_name)
                 self._tab_data[state_name] = resolved
-
-                table = QTableWidget(tab_widget)
-                table.setColumnCount(len(_COLUMNS))
-                table.setHorizontalHeaderLabels([c[0] for c in _COLUMNS])
-                for i, (_, w) in enumerate(_COLUMNS):
-                    table.setColumnWidth(i, w)
-
-                # Columnas redimensionables
-                hdr = table.horizontalHeader()
-                hdr.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-                hdr.setStretchLastSection(True)
-
-                # Ordenación habilitada
-                table.setSortingEnabled(True)
-
-                table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-                table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
-                table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-                table.setAlternatingRowColors(True)
-                table.verticalHeader().setVisible(False)
-                table.doubleClicked.connect(self._on_item_dblclick)
-                table.itemSelectionChanged.connect(self._update_buttons)
-
-                # Menú contextual (clic derecho)
-                table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-                table.customContextMenuRequested.connect(
-                    lambda pos, sn=state_name: self._on_context_menu(pos, sn)
+                table = self._create_base_table(
+                    tab_widget, _COLUMNS,
+                    self._on_item_dblclick,
+                    self._on_context_menu, state_name,
                 )
-                tab_layout.addWidget(table, 1)
 
-                self._tab_tables[state_name] = table
-                self._notebook.addTab(tab_widget, f"  {state_name}  ")
+            tab_layout.addWidget(table, 1)
+            self._tab_tables[state_name] = table
+            self._notebook.addTab(tab_widget, f"  {state_name}  ")
 
         self._notebook.blockSignals(False)
 
@@ -412,7 +363,6 @@ class BudgetDashboardFrame(QMainWindow):
             else:
                 self._populate_table(state_name)
 
-        # Limpiar cache de presupuestos que ya no existen en disco
         if not self._explorer_mode:
             all_rutas = []
             for state_name in states:
@@ -424,6 +374,33 @@ class BudgetDashboardFrame(QMainWindow):
                 cleanup_orphaned_cache(all_rutas)
 
         self._update_buttons()
+
+    def _create_base_table(self, parent, columns, dblclick_handler, ctx_menu_handler, state_name):
+        """Crea y configura un QTableWidget con las propiedades comunes a ambos modos."""
+        table = QTableWidget(parent)
+        table.setColumnCount(len(columns))
+        table.setHorizontalHeaderLabels([c[0] for c in columns])
+        for i, (_, w) in enumerate(columns):
+            table.setColumnWidth(i, w)
+
+        hdr = table.horizontalHeader()
+        hdr.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        hdr.setStretchLastSection(True)
+
+        table.setSortingEnabled(True)
+        table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        table.setAlternatingRowColors(True)
+        table.verticalHeader().setVisible(False)
+
+        table.doubleClicked.connect(dblclick_handler)
+        table.itemSelectionChanged.connect(self._update_buttons)
+        table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        table.customContextMenuRequested.connect(
+            lambda pos, sn=state_name: ctx_menu_handler(pos, sn)
+        )
+        return table
 
     def _show_empty_state(self, message):
         self._notebook.blockSignals(True)
@@ -795,20 +772,10 @@ class BudgetDashboardFrame(QMainWindow):
         row = item.row()
         table.selectRow(row)
 
-        # Recuperar el índice original almacenado en el item de la columna 0
-        first_item = table.item(row, 0)
-        if first_item is None:
-            return
-        data_idx = first_item.data(_DATA_REF_ROLE)
-
-        rows = self._tab_data.get(state_name, [])
-        search_ctrl = self._tab_searches.get(state_name)
-        query = search_ctrl.text() if search_ctrl else ""
-        filtered = self._filter_explorer_rows(rows, query)
-        if data_idx is None or data_idx >= len(filtered):
+        entry = self._get_row_data(state_name, row)
+        if entry is None:
             return
 
-        entry = filtered[data_idx]
         ruta = entry.get("ruta", "")
 
         menu = QMenu(self)
@@ -835,20 +802,10 @@ class BudgetDashboardFrame(QMainWindow):
         if row < 0:
             return
 
-        # Recuperar el índice original almacenado en el item
-        first_item = table.item(row, 0)
-        if first_item is None:
-            return
-        data_idx = first_item.data(_DATA_REF_ROLE)
-
-        rows = self._tab_data.get(state, [])
-        search_ctrl = self._tab_searches.get(state)
-        query = search_ctrl.text() if search_ctrl else ""
-        filtered = self._filter_explorer_rows(rows, query)
-        if data_idx is None or data_idx >= len(filtered):
+        entry = self._get_row_data(state, row)
+        if entry is None:
             return
 
-        entry = filtered[data_idx]
         ruta = entry.get("ruta", "")
         if ruta and os.path.exists(ruta):
             self._open_file(ruta)
@@ -863,6 +820,29 @@ class BudgetDashboardFrame(QMainWindow):
             return None
         return self._state_names[page]
 
+    def _get_row_data(self, state_name: str, row: int):
+        """Devuelve el dict de datos original para una fila visual de la tabla."""
+        table = self._tab_tables.get(state_name)
+        if table is None:
+            return None
+        first_item = table.item(row, 0)
+        if first_item is None:
+            return None
+        data_idx = first_item.data(_DATA_REF_ROLE)
+
+        rows = self._tab_data.get(state_name, [])
+        search_ctrl = self._tab_searches.get(state_name)
+        query = search_ctrl.text() if search_ctrl else ""
+
+        if self._explorer_mode:
+            filtered = self._filter_explorer_rows(rows, query)
+        else:
+            filtered = self._filter_rows(rows, query)
+
+        if data_idx is None or data_idx >= len(filtered):
+            return None
+        return filtered[data_idx]
+
     def _get_selected(self):
         state = self._current_state()
         if state is None:
@@ -874,37 +854,17 @@ class BudgetDashboardFrame(QMainWindow):
         if row < 0:
             return None
 
+        entry = self._get_row_data(state, row)
+        if entry is None:
+            return None
+
         if self._explorer_mode:
-            item = table.item(row, 0)
-            if item is None:
-                return None
-            data_idx = item.data(_DATA_REF_ROLE)
-            rows = self._tab_data.get(state, [])
-            search_ctrl = self._tab_searches.get(state)
-            query = search_ctrl.text() if search_ctrl else ""
-            filtered = self._filter_explorer_rows(rows, query)
-            if data_idx is None or data_idx >= len(filtered):
-                return None
-            # Convertir a formato compatible con los botones
-            entry = filtered[data_idx]
             return {
                 "nombre_proyecto": entry.get("nombre", ""),
                 "ruta_excel": entry.get("ruta", "") if not entry.get("es_carpeta") else "",
                 "ruta_carpeta": entry.get("ruta", "") if entry.get("es_carpeta") else os.path.dirname(entry.get("ruta", "")),
             }
-        else:
-            # Tras sorting, el row visual no corresponde al índice en la lista
-            # de datos. Recuperamos el índice original almacenado en el item.
-            item = table.item(row, 0)
-            if item is None:
-                return None
-            data_idx = item.data(_DATA_REF_ROLE)
-            search_ctrl = self._tab_searches.get(state)
-            query = search_ctrl.text() if search_ctrl else ""
-            visible = self._filter_rows(self._tab_data.get(state, []), query)
-            if data_idx is None or data_idx >= len(visible):
-                return None
-            return visible[data_idx]
+        return entry
 
     def _on_tab_changed(self, _index):
         self._update_buttons()

@@ -25,10 +25,12 @@ from src.gui import theme
 class SearchSelectWidget(QWidget):
     """QLineEdit (readonly display) + dropdown button for single-select with search."""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, on_edit=None, on_delete=None):
         super().__init__(parent)
         self._items: list[tuple] = []
         self._selected_id = None
+        self._on_edit = on_edit
+        self._on_delete = on_delete
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -64,19 +66,30 @@ class SearchSelectWidget(QWidget):
         self._display.setText("")
 
     def _open_popup(self):
-        dlg = _SearchSelectDialog(self, self._items, self._selected_id)
-        if dlg.exec() == 1:
+        dlg = _SearchSelectDialog(
+            self, self._items, self._selected_id,
+            on_edit=self._on_edit, on_delete=self._on_delete,
+        )
+        result = dlg.exec()
+        self._items = list(dlg._items)
+        if result == 1:
             self._selected_id = dlg.get_selected_id()
-            self._update_display()
+        else:
+            valid_ids = {id_ for id_, _ in self._items}
+            if self._selected_id not in valid_ids:
+                self._selected_id = None
+        self._update_display()
 
 
 class _SearchSelectDialog(QDialog):
-    def __init__(self, parent, items, current_id):
+    def __init__(self, parent, items, current_id, on_edit=None, on_delete=None):
         super().__init__(parent)
         self.setWindowTitle("Seleccionar")
-        self._items = items
+        self._items = list(items)
         self._visible = list(items)
         self._selected_id = current_id
+        self._on_edit = on_edit
+        self._on_delete = on_delete
 
         layout = QVBoxLayout(self)
         layout.setSpacing(theme.SPACE_SM)
@@ -93,6 +106,24 @@ class _SearchSelectDialog(QDialog):
         layout.addWidget(self._list, 1)
 
         btn_row = QHBoxLayout()
+        if self._on_edit:
+            btn_e = QPushButton("Editar", self)
+            btn_e.setFont(theme.font_sm())
+            btn_e.setFixedHeight(32)
+            btn_e.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn_e.clicked.connect(self._handle_edit)
+            btn_row.addWidget(btn_e)
+        if self._on_delete:
+            btn_d = QPushButton("Borrar", self)
+            btn_d.setFont(theme.font_sm())
+            btn_d.setFixedHeight(32)
+            btn_d.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn_d.setStyleSheet(
+                "QPushButton { color: #e53e3e; }"
+                "QPushButton:hover { background: #fee2e2; border-radius: 4px; }"
+            )
+            btn_d.clicked.connect(self._handle_delete)
+            btn_row.addWidget(btn_d)
         btn_row.addStretch()
         btn = QPushButton("Seleccionar", self)
         btn.setFont(theme.font_base())
@@ -126,6 +157,34 @@ class _SearchSelectDialog(QDialog):
             self._selected_id = self._visible[row][0]
             self.accept()
 
+    def _get_current_id(self):
+        row = self._list.currentRow()
+        if 0 <= row < len(self._visible):
+            return self._visible[row][0]
+        return None
+
+    def _handle_edit(self):
+        id_ = self._get_current_id()
+        if id_ is None:
+            QMessageBox.information(self, "Editar", "Selecciona un elemento.")
+            return
+        new_items = self._on_edit(id_)
+        if new_items is not None:
+            self._items = new_items
+            self._filter()
+
+    def _handle_delete(self):
+        id_ = self._get_current_id()
+        if id_ is None:
+            QMessageBox.information(self, "Eliminar", "Selecciona un elemento.")
+            return
+        new_items = self._on_delete(id_)
+        if new_items is not None:
+            self._items = new_items
+            if id_ == self._selected_id:
+                self._selected_id = None
+            self._filter()
+
     def get_selected_id(self):
         return self._selected_id
 
@@ -133,10 +192,12 @@ class _SearchSelectDialog(QDialog):
 class CheckSelectWidget(QWidget):
     """QLineEdit (readonly display) + button that opens multi-select dialog."""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, on_edit=None, on_delete=None):
         super().__init__(parent)
         self._items: list[tuple] = []
         self._selected_ids: set = set()
+        self._on_edit = on_edit
+        self._on_delete = on_delete
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -178,19 +239,29 @@ class CheckSelectWidget(QWidget):
             self._display.setText(f"{n} contactos seleccionados")
 
     def _open_popup(self):
-        dlg = _CheckSelectDialog(self, self._items, self._selected_ids)
-        if dlg.exec() == 1:
+        dlg = _CheckSelectDialog(
+            self, self._items, self._selected_ids,
+            on_edit=self._on_edit, on_delete=self._on_delete,
+        )
+        result = dlg.exec()
+        self._items = list(dlg._items)
+        if result == 1:
             self._selected_ids = dlg.get_selected_ids()
-            self._update_display()
+        else:
+            valid_ids = {id_ for id_, _ in self._items}
+            self._selected_ids &= valid_ids
+        self._update_display()
 
 
 class _CheckSelectDialog(QDialog):
-    def __init__(self, parent, items, selected_ids):
+    def __init__(self, parent, items, selected_ids, on_edit=None, on_delete=None):
         super().__init__(parent)
         self.setWindowTitle("Seleccionar contactos")
-        self._items = items
+        self._items = list(items)
         self._visible = list(items)
         self._selected_ids = set(selected_ids)
+        self._on_edit = on_edit
+        self._on_delete = on_delete
 
         layout = QVBoxLayout(self)
         layout.setSpacing(theme.SPACE_SM)
@@ -203,9 +274,28 @@ class _CheckSelectDialog(QDialog):
 
         self._list = QListWidget(self)
         self._list.setFont(theme.font_base())
+        self._list.itemChanged.connect(self._on_check)
         layout.addWidget(self._list, 1)
 
         btn_row = QHBoxLayout()
+        if self._on_edit:
+            btn_e = QPushButton("Editar", self)
+            btn_e.setFont(theme.font_sm())
+            btn_e.setFixedHeight(32)
+            btn_e.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn_e.clicked.connect(self._handle_edit)
+            btn_row.addWidget(btn_e)
+        if self._on_delete:
+            btn_d = QPushButton("Borrar", self)
+            btn_d.setFont(theme.font_sm())
+            btn_d.setFixedHeight(32)
+            btn_d.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn_d.setStyleSheet(
+                "QPushButton { color: #e53e3e; }"
+                "QPushButton:hover { background: #fee2e2; border-radius: 4px; }"
+            )
+            btn_d.clicked.connect(self._handle_delete)
+            btn_row.addWidget(btn_d)
         btn_row.addStretch()
         btn = QPushButton("Aceptar", self)
         btn.setFont(theme.font_base())
@@ -219,6 +309,7 @@ class _CheckSelectDialog(QDialog):
         self._filter()
 
     def _filter(self):
+        self._list.blockSignals(True)
         self._list.clear()
         q = self._search.text().strip().lower()
         self._visible = []
@@ -237,7 +328,7 @@ class _CheckSelectDialog(QDialog):
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(Qt.CheckState.Checked if id_ in self._selected_ids else Qt.CheckState.Unchecked)
             self._list.addItem(item)
-        self._list.itemChanged.connect(self._on_check)
+        self._list.blockSignals(False)
 
     def _on_check(self, item):
         row = self._list.row(item)
@@ -247,6 +338,33 @@ class _CheckSelectDialog(QDialog):
                 self._selected_ids.add(id_)
             else:
                 self._selected_ids.discard(id_)
+
+    def _get_current_id(self):
+        row = self._list.currentRow()
+        if 0 <= row < len(self._visible):
+            return self._visible[row][0]
+        return None
+
+    def _handle_edit(self):
+        id_ = self._get_current_id()
+        if id_ is None:
+            QMessageBox.information(self, "Editar", "Selecciona un elemento.")
+            return
+        new_items = self._on_edit(id_)
+        if new_items is not None:
+            self._items = new_items
+            self._filter()
+
+    def _handle_delete(self):
+        id_ = self._get_current_id()
+        if id_ is None:
+            QMessageBox.information(self, "Eliminar", "Selecciona un elemento.")
+            return
+        new_items = self._on_delete(id_)
+        if new_items is not None:
+            self._items = new_items
+            self._selected_ids.discard(id_)
+            self._filter()
 
     def get_selected_ids(self):
         return set(self._selected_ids)
@@ -984,18 +1102,24 @@ def _run_validations(dialog, checks: list[tuple[str, str | None]]) -> bool:
 # ---------------------------------------------------------------------------
 
 class QuickContactoDialog(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, edit_id=None, initial=None):
         super().__init__(parent)
-        self.setWindowTitle("Nuevo Contacto")
+        self._edit_id = edit_id
+        self._initial = initial or {}
+        editing = edit_id is not None
+        self.setWindowTitle("Editar Contacto" if editing else "Nuevo Contacto")
         self._contacto = None
         self._build_ui()
 
     def _build_ui(self):
+        editing = self._edit_id is not None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 16)
         layout.setSpacing(2)
 
-        title = theme.create_title(self, "Nuevo contacto", "lg")
+        title = theme.create_title(
+            self, "Editar contacto" if editing else "Nuevo contacto", "lg",
+        )
         layout.addWidget(title)
         layout.addSpacing(12)
 
@@ -1005,7 +1129,7 @@ class QuickContactoDialog(QDialog):
                                   ("Notas", "notas")]:
             lbl = theme.create_form_label(self, label_text)
             layout.addWidget(lbl)
-            txt = theme.create_input(self)
+            txt = theme.create_input(self, value=self._initial.get(attr, "") or "")
             self._fields[attr] = txt
             layout.addWidget(txt)
             layout.addSpacing(6)
@@ -1022,7 +1146,7 @@ class QuickContactoDialog(QDialog):
         btn_cancel.clicked.connect(self.reject)
         btn_layout.addWidget(btn_cancel)
         btn_layout.addSpacing(8)
-        btn_ok = QPushButton("Crear", self)
+        btn_ok = QPushButton("Guardar" if editing else "Crear", self)
         btn_ok.setFont(theme.get_font_medium())
         btn_ok.setFixedSize(90, 30)
         btn_ok.setProperty("class", "primary")
@@ -1049,14 +1173,21 @@ class QuickContactoDialog(QDialog):
             ("Email", _validate_email(email)),
         ]):
             return
-        new_id, err = repo.create_contacto(
-            nombre, telefono, telefono2, email,
-            self._fields["notas"].text().strip(),
-        )
-        if err:
-            QMessageBox.critical(self, "Error", f"Error:\n{err}")
-            return
-        self._contacto = {"id": new_id, "nombre": nombre, "telefono": telefono}
+        notas = self._fields["notas"].text().strip()
+        if self._edit_id is not None:
+            err = repo.update_contacto(
+                self._edit_id, nombre, telefono, telefono2, email, notas,
+            )
+            if err:
+                QMessageBox.critical(self, "Error", f"Error:\n{err}")
+                return
+            self._contacto = {"id": self._edit_id, "nombre": nombre, "telefono": telefono}
+        else:
+            new_id, err = repo.create_contacto(nombre, telefono, telefono2, email, notas)
+            if err:
+                QMessageBox.critical(self, "Error", f"Error:\n{err}")
+                return
+            self._contacto = {"id": new_id, "nombre": nombre, "telefono": telefono}
         self.accept()
 
     def get_contacto(self):
@@ -1064,18 +1195,24 @@ class QuickContactoDialog(QDialog):
 
 
 class QuickAdminDialog(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, edit_id=None, initial=None):
         super().__init__(parent)
-        self.setWindowTitle("Nueva Administración")
+        self._edit_id = edit_id
+        self._initial = initial or {}
+        editing = edit_id is not None
+        self.setWindowTitle("Editar Administración" if editing else "Nueva Administración")
         self._admin = None
         self._build_ui()
 
     def _build_ui(self):
+        editing = self._edit_id is not None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 16)
         layout.setSpacing(2)
 
-        title = theme.create_title(self, "Nueva administración", "lg")
+        title = theme.create_title(
+            self, "Editar administración" if editing else "Nueva administración", "lg",
+        )
         layout.addWidget(title)
         layout.addSpacing(12)
 
@@ -1084,7 +1221,7 @@ class QuickAdminDialog(QDialog):
                                   ("Teléfono", "telefono"), ("Dirección", "direccion")]:
             lbl = theme.create_form_label(self, label_text)
             layout.addWidget(lbl)
-            txt = theme.create_input(self)
+            txt = theme.create_input(self, value=self._initial.get(attr, "") or "")
             self._fields[attr] = txt
             layout.addWidget(txt)
             layout.addSpacing(6)
@@ -1101,7 +1238,7 @@ class QuickAdminDialog(QDialog):
         btn_cancel.clicked.connect(self.reject)
         btn_layout.addWidget(btn_cancel)
         btn_layout.addSpacing(8)
-        btn_ok = QPushButton("Crear", self)
+        btn_ok = QPushButton("Guardar" if editing else "Crear", self)
         btn_ok.setFont(theme.get_font_medium())
         btn_ok.setFixedSize(90, 30)
         btn_ok.setProperty("class", "primary")
@@ -1115,6 +1252,7 @@ class QuickAdminDialog(QDialog):
         nombre = self._fields["nombre"].text().strip()
         email = self._fields["email"].text().strip()
         telefono = self._fields["telefono"].text().strip()
+        direccion = self._fields["direccion"].text().strip()
         if not nombre:
             QMessageBox.information(self, "Aviso", "El nombre es obligatorio.")
             return
@@ -1123,18 +1261,26 @@ class QuickAdminDialog(QDialog):
             ("Teléfono", _validate_phone(telefono)),
         ]):
             return
-        new_id, err = repo.create_administracion(
-            nombre, email, telefono,
-            self._fields["direccion"].text().strip(),
-        )
-        if err:
-            QMessageBox.critical(self, "Error", f"Error:\n{err}")
-            return
-        self._admin = {
-            "id": new_id, "nombre": nombre,
-            "email": email, "telefono": telefono,
-            "direccion": self._fields["direccion"].text().strip(),
-        }
+        if self._edit_id is not None:
+            err = repo.update_administracion(
+                self._edit_id, nombre, email, telefono, direccion,
+            )
+            if err:
+                QMessageBox.critical(self, "Error", f"Error:\n{err}")
+                return
+            self._admin = {
+                "id": self._edit_id, "nombre": nombre,
+                "email": email, "telefono": telefono, "direccion": direccion,
+            }
+        else:
+            new_id, err = repo.create_administracion(nombre, email, telefono, direccion)
+            if err:
+                QMessageBox.critical(self, "Error", f"Error:\n{err}")
+                return
+            self._admin = {
+                "id": new_id, "nombre": nombre,
+                "email": email, "telefono": telefono, "direccion": direccion,
+            }
         self.accept()
 
     def get_admin(self):
@@ -1185,7 +1331,11 @@ class AdminFormDialog(QDialog):
 
         ct_row = QHBoxLayout()
         ct_row.setSpacing(6)
-        self._ct_widget = CheckSelectWidget(self)
+        self._ct_widget = CheckSelectWidget(
+            self,
+            on_edit=self._on_edit_contacto,
+            on_delete=self._on_delete_contacto,
+        )
         ct_items = [(c["id"], f"{c['nombre']}  —  {c['telefono']}") for c in self._all_contactos]
         self._ct_widget.set_items(ct_items)
         self._ct_widget.set_selected_ids(set(self._initial.get("contacto_ids", [])))
@@ -1242,6 +1392,27 @@ class AdminFormDialog(QDialog):
                 ids = self._ct_widget.get_selected_ids()
                 ids.add(new_ct["id"])
                 self._ct_widget.set_selected_ids(ids)
+
+    def _on_edit_contacto(self, id_):
+        contact = next((c for c in self._all_contactos if c["id"] == id_), None)
+        if not contact:
+            return None
+        d = QuickContactoDialog(self, edit_id=id_, initial=contact)
+        if d.exec() != 1:
+            return None
+        self._all_contactos = repo.get_contactos()
+        return [(c["id"], f"{c['nombre']}  —  {c['telefono']}") for c in self._all_contactos]
+
+    def _on_delete_contacto(self, id_):
+        resp = QMessageBox.question(self, "Confirmar", "¿Eliminar este contacto?")
+        if resp != QMessageBox.StandardButton.Yes:
+            return None
+        err = repo.delete_contacto(id_)
+        if err:
+            QMessageBox.critical(self, "Error", err)
+            return None
+        self._all_contactos = repo.get_contactos()
+        return [(c["id"], f"{c['nombre']}  —  {c['telefono']}") for c in self._all_contactos]
 
     def get_values(self):
         return {
@@ -1318,7 +1489,11 @@ class ComunidadFormDialog(QDialog):
 
         admin_row = QHBoxLayout()
         admin_row.setSpacing(6)
-        self._admin_widget = SearchSelectWidget(self)
+        self._admin_widget = SearchSelectWidget(
+            self,
+            on_edit=self._on_edit_admin,
+            on_delete=self._on_delete_admin,
+        )
         admin_items = [(a["id"], self._admin_display(a)) for a in self._all_admins]
         self._admin_widget.set_items(admin_items)
         pre_admin = self._initial.get("administracion_id")
@@ -1340,7 +1515,11 @@ class ComunidadFormDialog(QDialog):
 
         ct_row = QHBoxLayout()
         ct_row.setSpacing(6)
-        self._ct_widget = CheckSelectWidget(self)
+        self._ct_widget = CheckSelectWidget(
+            self,
+            on_edit=self._on_edit_contacto,
+            on_delete=self._on_delete_contacto,
+        )
         ct_items = [(c["id"], f"{c['nombre']}  —  {c['telefono']}") for c in self._all_contactos]
         self._ct_widget.set_items(ct_items)
         self._ct_widget.set_selected_ids(set(self._initial.get("contacto_ids", [])))
@@ -1400,6 +1579,27 @@ class ComunidadFormDialog(QDialog):
                 self._admin_widget.set_items(admin_items)
                 self._admin_widget.set_selected_id(new_admin["id"])
 
+    def _on_edit_admin(self, id_):
+        data = repo.get_administracion_por_id(id_)
+        if not data:
+            return None
+        d = QuickAdminDialog(self, edit_id=id_, initial=data)
+        if d.exec() != 1:
+            return None
+        self._all_admins = repo.get_administraciones()
+        return [(a["id"], self._admin_display(a)) for a in self._all_admins]
+
+    def _on_delete_admin(self, id_):
+        resp = QMessageBox.question(self, "Confirmar", "¿Eliminar esta administración?")
+        if resp != QMessageBox.StandardButton.Yes:
+            return None
+        err = repo.delete_administracion(id_)
+        if err:
+            QMessageBox.critical(self, "Error", err)
+            return None
+        self._all_admins = repo.get_administraciones()
+        return [(a["id"], self._admin_display(a)) for a in self._all_admins]
+
     def _on_new_contacto(self):
         d = QuickContactoDialog(self)
         if d.exec() == 1:
@@ -1411,6 +1611,27 @@ class ComunidadFormDialog(QDialog):
                 ids = self._ct_widget.get_selected_ids()
                 ids.add(new_ct["id"])
                 self._ct_widget.set_selected_ids(ids)
+
+    def _on_edit_contacto(self, id_):
+        contact = next((c for c in self._all_contactos if c["id"] == id_), None)
+        if not contact:
+            return None
+        d = QuickContactoDialog(self, edit_id=id_, initial=contact)
+        if d.exec() != 1:
+            return None
+        self._all_contactos = repo.get_contactos()
+        return [(c["id"], f"{c['nombre']}  —  {c['telefono']}") for c in self._all_contactos]
+
+    def _on_delete_contacto(self, id_):
+        resp = QMessageBox.question(self, "Confirmar", "¿Eliminar este contacto?")
+        if resp != QMessageBox.StandardButton.Yes:
+            return None
+        err = repo.delete_contacto(id_)
+        if err:
+            QMessageBox.critical(self, "Error", err)
+            return None
+        self._all_contactos = repo.get_contactos()
+        return [(c["id"], f"{c['nombre']}  —  {c['telefono']}") for c in self._all_contactos]
 
     def get_values(self):
         return {

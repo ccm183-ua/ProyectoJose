@@ -20,6 +20,7 @@ import re
 import zipfile
 from typing import Dict, List, Optional
 
+from src.utils.budget_utils import normalize_project_num
 from src.utils.spanish_number_parser import extract_total_from_asciende
 
 logger = logging.getLogger(__name__)
@@ -27,9 +28,6 @@ logger = logging.getLogger(__name__)
 
 SHEET_PRIMARY = "xl/worksheets/sheet1.xml"
 SHEET_FALLBACK = "xl/worksheets/sheet2.xml"
-
-# Regex para normalizar número de proyecto: "71/26" o "71-26" → "71-26"
-_RE_PROJ_NUM = re.compile(r"(\d{1,4})[/-](\d{2})")
 
 # Primera fila (1-indexed) que puede contener partidas en la plantilla 122-20
 PARTIDA_START_ROW = 17
@@ -180,7 +178,7 @@ class BudgetReader:
             return sheets[0]
 
         # Normalizar el número esperado
-        norm_expected = self._norm_proj_num(expected_numero)
+        norm_expected = normalize_project_num(expected_numero)
         if not norm_expected:
             return sheets[-1]  # Preferir última hoja (sheet2)
 
@@ -188,7 +186,7 @@ class BudgetReader:
         for sheet_xml in sheets:
             rows = self._extract_rows(sheet_xml)
             header = self._extract_header(rows, shared_strings)
-            norm_sheet = self._norm_proj_num(header.get("numero", ""))
+            norm_sheet = normalize_project_num(header.get("numero", ""))
             if norm_sheet == norm_expected:
                 return sheet_xml
 
@@ -198,20 +196,6 @@ class BudgetReader:
             expected_numero,
         )
         return sheets[-1]
-
-    @staticmethod
-    def _norm_proj_num(value: str) -> str:
-        """Normaliza ``'71/26'``, ``'71-26'`` u ``'06-26'`` a ``'71-26'``/``'6-26'``.
-
-        Elimina ceros iniciales para que ``'06-26'`` y ``'6/26'`` se consideren
-        iguales.
-        """
-        m = _RE_PROJ_NUM.search(value or "")
-        if not m:
-            return ""
-        num = str(int(m.group(1)))  # Eliminar ceros iniciales
-        year = m.group(2)
-        return f"{num}-{year}"
 
     @staticmethod
     def _read_shared_strings(file_bytes: bytes) -> List[str]:
@@ -462,7 +446,7 @@ class BudgetReader:
             if not sheets:
                 return None
 
-            norm_expected = self._norm_proj_num(expected_numero) if expected_numero else ""
+            norm_expected = normalize_project_num(expected_numero) if expected_numero else ""
 
             for sheet_xml in sheets:
                 rows = self._extract_rows(sheet_xml)
@@ -470,7 +454,7 @@ class BudgetReader:
                 # Verificar que la hoja pertenece a ESTE proyecto
                 if norm_expected:
                     header = self._extract_header(rows, shared_strings)
-                    norm_sheet = self._norm_proj_num(header.get("numero", ""))
+                    norm_sheet = normalize_project_num(header.get("numero", ""))
                     if norm_sheet and norm_sheet != norm_expected:
                         # Hoja de otro proyecto (copiada) → saltar
                         continue

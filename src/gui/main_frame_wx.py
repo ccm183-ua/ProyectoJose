@@ -249,7 +249,19 @@ class MainFrame(QMainWindow):
             QMessageBox.critical(self, "Error", "No se encontró la plantilla.")
             return
 
-        comunidad_data = self._buscar_comunidad_para_presupuesto(project_data.get("cliente", ""))
+        partes_dir = [
+            p for p in [
+                project_data.get("calle", ""),
+                project_data.get("num_calle", ""),
+                project_data.get("codigo_postal", ""),
+                project_data.get("localidad", ""),
+            ] if p
+        ]
+        direccion_proyecto = ", ".join(partes_dir)
+
+        comunidad_data = self._buscar_comunidad_para_presupuesto(
+            project_data.get("cliente", ""), direccion=direccion_proyecto,
+        )
 
         excel_data = {
             "nombre_obra": project_name,
@@ -294,7 +306,7 @@ class MainFrame(QMainWindow):
         dlg = DefaultPathsDialog(self)
         dlg.exec()
 
-    def _buscar_comunidad_para_presupuesto(self, nombre_cliente: str) -> dict | None:
+    def _buscar_comunidad_para_presupuesto(self, nombre_cliente: str, direccion: str = "") -> dict | None:
         from src.gui.dialogs_wx import (
             ComunidadConfirmDialog, ComunidadFuzzySelectDialog,
             crear_comunidad_con_formulario,
@@ -314,7 +326,7 @@ class MainFrame(QMainWindow):
 
         fuzzy = db_repository.buscar_comunidades_fuzzy(nombre)
         if fuzzy:
-            dlg = ComunidadFuzzySelectDialog(self, fuzzy, nombre)
+            dlg = ComunidadFuzzySelectDialog(self, fuzzy, nombre, direccion_prefill=direccion)
             if dlg.exec() == QMessageBox.DialogCode.Accepted.value:
                 return dlg.get_comunidad_data()
             return None
@@ -326,7 +338,7 @@ class MainFrame(QMainWindow):
             "¿Desea añadir una nueva comunidad a la base de datos?",
         )
         if resp == QMessageBox.StandardButton.Yes:
-            return crear_comunidad_con_formulario(self, nombre_prefill=nombre)
+            return crear_comunidad_con_formulario(self, nombre_prefill=nombre, direccion_prefill=direccion)
 
         return None
 

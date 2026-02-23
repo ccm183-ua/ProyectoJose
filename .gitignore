@@ -50,3 +50,6 @@ test_outputs/
 *.db
 *.sqlite
 *.sqlite3
+
+# Logs de la aplicación
+.cubiapp_logs/

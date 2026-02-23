@@ -11,6 +11,8 @@ from typing import Dict, List, Optional, Tuple
 
 from openpyxl import load_workbook
 
+from src.utils.budget_utils import EXCEL_EPOCH
+
 
 # Columnas esperadas (A–J) en el mismo orden que el TSV del portapapeles.
 _COL_MAP = {
@@ -27,11 +29,6 @@ _COL_MAP = {
 }
 
 _HEADER_MARKER = "Nº"
-
-# Época de Excel: el serial 1 equivale al 1 de enero de 1900.
-# Se usa 30-dic-1899 como base porque Excel tiene un bug histórico
-# que cuenta el 29-feb-1900 (inexistente) como día válido.
-_EXCEL_EPOCH = datetime(1899, 12, 30)
 
 
 class ExcelRelationReader:
@@ -105,7 +102,7 @@ class ExcelRelationReader:
             return value.strftime("%d-%m-%y")
         if isinstance(value, (int, float)) and 1 < value < 200000:
             try:
-                dt = _EXCEL_EPOCH + timedelta(days=int(value))
+                dt = EXCEL_EPOCH + timedelta(days=int(value))
                 return dt.strftime("%d-%m-%y")
             except (OverflowError, ValueError):
                 pass
