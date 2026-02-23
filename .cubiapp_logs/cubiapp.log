@@ -200,3 +200,79 @@ PermissionError: [Errno 13] Permission denied: 'C:\\Users\\SERGIO GOMARIZ.IT\\Do
 2026-02-23 09:17:13,431 [WARNING] src.core.budget_cache: No se encontró frase 'Asciende...' en: C:\Users\SERGIO GOMARIZ.IT\Documents\Dev\PRESUPUESTOS 2026-20260223T080457Z-1-001\PRESUPUESTOS 2026\PRESUPUESTOS 2026\EJECUTANDO\11-26 AVDA. SALAMANCA Nº 44  ALICANTE (IMPERM. TEJADO PLATEADO)\C.P.AVDA. SALAMANCA, 44.xlsx
 2026-02-23 09:17:14,925 [WARNING] src.core.budget_cache: No se encontró frase 'Asciende...' en: C:\Users\SERGIO GOMARIZ.IT\Documents\Dev\PRESUPUESTOS 2026-20260223T080457Z-1-001\PRESUPUESTOS 2026\PRESUPUESTOS 2026\EJECUTANDO\5-26 C.P. HAVANA, 6 - ALICANTE (FILTRACIONES PLAZA GARAJE Nº 54)\C.P. HAVANA, 6.xlsx
 2026-02-23 09:17:16,437 [WARNING] src.core.budget_cache: No se encontró frase 'Asciende...' en: C:\Users\SERGIO GOMARIZ.IT\Documents\Dev\PRESUPUESTOS 2026-20260223T080457Z-1-001\PRESUPUESTOS 2026\PRESUPUESTOS 2026\TERMINADO\19-26 C.P. HAVANA, 6 - ALICANTE (FILT VIV X CUBIERTA ESC 3 - 9º D)\C.P. HAVANA, 6.xlsx
+2026-02-23 09:47:47,852 [INFO] google_genai.models: AFC is enabled with max remote calls: 10.
+2026-02-23 09:48:11,580 [INFO] httpx: HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-02-23 10:29:54,900 [INFO] google_genai.models: AFC is enabled with max remote calls: 10.
+2026-02-23 10:30:11,759 [INFO] httpx: HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-02-23 10:48:41,645 [INFO] google_genai.models: AFC is enabled with max remote calls: 10.
+2026-02-23 10:49:02,973 [INFO] httpx: HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-02-23 10:58:58,416 [INFO] google_genai.models: AFC is enabled with max remote calls: 10.
+2026-02-23 10:59:33,028 [INFO] httpx: HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-02-23 11:01:53,707 [INFO] google_genai.models: AFC is enabled with max remote calls: 10.
+2026-02-23 11:02:29,280 [INFO] httpx: HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-02-23 11:09:59,476 [INFO] google_genai.models: AFC is enabled with max remote calls: 10.
+2026-02-23 11:10:13,631 [INFO] httpx: HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-02-23 11:27:13,679 [INFO] google_genai.models: AFC is enabled with max remote calls: 10.
+2026-02-23 11:27:36,264 [INFO] httpx: HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-02-23 11:34:11,462 [INFO] google_genai.models: AFC is enabled with max remote calls: 10.
+2026-02-23 11:34:47,369 [INFO] httpx: HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-02-23 11:46:50,789 [INFO] google_genai.models: AFC is enabled with max remote calls: 10.
+2026-02-23 11:47:27,947 [INFO] httpx: HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-02-23 11:47:33,217 [INFO] src.core.pdf_exporter: PDF export - filas detectadas: header=14, summary=91 (last_obra=91)
+2026-02-23 11:47:33,259 [INFO] src.core.pdf_exporter: Page config aplicada al xlsx: C:/Users/SERGIO GOMARIZ.IT/Documents/Dev/PRESUPUESTOS 2026-20260223T080457Z-1-001/PRESUPUESTOS 2026/PRESUPUESTOS 2026/TERMINADO\74-26 C.P. PLAZA LUCEROS, 18 - ALICANTE (FILTR. SALÓN_DORMT. 9º A)\74-26 C.P. PLAZA LUCEROS, 18 - ALICANTE (FILTR. SALÓN_DORMT. 9º A).xlsx (rowBreaks=True, PrintTitles=True)
+2026-02-23 11:47:33,266 [INFO] src.core.excel_manager: Page config aplicada: C:/Users/SERGIO GOMARIZ.IT/Documents/Dev/PRESUPUESTOS 2026-20260223T080457Z-1-001/PRESUPUESTOS 2026/PRESUPUESTOS 2026/TERMINADO\74-26 C.P. PLAZA LUCEROS, 18 - ALICANTE (FILTR. SALÓN_DORMT. 9º A)\74-26 C.P. PLAZA LUCEROS, 18 - ALICANTE (FILTR. SALÓN_DORMT. 9º A).xlsx (header=14, summary=91)
+2026-02-23 11:57:16,593 [INFO] google_genai.models: AFC is enabled with max remote calls: 10.
+2026-02-23 11:57:48,689 [INFO] httpx: HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-02-23 11:57:50,586 [INFO] src.core.pdf_exporter: PDF export - filas detectadas: header=14, summary=95 (last_obra=95)
+2026-02-23 11:57:50,651 [INFO] src.core.pdf_exporter: Page config aplicada al xlsx: C:/Users/SERGIO GOMARIZ.IT/Documents/Dev/PRESUPUESTOS 2026-20260223T080457Z-1-001/PRESUPUESTOS 2026/PRESUPUESTOS 2026/TERMINADO\72-25 C.P. AZALEA GOLF - ALICANTE (BOLARDOS (247_25))\72-25 C.P. AZALEA GOLF - ALICANTE (BOLARDOS (247_25)).xlsx (rowBreaks=True, PrintTitles=True)
+2026-02-23 11:57:50,652 [INFO] src.core.excel_manager: Page config aplicada: C:/Users/SERGIO GOMARIZ.IT/Documents/Dev/PRESUPUESTOS 2026-20260223T080457Z-1-001/PRESUPUESTOS 2026/PRESUPUESTOS 2026/TERMINADO\72-25 C.P. AZALEA GOLF - ALICANTE (BOLARDOS (247_25))\72-25 C.P. AZALEA GOLF - ALICANTE (BOLARDOS (247_25)).xlsx (header=14, summary=95)
+2026-02-23 12:18:12,789 [INFO] google_genai.models: AFC is enabled with max remote calls: 10.
+2026-02-23 12:18:44,292 [INFO] httpx: HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-02-23 12:18:46,560 [INFO] src.core.pdf_exporter: PDF export - filas detectadas: header=14, summary=73 (last_obra=73)
+2026-02-23 12:18:46,589 [INFO] src.core.pdf_exporter: Page config aplicada al xlsx: C:/Users/SERGIO GOMARIZ.IT/Documents/Dev/PRESUPUESTOS 2026-20260223T080457Z-1-001/PRESUPUESTOS 2026/PRESUPUESTOS 2026/TERMINADO\72-25 C.P. AZALEA GOLF - ALICANTE (BOLARDOS (247_25))\72-25 C.P. AZALEA GOLF - ALICANTE (BOLARDOS (247_25)).xlsx (rowBreak antes de fila 73)
+2026-02-23 12:18:46,642 [INFO] src.core.pdf_exporter: PDF export - filas detectadas: header=14, summary=73 (last_obra=73)
+2026-02-23 12:18:46,643 [INFO] src.core.pdf_exporter: insert_headers: win32com no disponible, omitido
+2026-02-23 12:18:46,644 [INFO] src.core.excel_manager: Page config aplicada: C:/Users/SERGIO GOMARIZ.IT/Documents/Dev/PRESUPUESTOS 2026-20260223T080457Z-1-001/PRESUPUESTOS 2026/PRESUPUESTOS 2026/TERMINADO\72-25 C.P. AZALEA GOLF - ALICANTE (BOLARDOS (247_25))\72-25 C.P. AZALEA GOLF - ALICANTE (BOLARDOS (247_25)).xlsx (header=14, summary=73)
+2026-02-23 12:28:15,687 [INFO] google_genai.models: AFC is enabled with max remote calls: 10.
+2026-02-23 12:28:56,920 [INFO] httpx: HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-02-23 12:29:14,313 [INFO] src.core.pdf_exporter: PDF export - filas detectadas: header=14, summary=81 (last_obra=81)
+2026-02-23 12:29:14,340 [INFO] src.core.pdf_exporter: Page config aplicada al xlsx: C:/Users/SERGIO GOMARIZ.IT/Documents/Dev/PRESUPUESTOS 2026-20260223T080457Z-1-001/PRESUPUESTOS 2026/PRESUPUESTOS 2026/TERMINADO\54-26 C.P. Enrique Monsonis Domingo 33 (FILTRACIONES TEJADO 7º C Y D)\54-26 C.P. Enrique Monsonis Domingo 33 (FILTRACIONES TEJADO 7º C Y D).xlsx (rowBreak antes de fila 81)
+2026-02-23 12:29:14,395 [INFO] src.core.pdf_exporter: PDF export - filas detectadas: header=14, summary=81 (last_obra=81)
+2026-02-23 12:29:14,396 [WARNING] src.core.pdf_exporter: insert_headers: CoInitialize falló: No module named 'pythoncom'
+2026-02-23 12:29:14,397 [ERROR] src.core.pdf_exporter: insert_headers: error - No module named 'win32com' [ModuleNotFoundError]
+2026-02-23 12:29:14,398 [INFO] src.core.excel_manager: Page config aplicada: C:/Users/SERGIO GOMARIZ.IT/Documents/Dev/PRESUPUESTOS 2026-20260223T080457Z-1-001/PRESUPUESTOS 2026/PRESUPUESTOS 2026/TERMINADO\54-26 C.P. Enrique Monsonis Domingo 33 (FILTRACIONES TEJADO 7º C Y D)\54-26 C.P. Enrique Monsonis Domingo 33 (FILTRACIONES TEJADO 7º C Y D).xlsx (header=14, summary=81)
+2026-02-23 12:35:41,641 [INFO] google_genai.models: AFC is enabled with max remote calls: 10.
+2026-02-23 12:36:27,987 [INFO] httpx: HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-02-23 12:36:30,596 [INFO] src.core.pdf_exporter: PDF export - filas detectadas: header=14, summary=95 (last_obra=95)
+2026-02-23 12:36:30,635 [INFO] src.core.pdf_exporter: Page config aplicada al xlsx: C:/Users/SERGIO GOMARIZ.IT/Documents/Dev/PRESUPUESTOS 2026-20260223T080457Z-1-001/PRESUPUESTOS 2026/PRESUPUESTOS 2026/TERMINADO\69-26 CP ELDA, 13 (IMPERM CUBIERTA)\69-26 CP ELDA, 13 (IMPERM CUBIERTA).xlsx (rowBreak antes de fila 95)
+2026-02-23 12:36:30,685 [INFO] src.core.pdf_exporter: PDF export - filas detectadas: header=14, summary=95 (last_obra=95)
+2026-02-23 12:36:31,904 [INFO] src.core.pdf_exporter: insert_headers: saltos detectados=[29, 45, 61, 77] (summary=95)
+2026-02-23 12:36:32,112 [INFO] src.core.pdf_exporter: insert_headers: 4 encabezados insertados en C:/Users/SERGIO GOMARIZ.IT/Documents/Dev/PRESUPUESTOS 2026-20260223T080457Z-1-001/PRESUPUESTOS 2026/PRESUPUESTOS 2026/TERMINADO\69-26 CP ELDA, 13 (IMPERM CUBIERTA)\69-26 CP ELDA, 13 (IMPERM CUBIERTA).xlsx
+2026-02-23 12:36:32,767 [INFO] src.core.excel_manager: Page config aplicada: C:/Users/SERGIO GOMARIZ.IT/Documents/Dev/PRESUPUESTOS 2026-20260223T080457Z-1-001/PRESUPUESTOS 2026/PRESUPUESTOS 2026/TERMINADO\69-26 CP ELDA, 13 (IMPERM CUBIERTA)\69-26 CP ELDA, 13 (IMPERM CUBIERTA).xlsx (header=14, summary=95)
+2026-02-23 12:43:22,838 [INFO] google_genai.models: AFC is enabled with max remote calls: 10.
+2026-02-23 12:44:25,487 [INFO] httpx: HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-02-23 12:44:27,453 [INFO] src.core.pdf_exporter: PDF export - filas detectadas: header=14, summary=123 (last_obra=123)
+2026-02-23 12:44:27,485 [INFO] src.core.pdf_exporter: Page config aplicada al xlsx: C:/Users/SERGIO GOMARIZ.IT/Documents/Dev/PRESUPUESTOS 2026-20260223T080457Z-1-001/PRESUPUESTOS 2026/PRESUPUESTOS 2026/TERMINADO\71-26 C.P. ALVAREZ QUINTERO, 30 - SAN VICENTE (REHAB. FACHADA)\71-26 C.P. ALVAREZ QUINTERO, 30 - SAN VICENTE (REHAB. FACHADA).xlsx (rowBreak antes de fila 123)
+2026-02-23 12:44:27,528 [INFO] src.core.pdf_exporter: PDF export - filas detectadas: header=14, summary=123 (last_obra=123)
+2026-02-23 12:44:27,630 [ERROR] src.core.pdf_exporter: insert_headers: error - (-2147352567, 'Ocurrió una excepción.', (0, None, None, None, 0, -786431), None) [com_error]
+2026-02-23 12:44:27,765 [INFO] src.core.excel_manager: Page config aplicada: C:/Users/SERGIO GOMARIZ.IT/Documents/Dev/PRESUPUESTOS 2026-20260223T080457Z-1-001/PRESUPUESTOS 2026/PRESUPUESTOS 2026/TERMINADO\71-26 C.P. ALVAREZ QUINTERO, 30 - SAN VICENTE (REHAB. FACHADA)\71-26 C.P. ALVAREZ QUINTERO, 30 - SAN VICENTE (REHAB. FACHADA).xlsx (header=14, summary=123)
+2026-02-23 12:47:56,251 [INFO] google_genai.models: AFC is enabled with max remote calls: 10.
+2026-02-23 12:48:32,894 [INFO] httpx: HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-02-23 12:48:42,708 [INFO] src.core.pdf_exporter: PDF export - filas detectadas: header=14, summary=89 (last_obra=89)
+2026-02-23 12:48:42,754 [INFO] src.core.pdf_exporter: PDF export - filas detectadas: header=14, summary=89 (last_obra=89)
+2026-02-23 12:48:42,869 [ERROR] src.core.pdf_exporter: insert_headers: error - (-2147352567, 'Ocurrió una excepción.', (0, None, None, None, 0, -786431), None) [com_error]
+2026-02-23 12:48:43,175 [INFO] src.core.pdf_exporter: Page config aplicada al xlsx: C:/Users/SERGIO GOMARIZ.IT/Documents/Dev/PRESUPUESTOS 2026-20260223T080457Z-1-001/PRESUPUESTOS 2026/PRESUPUESTOS 2026/TERMINADO\71-26 C.P. ALVAREZ QUINTERO, 30 - SAN VICENTE (REHAB. FACHADA)\71-26 C.P. ALVAREZ QUINTERO, 30 - SAN VICENTE (REHAB. FACHADA).xlsx (rowBreak antes de fila 89)
+2026-02-23 12:48:43,179 [INFO] src.core.excel_manager: Page config aplicada: C:/Users/SERGIO GOMARIZ.IT/Documents/Dev/PRESUPUESTOS 2026-20260223T080457Z-1-001/PRESUPUESTOS 2026/PRESUPUESTOS 2026/TERMINADO\71-26 C.P. ALVAREZ QUINTERO, 30 - SAN VICENTE (REHAB. FACHADA)\71-26 C.P. ALVAREZ QUINTERO, 30 - SAN VICENTE (REHAB. FACHADA).xlsx (header=14, summary=89, com=False)
+2026-02-23 12:56:47,770 [INFO] google_genai.models: AFC is enabled with max remote calls: 10.
+2026-02-23 12:57:09,374 [INFO] httpx: HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-02-23 12:57:14,054 [INFO] src.core.pdf_exporter: PDF export - filas detectadas: header=14, summary=67 (last_obra=67)
+2026-02-23 12:57:14,090 [INFO] src.core.pdf_exporter: PDF export - filas detectadas: header=14, summary=67 (last_obra=67)
+2026-02-23 12:57:14,577 [ERROR] src.core.pdf_exporter: insert_headers: worker error - (-2147352567, 'Ocurrió una excepción.', (0, None, 'No se encontró"C:\\Users\\SERGIO GOMARIZ.IT\\Documents\\Dev\\PRESUPUESTOS 2026-20260223T080457Z-1-001\\PRESUPUESTOS 2026\\PRESUPUESTOS 2026\\TERMINADO\\73-26 C.P. PLAZA LUCEROS, 18 - ALICANTE (FILTR. BAÑO 9º B (MAR))\\73-26 C.P. PLAZA LUCEROS, 18 - ALICANTE (FILTR. BAÑO 9º B (MAR)).xlsx". Compruebe la ortografía del nombre del archivo y si su ubicación es correcta.Si intenta abrir el archivo desde la lista de los usados recientemente, asegúrese de que no se ha cambiado el nombre del archivo, ni se ha  movido o eliminado.', None, 0, -2146827284), None)
+2026-02-23 12:57:14,599 [INFO] src.core.pdf_exporter: Page config aplicada al xlsx: C:/Users/SERGIO GOMARIZ.IT/Documents/Dev/PRESUPUESTOS 2026-20260223T080457Z-1-001/PRESUPUESTOS 2026/PRESUPUESTOS 2026/TERMINADO\73-26 C.P. PLAZA LUCEROS, 18 - ALICANTE (FILTR. BAÑO 9º B (MAR))\73-26 C.P. PLAZA LUCEROS, 18 - ALICANTE (FILTR. BAÑO 9º B (MAR)).xlsx (rowBreak antes de fila 67)
+2026-02-23 12:57:14,602 [INFO] src.core.excel_manager: Page config aplicada: C:/Users/SERGIO GOMARIZ.IT/Documents/Dev/PRESUPUESTOS 2026-20260223T080457Z-1-001/PRESUPUESTOS 2026/PRESUPUESTOS 2026/TERMINADO\73-26 C.P. PLAZA LUCEROS, 18 - ALICANTE (FILTR. BAÑO 9º B (MAR))\73-26 C.P. PLAZA LUCEROS, 18 - ALICANTE (FILTR. BAÑO 9º B (MAR)).xlsx (header=14, summary=67, com=False)
+2026-02-23 13:00:08,427 [INFO] google_genai.models: AFC is enabled with max remote calls: 10.
+2026-02-23 13:00:27,987 [INFO] httpx: HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-02-23 13:00:57,377 [INFO] src.core.pdf_exporter: PDF export - filas detectadas: header=14, summary=79 (last_obra=79)
+2026-02-23 13:00:57,419 [INFO] src.core.pdf_exporter: PDF export - filas detectadas: header=14, summary=79 (last_obra=79)
+2026-02-23 13:00:58,886 [INFO] src.core.pdf_exporter: insert_headers: 3 encabezados insertados, breaks=[28, 48, 67, 88] (C:/Users/SERGIO GOMARIZ.IT/Documents/Dev/PRESUPUESTOS 2026-20260223T080457Z-1-001/PRESUPUESTOS 2026/PRESUPUESTOS 2026/TERMINADO\54-26 C.P. Enrique Monsonis Domingo 33 (FILTRACIONES TEJADO 7º C Y D)\54-26 C.P. Enrique Monsonis Domingo 33 (FILTRACIONES TEJADO 7º C Y D).xlsx)
+2026-02-23 13:00:58,886 [INFO] src.core.excel_manager: Page config aplicada: C:/Users/SERGIO GOMARIZ.IT/Documents/Dev/PRESUPUESTOS 2026-20260223T080457Z-1-001/PRESUPUESTOS 2026/PRESUPUESTOS 2026/TERMINADO\54-26 C.P. Enrique Monsonis Domingo 33 (FILTRACIONES TEJADO 7º C Y D)\54-26 C.P. Enrique Monsonis Domingo 33 (FILTRACIONES TEJADO 7º C Y D).xlsx (header=14, summary=79, com=True)

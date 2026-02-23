@@ -314,6 +314,7 @@ class ExcelManager:
                         pass
                 raise
 
+            self._apply_page_config_after_write(file_path)
             return True
 
         except Exception as e:
@@ -793,6 +794,7 @@ class ExcelManager:
                         pass
                 raise
 
+            self._apply_page_config_after_write(file_path)
             return True
         except Exception as e:
             logger.exception("Error al actualizar campos")
@@ -1039,6 +1041,29 @@ class ExcelManager:
         except Exception as e:
             logger.exception("Error al añadir partidas")
             return False
+
+    @staticmethod
+    def _apply_page_config_after_write(file_path):
+        """Aplica configuración de página: encabezados físicos + salto antes del resumen.
+
+        Intenta COM primero (inserta encabezados + saltos manuales).
+        Si COM falla, aplica solo el salto XML antes del resumen como fallback.
+        """
+        try:
+            from src.core.pdf_exporter import PDFExporter
+            h_row, s_row = PDFExporter._find_obra_rows(file_path)
+
+            ok = PDFExporter.insert_headers_at_page_breaks(file_path)
+
+            if not ok and s_row:
+                PDFExporter.apply_page_config(file_path, h_row, s_row)
+
+            logger.info(
+                "Page config aplicada: %s (header=%s, summary=%s, com=%s)",
+                file_path, h_row, s_row, ok,
+            )
+        except Exception as exc:
+            logger.warning("Error al aplicar page config tras escribir: %s", exc)
 
     def load_budget(self, file_path):
         """

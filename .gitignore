@@ -53,3 +53,4 @@ test_outputs/
 
 # Logs de la aplicación
 .cubiapp_logs/
+.cubiapp_logs/cubiapp.log
