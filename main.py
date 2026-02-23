@@ -12,7 +12,7 @@ from PySide6.QtCore import QLibraryInfo, QLocale, Qt, QTranslator
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import QApplication
 
-from src.gui.main_frame_wx import MainFrame
+from src.gui.main_frame import MainFrame
 from src.gui import theme
 
 APP_BASE = Path(__file__).resolve().parent
@@ -25,7 +25,7 @@ def setup_windows_app_id():
             import ctypes
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("No se pudo establecer AppUserModelID")
 
 
 def get_logo_path():
@@ -102,7 +102,7 @@ def main():
                 import ctypes
                 ctypes.windll.user32.SetProcessDPIAware()
             except Exception:
-                pass
+                logging.getLogger(__name__).debug("No se pudo configurar DPI awareness")
 
     app = QApplication(sys.argv)
     app.setApplicationName("cubiApp")

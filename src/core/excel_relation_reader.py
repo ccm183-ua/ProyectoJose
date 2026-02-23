@@ -6,10 +6,12 @@ y devuelve los datos en el mismo formato que ``ProjectParser``.
 """
 
 import io
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
 from openpyxl import load_workbook
+
+from src.utils.budget_utils import EXCEL_EPOCH
 
 
 # Columnas esperadas (A–J) en el mismo orden que el TSV del portapapeles.
@@ -89,9 +91,21 @@ class ExcelRelationReader:
 
     @staticmethod
     def _format_date(value) -> str:
-        """Convierte un valor de celda a formato DD-MM-YY."""
+        """Convierte un valor de celda a formato DD-MM-YY.
+
+        Maneja tres casos:
+        - ``datetime`` nativo de openpyxl.
+        - Número serial de Excel (ej: 44174 → 06-12-20).
+        - Texto ya formateado (se devuelve tal cual).
+        """
         if isinstance(value, datetime):
             return value.strftime("%d-%m-%y")
+        if isinstance(value, (int, float)) and 1 < value < 200000:
+            try:
+                dt = EXCEL_EPOCH + timedelta(days=int(value))
+                return dt.strftime("%d-%m-%y")
+            except (OverflowError, ValueError):
+                pass
         if value is None:
             return ""
         text = str(value).strip()
@@ -113,12 +127,24 @@ class ExcelRelationReader:
         if not numero_str:
             return None
 
+        # Descartar filas de encabezado repetidas (el nº debe empezar por dígito)
+        if not numero_str[0].isdigit():
+            return None
+
         def _cell(idx: int) -> str:
             if idx >= len(row) or row[idx] is None:
                 return ""
             return str(row[idx]).strip()
 
         fecha = cls._format_date(row[1] if len(row) > 1 else None)
+        cliente = _cell(2)
+        calle = _cell(4)
+        localidad = _cell(7)
+        tipo = _cell(8)
+
+        # Descartar filas vacías (solo tienen número pero ningún dato)
+        if not any((fecha, cliente, calle, localidad, tipo)):
+            return None
 
         importe_raw = row[9] if len(row) > 9 else None
         importe = ""
@@ -131,12 +157,12 @@ class ExcelRelationReader:
         return {
             "numero": numero_str,
             "fecha": fecha,
-            "cliente": _cell(2),
+            "cliente": cliente,
             "mediacion": _cell(3),
-            "calle": _cell(4),
+            "calle": calle,
             "num_calle": _cell(5),
             "codigo_postal": _cell(6),
-            "localidad": _cell(7),
-            "tipo": _cell(8),
+            "localidad": localidad,
+            "tipo": tipo,
             "importe": importe,
         }

@@ -14,6 +14,12 @@ import re
 import zipfile
 from typing import Dict, List, Optional
 
+from src.core.xlsx_cell_utils import (
+    get_cell_number,
+    get_cell_value,
+    read_shared_strings_from_path,
+)
+
 logger = logging.getLogger(__name__)
 
 # Hoja de datos en la plantilla (PRESUP FINAL = sheet2)
@@ -64,98 +70,24 @@ class ExcelPartidasExtractor:
             pass
         return None
 
-    def _read_shared_strings(self, file_path: str) -> List[str]:
+    @staticmethod
+    def _read_shared_strings(file_path: str) -> List[str]:
         """Lee la tabla de shared strings del xlsx."""
-        try:
-            with zipfile.ZipFile(file_path, "r") as z:
-                ss_path = "xl/sharedStrings.xml"
-                if ss_path not in z.namelist():
-                    return []
-                ss_xml = z.read(ss_path).decode("utf-8")
-                # Extraer todos los <t>...</t> dentro de <si>...</si>
-                strings = []
-                for si_match in re.finditer(r'<si>(.*?)</si>', ss_xml, re.DOTALL):
-                    si_content = si_match.group(1)
-                    # Concatenar todos los <t> dentro del <si>
-                    texts = re.findall(r'<t[^>]*>([^<]*)</t>', si_content)
-                    strings.append(''.join(texts))
-                return strings
-        except (zipfile.BadZipFile, IOError):
-            return []
+        return read_shared_strings_from_path(file_path)
 
     def _extract_rows(self, sheet_xml: str) -> List[Dict]:
-        """
-        Extrae las filas del XML como lista de dicts {col: value}.
+        """Extrae filas como lista de dicts ``{num, cells}`` para compatibilidad."""
+        from src.core.xlsx_cell_utils import extract_rows as _extract
+        rows_dict = _extract(sheet_xml)
+        return [{"num": num, "cells": cells} for num, cells in sorted(rows_dict.items())]
 
-        Cada fila es un diccionario con las columnas (A, B, C, ...) como claves
-        y los valores de celda como valores.
-        """
-        rows = []
-        for row_match in re.finditer(r'<row r="(\d+)"[^>]*>(.*?)</row>', sheet_xml, re.DOTALL):
-            row_num = int(row_match.group(1))
-            row_content = row_match.group(2)
-            cells = {}
+    @staticmethod
+    def _get_cell_value(cell_info: Dict, shared_strings: List[str]) -> str:
+        return get_cell_value(cell_info, shared_strings)
 
-            for cell_match in re.finditer(
-                r'<c r="([A-Z]+)\d+"([^>]*)(?:/>|>(.*?)</c>)',
-                row_content, re.DOTALL
-            ):
-                col = cell_match.group(1)
-                attrs = cell_match.group(2)
-                inner = cell_match.group(3) or ""
-
-                cells[col] = {
-                    'attrs': attrs,
-                    'inner': inner,
-                    'row': row_num,
-                }
-
-            if cells:
-                rows.append({'num': row_num, 'cells': cells})
-
-        return rows
-
-    def _get_cell_value(self, cell_info: Dict, shared_strings: List[str]) -> str:
-        """
-        Extrae el valor textual de una celda.
-
-        Maneja tres tipos:
-        - inlineStr: <is><t>texto</t></is>
-        - sharedString (t="s"): <v>index</v> → shared_strings[index]
-        - valor directo: <v>valor</v>
-        """
-        attrs = cell_info.get('attrs', '')
-        inner = cell_info.get('inner', '')
-
-        # InlineStr
-        is_match = re.search(r'<is><t[^>]*>(.*?)</t></is>', inner, re.DOTALL)
-        if is_match:
-            return is_match.group(1).strip()
-
-        # Shared string
-        if 't="s"' in attrs:
-            v_match = re.search(r'<v>(\d+)</v>', inner)
-            if v_match:
-                idx = int(v_match.group(1))
-                if 0 <= idx < len(shared_strings):
-                    return shared_strings[idx].strip()
-
-        # Valor directo
-        v_match = re.search(r'<v>([^<]+)</v>', inner)
-        if v_match:
-            return v_match.group(1).strip()
-
-        return ""
-
-    def _get_cell_number(self, cell_info: Dict, shared_strings: List[str]) -> Optional[float]:
-        """Extrae un valor numérico de una celda."""
-        value = self._get_cell_value(cell_info, shared_strings)
-        if not value:
-            return None
-        try:
-            return float(value)
-        except (ValueError, TypeError):
-            return None
+    @staticmethod
+    def _get_cell_number(cell_info: Dict, shared_strings: List[str]) -> Optional[float]:
+        return get_cell_number(cell_info, shared_strings)
 
     def _parse_partidas(self, rows: List[Dict], shared_strings: List[str]) -> List[Dict]:
         """

@@ -14,7 +14,9 @@ import os
 import sqlite3
 import subprocess
 import sys
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterator
 
 
 def get_db_path() -> Path:
@@ -71,6 +73,22 @@ def connect(read_only: bool = False) -> sqlite3.Connection:
         init_schema(conn)
 
     return conn
+
+
+@contextmanager
+def get_connection(read_only: bool = False) -> Iterator[sqlite3.Connection]:
+    """Context manager que abre y cierra automáticamente la conexión SQLite.
+
+    Uso::
+
+        with get_connection() as conn:
+            conn.execute("SELECT ...")
+    """
+    conn = connect(read_only=read_only)
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 def _migrate_administracion_nombre(conn: sqlite3.Connection) -> None:
@@ -181,6 +199,36 @@ CREATE TABLE IF NOT EXISTS historial_presupuesto (
     total_presupuesto REAL
 );
 CREATE INDEX IF NOT EXISTS idx_historial_fecha ON historial_presupuesto(fecha_ultimo_acceso);
+
+-- Cache de presupuestos escaneados (evita re-leer Excels si no han cambiado)
+CREATE TABLE IF NOT EXISTS presupuesto (
+    id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+    numero_proyecto          TEXT,
+    nombre_proyecto          TEXT NOT NULL,
+    ruta_excel               TEXT UNIQUE,
+    ruta_carpeta             TEXT,
+    estado                   TEXT,
+    cliente                  TEXT,
+    localidad                TEXT,
+    tipo_obra                TEXT,
+    fecha                    TEXT,
+    total                    REAL,
+    subtotal                 REAL,
+    iva                      REAL,
+    obra_descripcion         TEXT,
+    cif_admin                TEXT,
+    email_admin              TEXT,
+    telefono_admin           TEXT,
+    codigo_postal            TEXT,
+    comunidad_id             INTEGER REFERENCES comunidad(id) ON DELETE SET NULL,
+    administracion_id        INTEGER REFERENCES administracion(id) ON DELETE SET NULL,
+    fecha_modificacion_excel TEXT NOT NULL,
+    fecha_cache              TEXT NOT NULL,
+    datos_completos          INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_presupuesto_numero ON presupuesto(numero_proyecto);
+CREATE INDEX IF NOT EXISTS idx_presupuesto_estado ON presupuesto(estado);
+CREATE INDEX IF NOT EXISTS idx_presupuesto_ruta ON presupuesto(ruta_excel);
 """
 
 

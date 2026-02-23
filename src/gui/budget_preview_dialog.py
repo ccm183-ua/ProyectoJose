@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
-from src.core.budget_reader import BudgetReader
+from src.core.services import BudgetService
 from src.gui import theme
 from src.utils.helpers import run_in_background
 
@@ -93,7 +93,7 @@ class BudgetPreviewDialog(QDialog):
         self._scroll_layout.addWidget(lbl_loading)
 
         def _read():
-            return BudgetReader().read(self._file_path)
+            return BudgetService().read_budget(self._file_path)
 
         def _on_done(ok, payload):
             self._clear_scroll()
