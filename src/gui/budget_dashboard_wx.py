@@ -3,9 +3,18 @@ Dashboard de presupuestos existentes (PySide6).
 
 Muestra los presupuestos organizados por carpetas de estado (pestañas
 dinámicas) a partir de la ruta configurada en PATH_OPEN_BUDGETS.
+
+Funcionalidades:
+- Columnas redimensionables (arrastrar bordes de cabecera).
+- Ordenación por cualquier columna (clic en cabecera).
+- Menú contextual para mover proyectos entre carpetas de estado.
+- Toggle entre vista Excel y vista explorador de archivos.
+- Orden personalizado de pestañas.
 """
 
 import os
+import re
+import shutil
 import subprocess
 import sys
 
@@ -18,10 +27,13 @@ from PySide6.QtWidgets import (
 )
 
 from src.core import folder_scanner
+from src.core.budget_cache import cleanup_orphaned_cache
 from src.core.project_data_resolver import build_relation_index, resolve_projects
 from src.core.settings import Settings
 from src.gui import theme
 from src.utils.helpers import run_in_background
+
+# ── Columnas del modo presupuestos ────────────────────────────────────
 
 _COLUMNS = [
     ("Proyecto", 220),
@@ -32,7 +44,96 @@ _COLUMNS = [
     ("Total", 100),
 ]
 
+# ── Columnas del modo explorador ──────────────────────────────────────
+
+_EXPLORER_COLUMNS = [
+    ("Nombre", 320),
+    ("Extensión", 80),
+    ("Tamaño", 90),
+    ("Fecha modificación", 140),
+]
+
 _SEARCH_KEYS = ("nombre_proyecto", "cliente", "localidad", "tipo_obra", "numero")
+
+# Rol de datos para almacenar la referencia al dict de datos original en los ítems
+_DATA_REF_ROLE = Qt.ItemDataRole.UserRole + 1
+
+# ── Orden personalizado de pestañas ───────────────────────────────────
+
+_TAB_ORDER = [
+    "PTE. PRESUPUESTAR",
+    "PRESUPUESTADO",
+    "EJECUTAR",
+    "EJECUTANDO",
+    "TERMINADO",
+    "ANULADOS",
+    "MODELO INFORME",
+    "MODELOS DE PRESUPUESTOS",
+]
+
+# Carpetas que son estados de proyecto (para menú "Mover a...")
+_STATE_FOLDERS = [
+    "PTE. PRESUPUESTAR",
+    "PRESUPUESTADO",
+    "EJECUTAR",
+    "EJECUTANDO",
+    "TERMINADO",
+    "ANULADOS",
+]
+
+
+def _sort_tabs(states: list[str]) -> list[str]:
+    """Ordena las pestañas según ``_TAB_ORDER``; las no listadas van al final."""
+    order_map = {name.upper(): i for i, name in enumerate(_TAB_ORDER)}
+    return sorted(states, key=lambda s: order_map.get(s.upper(), 999))
+
+
+# ── Parseo de número de proyecto para ordenación numérica ─────────────
+
+_RE_PROJECT_NUM = re.compile(r"(\d{1,4})-(\d{2})")
+
+
+def _project_sort_key(numero: str) -> float:
+    """Convierte un número de proyecto como '71-26' en un valor numérico
+    para ordenación correcta.  Resultado: ``año * 10000 + número``.
+
+    Ejemplos:
+        '71-26' → 260071   (año 26, proyecto 71)
+        '9-26'  → 260009
+        '8-26'  → 260008
+    Si no se puede parsear, devuelve -1 para que quede al final.
+    """
+    m = _RE_PROJECT_NUM.search(numero)
+    if m:
+        num = int(m.group(1))
+        year = int(m.group(2))
+        return year * 10000 + num
+    return -1.0
+
+
+# ── QTableWidgetItem con ordenación inteligente ───────────────────────
+
+class _SortableItem(QTableWidgetItem):
+    """Item de tabla que permite ordenar correctamente por valor subyacente.
+
+    Almacena el valor real (float, str) en ``Qt.UserRole`` y lo usa
+    para la comparación ``<`` en lugar del texto visible.
+    """
+
+    def __init__(self, display_text: str, sort_value=None):
+        super().__init__(display_text)
+        self.setData(Qt.ItemDataRole.UserRole, sort_value if sort_value is not None else display_text)
+
+    def __lt__(self, other: QTableWidgetItem):
+        my_val = self.data(Qt.ItemDataRole.UserRole)
+        other_val = other.data(Qt.ItemDataRole.UserRole) if other else None
+
+        # Ambos numéricos → comparar como float
+        if isinstance(my_val, (int, float)) and isinstance(other_val, (int, float)):
+            return my_val < other_val
+
+        # Ambos str → comparar como str case-insensitive
+        return str(my_val or "").lower() < str(other_val or "").lower()
 
 
 class BudgetDashboardFrame(QMainWindow):
@@ -50,6 +151,8 @@ class BudgetDashboardFrame(QMainWindow):
         self._tab_searches: dict[str, QLineEdit] = {}
         self._state_names: list[str] = []
         self._relation_index: dict = {}
+        self._root_path: str = ""
+        self._explorer_mode: bool = False
 
         self._build_ui()
         self._center()
@@ -82,6 +185,17 @@ class BudgetDashboardFrame(QMainWindow):
         top_row = QHBoxLayout()
         title = theme.create_title(header, "Presupuestos", "2xl")
         top_row.addWidget(title, 1)
+
+        # Botón toggle explorador / Excel
+        self._btn_toggle_mode = QPushButton("Explorador", header)
+        self._btn_toggle_mode.setFont(theme.font_base())
+        self._btn_toggle_mode.setFixedHeight(36)
+        self._btn_toggle_mode.setCheckable(True)
+        self._btn_toggle_mode.setToolTip(
+            "Alternar entre vista de presupuestos Excel y explorador de archivos"
+        )
+        self._btn_toggle_mode.clicked.connect(self._on_toggle_mode)
+        top_row.addWidget(self._btn_toggle_mode)
 
         btn_refresh = QPushButton("\u27F3 Actualizar", header)
         btn_refresh.setFont(theme.font_base())
@@ -136,6 +250,27 @@ class BudgetDashboardFrame(QMainWindow):
         return btn
 
     # ------------------------------------------------------------------
+    # Toggle modo explorador / Excel
+    # ------------------------------------------------------------------
+
+    def _on_toggle_mode(self):
+        self._explorer_mode = self._btn_toggle_mode.isChecked()
+        if self._explorer_mode:
+            self._btn_toggle_mode.setText("Solo Excel")
+            self._btn_toggle_mode.setToolTip("Volver a la vista de presupuestos Excel")
+        else:
+            self._btn_toggle_mode.setText("Explorador")
+            self._btn_toggle_mode.setToolTip(
+                "Alternar entre vista de presupuestos Excel y explorador de archivos"
+            )
+        # Reconstruir pestañas manteniendo estado
+        if self._state_names and self._root_path:
+            current_tab = self._notebook.currentIndex()
+            self._rebuild_tabs(self._state_names, self._root_path)
+            if 0 <= current_tab < self._notebook.count():
+                self._notebook.setCurrentIndex(current_tab)
+
+    # ------------------------------------------------------------------
     # Carga de datos
     # ------------------------------------------------------------------
 
@@ -148,6 +283,7 @@ class BudgetDashboardFrame(QMainWindow):
             )
             return
 
+        self._root_path = root_path
         self._subtitle.setText(root_path)
         self._show_empty_state("Cargando presupuestos\u2026")
         self._set_toolbar_enabled(False)
@@ -167,6 +303,8 @@ class BudgetDashboardFrame(QMainWindow):
             if not states:
                 self._show_empty_state("No se encontraron subcarpetas en:\n" + root_path)
                 return
+            # Ordenar según _TAB_ORDER
+            states = _sort_tabs(states)
             self._rebuild_tabs(states, root_path)
 
         run_in_background(_scan, _on_done)
@@ -186,40 +324,105 @@ class BudgetDashboardFrame(QMainWindow):
 
         for state_name in states:
             state_dir = os.path.join(root_path, state_name)
-            scanned = folder_scanner.scan_projects(state_dir)
-            resolved = resolve_projects(scanned, self._relation_index)
-            self._tab_data[state_name] = resolved
 
             tab_widget = QWidget()
             tab_layout = QVBoxLayout(tab_widget)
-            tab_layout.setContentsMargins(theme.SPACE_MD, theme.SPACE_MD, theme.SPACE_MD, theme.SPACE_SM)
+            tab_layout.setContentsMargins(
+                theme.SPACE_MD, theme.SPACE_MD, theme.SPACE_MD, theme.SPACE_SM
+            )
 
             search_widget, search_ctrl = self._create_search_box(tab_widget, state_name)
             tab_layout.addWidget(search_widget)
             self._tab_searches[state_name] = search_ctrl
 
-            table = QTableWidget(tab_widget)
-            table.setColumnCount(len(_COLUMNS))
-            table.setHorizontalHeaderLabels([c[0] for c in _COLUMNS])
-            for i, (_, w) in enumerate(_COLUMNS):
-                table.setColumnWidth(i, w)
-            table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-            table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-            table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
-            table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-            table.setAlternatingRowColors(True)
-            table.verticalHeader().setVisible(False)
-            table.doubleClicked.connect(self._on_item_dblclick)
-            table.itemSelectionChanged.connect(self._update_buttons)
-            tab_layout.addWidget(table, 1)
+            if self._explorer_mode:
+                # --- Modo explorador ---
+                explorer_data = folder_scanner.scan_explorer(state_dir)
+                self._tab_data[state_name] = explorer_data
 
-            self._tab_tables[state_name] = table
-            self._notebook.addTab(tab_widget, f"  {state_name}  ")
+                table = QTableWidget(tab_widget)
+                table.setColumnCount(len(_EXPLORER_COLUMNS))
+                table.setHorizontalHeaderLabels([c[0] for c in _EXPLORER_COLUMNS])
+                for i, (_, w) in enumerate(_EXPLORER_COLUMNS):
+                    table.setColumnWidth(i, w)
+
+                hdr = table.horizontalHeader()
+                hdr.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+                hdr.setStretchLastSection(True)
+
+                table.setSortingEnabled(True)
+                table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+                table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+                table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+                table.setAlternatingRowColors(True)
+                table.verticalHeader().setVisible(False)
+                table.doubleClicked.connect(self._on_explorer_dblclick)
+                table.itemSelectionChanged.connect(self._update_buttons)
+                table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+                table.customContextMenuRequested.connect(
+                    lambda pos, sn=state_name: self._on_explorer_context_menu(pos, sn)
+                )
+                tab_layout.addWidget(table, 1)
+
+                self._tab_tables[state_name] = table
+                self._notebook.addTab(tab_widget, f"  {state_name}  ")
+            else:
+                # --- Modo presupuestos (original) ---
+                scanned = folder_scanner.scan_projects(state_dir)
+                resolved = resolve_projects(scanned, self._relation_index, state_name)
+                self._tab_data[state_name] = resolved
+
+                table = QTableWidget(tab_widget)
+                table.setColumnCount(len(_COLUMNS))
+                table.setHorizontalHeaderLabels([c[0] for c in _COLUMNS])
+                for i, (_, w) in enumerate(_COLUMNS):
+                    table.setColumnWidth(i, w)
+
+                # Columnas redimensionables
+                hdr = table.horizontalHeader()
+                hdr.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+                hdr.setStretchLastSection(True)
+
+                # Ordenación habilitada
+                table.setSortingEnabled(True)
+
+                table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+                table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+                table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+                table.setAlternatingRowColors(True)
+                table.verticalHeader().setVisible(False)
+                table.doubleClicked.connect(self._on_item_dblclick)
+                table.itemSelectionChanged.connect(self._update_buttons)
+
+                # Menú contextual (clic derecho)
+                table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+                table.customContextMenuRequested.connect(
+                    lambda pos, sn=state_name: self._on_context_menu(pos, sn)
+                )
+                tab_layout.addWidget(table, 1)
+
+                self._tab_tables[state_name] = table
+                self._notebook.addTab(tab_widget, f"  {state_name}  ")
 
         self._notebook.blockSignals(False)
 
         for state_name in states:
-            self._populate_table(state_name)
+            if self._explorer_mode:
+                self._populate_explorer_table(state_name)
+            else:
+                self._populate_table(state_name)
+
+        # Limpiar cache de presupuestos que ya no existen en disco
+        if not self._explorer_mode:
+            all_rutas = []
+            for state_name in states:
+                for proj in self._tab_data.get(state_name, []):
+                    ruta = proj.get("ruta_excel", "")
+                    if ruta:
+                        all_rutas.append(ruta)
+            if all_rutas:
+                cleanup_orphaned_cache(all_rutas)
+
         self._update_buttons()
 
     def _show_empty_state(self, message):
@@ -266,7 +469,10 @@ class BudgetDashboardFrame(QMainWindow):
         return search_widget, search
 
     def _on_search(self, state_name):
-        self._populate_table(state_name)
+        if self._explorer_mode:
+            self._populate_explorer_table(state_name)
+        else:
+            self._populate_table(state_name)
 
     def _filter_rows(self, rows, query):
         q = (query or "").strip().lower()
@@ -281,14 +487,24 @@ class BudgetDashboardFrame(QMainWindow):
                     break
         return out
 
+    def _filter_explorer_rows(self, rows, query):
+        q = (query or "").strip().lower()
+        if not q:
+            return rows
+        return [r for r in rows if q in r.get("nombre", "").lower()]
+
     # ------------------------------------------------------------------
-    # Poblar tabla
+    # Poblar tabla (modo presupuestos)
     # ------------------------------------------------------------------
 
     def _populate_table(self, state_name):
         table = self._tab_tables.get(state_name)
         if table is None:
             return
+
+        # Deshabilitar sort mientras se insertan items
+        table.setSortingEnabled(False)
+
         rows = self._tab_data.get(state_name, [])
         search_ctrl = self._tab_searches.get(state_name)
         query = search_ctrl.text() if search_ctrl else ""
@@ -296,39 +512,346 @@ class BudgetDashboardFrame(QMainWindow):
 
         table.setRowCount(len(filtered))
         for i, proj in enumerate(filtered):
-            has_excel = bool(proj.get("ruta_excel")) and os.path.exists(proj.get("ruta_excel", ""))
+            has_excel = bool(proj.get("ruta_excel")) and os.path.exists(
+                proj.get("ruta_excel", "")
+            )
             nombre = proj.get("nombre_proyecto", "")
             if not has_excel:
                 nombre = f"\u26A0 {nombre}"
 
-            table.setItem(i, 0, QTableWidgetItem(nombre))
-            table.setItem(i, 1, QTableWidgetItem(proj.get("cliente", "")))
-            table.setItem(i, 2, QTableWidgetItem(proj.get("localidad", "")))
-            table.setItem(i, 3, QTableWidgetItem(proj.get("tipo_obra", "")))
+            # Columna 0: Proyecto (sort numérico por nº de proyecto, ej: 71-26 → 260071)
+            numero = proj.get("numero", "")
+            sort_key = _project_sort_key(numero)
+            item_name = _SortableItem(nombre, sort_key)
+            # Almacenar referencia al dict original para recuperarlo tras sorting
+            item_name.setData(_DATA_REF_ROLE, i)
+            table.setItem(i, 0, item_name)
 
+            # Columna 1: Cliente
+            cliente = proj.get("cliente", "")
+            table.setItem(i, 1, _SortableItem(cliente, cliente.lower()))
+
+            # Columna 2: Localidad
+            localidad = proj.get("localidad", "")
+            table.setItem(i, 2, _SortableItem(localidad, localidad.lower()))
+
+            # Columna 3: Tipo obra
+            tipo = proj.get("tipo_obra", "")
+            table.setItem(i, 3, _SortableItem(tipo, tipo.lower()))
+
+            # Columna 4: Fecha
             fecha_raw = proj.get("fecha", "")
-            table.setItem(i, 4, QTableWidgetItem(fecha_raw))
+            table.setItem(i, 4, _SortableItem(fecha_raw, fecha_raw))
 
+            # Columna 5: Total (sort numérico)
             total = proj.get("total")
             total_text = ""
+            sort_total = 0.0
             if total is not None:
                 try:
-                    t = f"{float(total):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                    t_val = float(total)
+                    sort_total = t_val
+                    t = (
+                        f"{t_val:,.2f}"
+                        .replace(",", "X")
+                        .replace(".", ",")
+                        .replace("X", ".")
+                    )
                     total_text = f"{t} \u20AC"
                 except (ValueError, TypeError):
                     pass
-            total_item = QTableWidgetItem(total_text)
-            total_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+
+            total_item = _SortableItem(total_text, sort_total)
+            total_item.setTextAlignment(
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+            )
             total_item.setFont(theme.get_font_bold(9))
             table.setItem(i, 5, total_item)
 
+            # Color según estado del presupuesto
+            datos_ok = proj.get("datos_completos", True)
             if not has_excel:
                 for col in range(table.columnCount()):
                     item = table.item(i, col)
                     if item:
                         item.setForeground(QColor(theme.TEXT_TERTIARY))
+            elif not datos_ok:
+                # Datos no disponibles: mostrar en naranja suave
+                for col in range(table.columnCount()):
+                    item = table.item(i, col)
+                    if item:
+                        item.setForeground(QColor("#D4860B"))
+                        item.setToolTip(
+                            "No se pudieron obtener los datos de este presupuesto. "
+                            "El Excel puede estar dañado o tener un formato inesperado."
+                        )
+
+        # Re-habilitar sort y aplicar orden por defecto: Proyecto descendente
+        table.setSortingEnabled(True)
+        table.sortItems(0, Qt.SortOrder.DescendingOrder)
+
+        # Mostrar aviso si hay presupuestos sin datos
+        sin_datos = sum(
+            1 for p in filtered
+            if not p.get("datos_completos", True)
+            and bool(p.get("ruta_excel")) and os.path.exists(p.get("ruta_excel", ""))
+        )
+        tab_idx = self._state_names.index(state_name) if state_name in self._state_names else -1
+        if sin_datos > 0 and tab_idx >= 0:
+            self._notebook.setTabText(
+                tab_idx, f"  {state_name} ({sin_datos} ⚠)  "
+            )
 
         self._update_buttons()
+
+    # ------------------------------------------------------------------
+    # Poblar tabla (modo explorador)
+    # ------------------------------------------------------------------
+
+    def _populate_explorer_table(self, state_name):
+        table = self._tab_tables.get(state_name)
+        if table is None:
+            return
+
+        table.setSortingEnabled(False)
+
+        rows = self._tab_data.get(state_name, [])
+        search_ctrl = self._tab_searches.get(state_name)
+        query = search_ctrl.text() if search_ctrl else ""
+        filtered = self._filter_explorer_rows(rows, query)
+
+        table.setRowCount(len(filtered))
+        for i, entry in enumerate(filtered):
+            nombre = entry.get("nombre", "")
+            es_carpeta = entry.get("es_carpeta", False)
+            prefix = "\U0001F4C1 " if es_carpeta else "\U0001F4C4 "
+
+            # Nombre
+            item_nombre = _SortableItem(prefix + nombre, nombre.lower())
+            item_nombre.setData(_DATA_REF_ROLE, i)
+            table.setItem(i, 0, item_nombre)
+
+            # Extensión
+            ext = entry.get("extension", "") if not es_carpeta else "Carpeta"
+            table.setItem(i, 1, _SortableItem(ext, ext.lower()))
+
+            # Tamaño
+            tamano = entry.get("tamano", 0)
+            if es_carpeta:
+                tam_text = ""
+                sort_tam = -1
+            elif tamano < 1024:
+                tam_text = f"{tamano} B"
+                sort_tam = tamano
+            elif tamano < 1024 * 1024:
+                tam_text = f"{tamano / 1024:.1f} KB"
+                sort_tam = tamano
+            else:
+                tam_text = f"{tamano / (1024 * 1024):.1f} MB"
+                sort_tam = tamano
+            item_tam = _SortableItem(tam_text, sort_tam)
+            item_tam.setTextAlignment(
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+            )
+            table.setItem(i, 2, item_tam)
+
+            # Fecha modificación
+            fecha = entry.get("fecha_modificacion", "")
+            table.setItem(i, 3, _SortableItem(fecha, fecha))
+
+            # Color para carpetas
+            if es_carpeta:
+                for col in range(table.columnCount()):
+                    item = table.item(i, col)
+                    if item:
+                        item.setForeground(QColor(theme.ACCENT_PRIMARY))
+
+        table.setSortingEnabled(True)
+        table.sortItems(0, Qt.SortOrder.AscendingOrder)
+        self._update_buttons()
+
+    # ------------------------------------------------------------------
+    # Menú contextual (modo presupuestos)
+    # ------------------------------------------------------------------
+
+    def _on_context_menu(self, pos, state_name):
+        table = self._tab_tables.get(state_name)
+        if table is None:
+            return
+
+        item = table.itemAt(pos)
+        if item is None:
+            return
+
+        row = item.row()
+        table.selectRow(row)
+
+        selected = self._get_selected()
+        if not selected:
+            return
+
+        menu = QMenu(self)
+
+        # Sub-menú "Mover a..."
+        move_menu = menu.addMenu("Mover a...")
+        for target_state in _STATE_FOLDERS:
+            # Buscar la carpeta real (case-insensitive)
+            real_name = self._find_real_folder_name(target_state)
+            if real_name and real_name.upper() != state_name.upper():
+                act = move_menu.addAction(target_state)
+                act.triggered.connect(
+                    lambda checked=False, tgt=real_name, proj=selected: self._move_project(
+                        proj, state_name, tgt
+                    )
+                )
+
+        if move_menu.isEmpty():
+            move_menu.setEnabled(False)
+
+        menu.addSeparator()
+
+        # Abrir carpeta
+        act_folder = menu.addAction("Abrir carpeta")
+        act_folder.triggered.connect(self._on_open_folder)
+
+        # Abrir excel
+        has_excel = bool(selected.get("ruta_excel")) and os.path.exists(
+            selected.get("ruta_excel", "")
+        )
+        act_excel = menu.addAction("Abrir Excel")
+        act_excel.setEnabled(has_excel)
+        act_excel.triggered.connect(self._on_open_excel)
+
+        menu.exec(table.viewport().mapToGlobal(pos))
+
+    def _find_real_folder_name(self, target_upper: str) -> str:
+        """Busca el nombre real de la carpeta en disco (respetando mayúsculas reales)."""
+        if not self._root_path:
+            return ""
+        try:
+            for entry in os.listdir(self._root_path):
+                if entry.upper() == target_upper.upper():
+                    full = os.path.join(self._root_path, entry)
+                    if os.path.isdir(full):
+                        return entry
+        except OSError:
+            pass
+        return ""
+
+    def _move_project(self, project: dict, from_state: str, to_state: str):
+        """Mueve la carpeta de un proyecto de un estado a otro."""
+        src_folder = project.get("ruta_carpeta", "")
+        if not src_folder or not os.path.isdir(src_folder):
+            QMessageBox.warning(
+                self, "Error",
+                "No se encontró la carpeta del proyecto."
+            )
+            return
+
+        folder_name = os.path.basename(src_folder)
+        dest_folder = os.path.join(self._root_path, to_state, folder_name)
+
+        if os.path.exists(dest_folder):
+            QMessageBox.warning(
+                self, "Error",
+                f"Ya existe una carpeta con el mismo nombre en {to_state}:\n{dest_folder}"
+            )
+            return
+
+        confirm = QMessageBox.question(
+            self, "Mover proyecto",
+            f"¿Mover '{folder_name}' de\n  {from_state}\na\n  {to_state}?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            shutil.move(src_folder, dest_folder)
+            QMessageBox.information(
+                self, "Movido",
+                f"Proyecto movido a {to_state}."
+            )
+            self._load_data()
+        except Exception as exc:
+            QMessageBox.critical(
+                self, "Error al mover",
+                f"No se pudo mover la carpeta:\n{exc}"
+            )
+
+    # ------------------------------------------------------------------
+    # Menú contextual (modo explorador)
+    # ------------------------------------------------------------------
+
+    def _on_explorer_context_menu(self, pos, state_name):
+        table = self._tab_tables.get(state_name)
+        if table is None:
+            return
+
+        item = table.itemAt(pos)
+        if item is None:
+            return
+
+        row = item.row()
+        table.selectRow(row)
+
+        # Recuperar el índice original almacenado en el item de la columna 0
+        first_item = table.item(row, 0)
+        if first_item is None:
+            return
+        data_idx = first_item.data(_DATA_REF_ROLE)
+
+        rows = self._tab_data.get(state_name, [])
+        search_ctrl = self._tab_searches.get(state_name)
+        query = search_ctrl.text() if search_ctrl else ""
+        filtered = self._filter_explorer_rows(rows, query)
+        if data_idx is None or data_idx >= len(filtered):
+            return
+
+        entry = filtered[data_idx]
+        ruta = entry.get("ruta", "")
+
+        menu = QMenu(self)
+        act_open = menu.addAction("Abrir")
+        act_open.triggered.connect(lambda: self._open_file(ruta) if ruta else None)
+
+        if not entry.get("es_carpeta"):
+            act_folder = menu.addAction("Abrir carpeta contenedora")
+            act_folder.triggered.connect(
+                lambda: self._open_file(os.path.dirname(ruta)) if ruta else None
+            )
+
+        menu.exec(table.viewport().mapToGlobal(pos))
+
+    def _on_explorer_dblclick(self):
+        """Doble clic en modo explorador: abrir el archivo o carpeta."""
+        state = self._current_state()
+        if state is None:
+            return
+        table = self._tab_tables.get(state)
+        if table is None:
+            return
+        row = table.currentRow()
+        if row < 0:
+            return
+
+        # Recuperar el índice original almacenado en el item
+        first_item = table.item(row, 0)
+        if first_item is None:
+            return
+        data_idx = first_item.data(_DATA_REF_ROLE)
+
+        rows = self._tab_data.get(state, [])
+        search_ctrl = self._tab_searches.get(state)
+        query = search_ctrl.text() if search_ctrl else ""
+        filtered = self._filter_explorer_rows(rows, query)
+        if data_idx is None or data_idx >= len(filtered):
+            return
+
+        entry = filtered[data_idx]
+        ruta = entry.get("ruta", "")
+        if ruta and os.path.exists(ruta):
+            self._open_file(ruta)
 
     # ------------------------------------------------------------------
     # Selección y helpers
@@ -351,12 +874,37 @@ class BudgetDashboardFrame(QMainWindow):
         if row < 0:
             return None
 
-        search_ctrl = self._tab_searches.get(state)
-        query = search_ctrl.text() if search_ctrl else ""
-        visible = self._filter_rows(self._tab_data.get(state, []), query)
-        if row >= len(visible):
-            return None
-        return visible[row]
+        if self._explorer_mode:
+            item = table.item(row, 0)
+            if item is None:
+                return None
+            data_idx = item.data(_DATA_REF_ROLE)
+            rows = self._tab_data.get(state, [])
+            search_ctrl = self._tab_searches.get(state)
+            query = search_ctrl.text() if search_ctrl else ""
+            filtered = self._filter_explorer_rows(rows, query)
+            if data_idx is None or data_idx >= len(filtered):
+                return None
+            # Convertir a formato compatible con los botones
+            entry = filtered[data_idx]
+            return {
+                "nombre_proyecto": entry.get("nombre", ""),
+                "ruta_excel": entry.get("ruta", "") if not entry.get("es_carpeta") else "",
+                "ruta_carpeta": entry.get("ruta", "") if entry.get("es_carpeta") else os.path.dirname(entry.get("ruta", "")),
+            }
+        else:
+            # Tras sorting, el row visual no corresponde al índice en la lista
+            # de datos. Recuperamos el índice original almacenado en el item.
+            item = table.item(row, 0)
+            if item is None:
+                return None
+            data_idx = item.data(_DATA_REF_ROLE)
+            search_ctrl = self._tab_searches.get(state)
+            query = search_ctrl.text() if search_ctrl else ""
+            visible = self._filter_rows(self._tab_data.get(state, []), query)
+            if data_idx is None or data_idx >= len(visible):
+                return None
+            return visible[data_idx]
 
     def _on_tab_changed(self, _index):
         self._update_buttons()
@@ -513,7 +1061,9 @@ class BudgetDashboardFrame(QMainWindow):
 
         em = ExcelManager()
         if em.insert_partidas_via_xml(ruta, selected_partidas):
-            QMessageBox.information(self, "\u00c9xito", f"Partidas regeneradas ({len(selected_partidas)}).")
+            QMessageBox.information(
+                self, "\u00c9xito", f"Partidas regeneradas ({len(selected_partidas)})."
+            )
             self._load_data()
         else:
             QMessageBox.critical(self, "Error", "Error al insertar partidas.")
@@ -555,7 +1105,10 @@ class BudgetDashboardFrame(QMainWindow):
 
         em = ExcelManager()
         if em.append_partidas_via_xml(ruta, selected_partidas):
-            QMessageBox.information(self, "\u00c9xito", f"{len(selected_partidas)} partidas a\u00f1adidas.")
+            QMessageBox.information(
+                self, "\u00c9xito",
+                f"{len(selected_partidas)} partidas a\u00f1adidas."
+            )
             self._load_data()
         else:
             QMessageBox.critical(self, "Error", "Error al a\u00f1adir partidas.")
@@ -572,7 +1125,9 @@ class BudgetDashboardFrame(QMainWindow):
 
         from src.core.excel_manager import ExcelManager
 
-        project_data, project_name = self._obtain_project_data(preselect_numero=numero_proyecto)
+        project_data, project_name = self._obtain_project_data(
+            preselect_numero=numero_proyecto
+        )
         if not project_data:
             return
 

@@ -6,7 +6,7 @@ y devuelve los datos en el mismo formato que ``ProjectParser``.
 """
 
 import io
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
 from openpyxl import load_workbook
@@ -27,6 +27,11 @@ _COL_MAP = {
 }
 
 _HEADER_MARKER = "Nº"
+
+# Época de Excel: el serial 1 equivale al 1 de enero de 1900.
+# Se usa 30-dic-1899 como base porque Excel tiene un bug histórico
+# que cuenta el 29-feb-1900 (inexistente) como día válido.
+_EXCEL_EPOCH = datetime(1899, 12, 30)
 
 
 class ExcelRelationReader:
@@ -89,9 +94,21 @@ class ExcelRelationReader:
 
     @staticmethod
     def _format_date(value) -> str:
-        """Convierte un valor de celda a formato DD-MM-YY."""
+        """Convierte un valor de celda a formato DD-MM-YY.
+
+        Maneja tres casos:
+        - ``datetime`` nativo de openpyxl.
+        - Número serial de Excel (ej: 44174 → 06-12-20).
+        - Texto ya formateado (se devuelve tal cual).
+        """
         if isinstance(value, datetime):
             return value.strftime("%d-%m-%y")
+        if isinstance(value, (int, float)) and 1 < value < 200000:
+            try:
+                dt = _EXCEL_EPOCH + timedelta(days=int(value))
+                return dt.strftime("%d-%m-%y")
+            except (OverflowError, ValueError):
+                pass
         if value is None:
             return ""
         text = str(value).strip()
