@@ -13,6 +13,7 @@ Funcionalidades:
 """
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -505,8 +506,9 @@ class BudgetDashboardFrame(QMainWindow):
             item_num.setData(_DATA_REF_ROLE, i)
             table.setItem(i, 0, item_num)
 
-            # Columna 1: Proyecto
-            table.setItem(i, 1, _SortableItem(nombre, sort_key))
+            # Columna 1: Proyecto (sin prefijo numérico duplicado)
+            nombre_display = re.sub(r"^(\u26A0\s*)?\d+-\d+\s*", r"\1", nombre)
+            table.setItem(i, 1, _SortableItem(nombre_display, sort_key))
 
             # Columna 2: Cliente
             cliente = proj.get("cliente", "")
