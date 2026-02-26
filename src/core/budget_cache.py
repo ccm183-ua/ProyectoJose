@@ -21,6 +21,7 @@ Principios:
 
 import logging
 import os
+import re
 from datetime import datetime
 from typing import Dict, List, Optional
 
@@ -41,6 +42,50 @@ from src.utils.budget_utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+_NUMERIC_TEXT_RE = re.compile(r"^\s*\d+(?:[.,]\d+)?\s*$")
+
+
+def _is_suspicious_text_value(value: str) -> bool:
+    """Detecta valores no textuales usados por error en campos de texto.
+
+    Ejemplos típicos del fallo: ``0.6``, ``0.9`` en cliente/dirección.
+    """
+    text = (value or "").strip()
+    if not text:
+        return False
+    return bool(_NUMERIC_TEXT_RE.match(text))
+
+
+def _apply_no_matching_sheet_policy(datos: Dict, numero: str) -> None:
+    """Aplica política estricta cuando ninguna hoja coincide con el número esperado.
+
+    Regla funcional: no guardar datos de contenido del presupuesto
+    (cabecera/totales/relación), solo identidad del proyecto y aviso.
+    """
+    datos["cliente"] = ""
+    datos["administracion_nombre"] = ""
+    datos["direccion"] = ""
+    datos["localizacion"] = ""
+    datos["localidad"] = ""
+    datos["tipo_obra"] = ""
+    datos["fecha"] = ""
+    datos["total"] = None
+    datos["subtotal"] = None
+    datos["iva"] = None
+    datos["cif_admin"] = ""
+    datos["email_admin"] = ""
+    datos["telefono_admin"] = ""
+    datos["codigo_postal"] = ""
+    datos["comunidad_id"] = None
+    datos["administracion_id"] = None
+    datos["comunidad_nombre"] = ""
+    datos["datos_completos"] = False
+    datos["motivo_incompleto"] = (
+        "Aviso: ninguna hoja del Excel coincide con el número "
+        f"de proyecto esperado ({numero}). Puede ser una plantilla provisional."
+    )
 
 
 def _get_file_mtime_iso(filepath: str) -> Optional[str]:
@@ -157,6 +202,34 @@ def sync_presupuestos(
             continue
 
         if cached and cached.get("fecha_modificacion_excel") == mtime_actual:
+            # Aunque el mtime no cambie, validar la regla de coincidencia de hoja
+            # para evitar seguir mostrando datos antiguos/incorrectos en cache.
+            has_match = reader.has_matching_project_sheet(ruta_excel, numero) if numero else None
+            refresh_due_to_policy = False
+            if has_match is False:
+                refresh_due_to_policy = True
+            elif has_match is True:
+                motivo = (cached.get("motivo_incompleto") or "").lower()
+                if "ninguna hoja del excel coincide" in motivo:
+                    refresh_due_to_policy = True
+                elif (cached.get("total") in (None, 0, 0.0)) and not cached.get("es_finalizado"):
+                    # Intentar recomputar por si el lector ahora sí puede extraer
+                    # los importes (p.ej. formatos K/L/M soportados recientemente).
+                    refresh_due_to_policy = True
+
+            if refresh_due_to_policy:
+                datos_cache = _build_cache_data(
+                    proj, reader, relation_index, ruta_excel, mtime_actual, state_name
+                )
+                try:
+                    upsert_presupuesto(datos_cache)
+                except Exception:
+                    logger.exception("Error al refrescar cache por política: %s", ruta_excel)
+                persisted = get_presupuesto_por_ruta(ruta_excel)
+                _fill_entry_from_cache(entry, persisted or datos_cache)
+                result.append(entry)
+                continue
+
             # Cache válida: mtime coincide
             # Solo actualizar estado si cambió de carpeta
             if cached.get("estado") != state_name and state_name:
@@ -185,7 +258,8 @@ def sync_presupuestos(
             logger.exception("Error al guardar en cache: %s", ruta_excel)
 
         # Rellenar la entrada para la UI
-        _fill_entry_from_cache(entry, datos_cache)
+        persisted = get_presupuesto_por_ruta(ruta_excel)
+        _fill_entry_from_cache(entry, persisted or datos_cache)
         result.append(entry)
 
     return result
@@ -222,6 +296,8 @@ def _empty_entry(proj: Dict, state_name: str = "") -> Dict:
         "localidad": "",
         "tipo_obra": "",
         "fecha": "",
+        "subtotal": None,
+        "iva": None,
         "total": None,
         "ruta_excel": proj.get("ruta_excel", ""),
         "ruta_carpeta": proj.get("ruta_carpeta", ""),
@@ -242,6 +318,8 @@ def _fill_entry_from_cache(entry: Dict, cached: Dict) -> None:
     entry["localidad"] = cached.get("localidad", "")
     entry["tipo_obra"] = cached.get("tipo_obra", "")
     entry["fecha"] = cached.get("fecha", "")
+    entry["subtotal"] = cached.get("subtotal")
+    entry["iva"] = cached.get("iva")
     entry["total"] = cached.get("total")
     entry["datos_completos"] = bool(cached.get("datos_completos", False))
     entry["estado"] = cached.get("estado", entry.get("estado", ""))
@@ -304,6 +382,13 @@ def _build_cache_data(
         "es_finalizado": False,
     }
 
+    # Regla estricta: si ninguna hoja coincide con el número esperado,
+    # NO guardar datos de contenido del presupuesto.
+    has_match = reader.has_matching_project_sheet(ruta_excel, numero) if numero else None
+    if has_match is False:
+        _apply_no_matching_sheet_policy(datos, numero)
+        return datos
+
     # ── Fuente 1: Relación de presupuestos (metadatos) ──────────────
     # Cliente, localidad, tipo de obra y fecha se obtienen SIEMPRE de la
     # relación porque son los datos fiables y consistentes.
@@ -320,15 +405,20 @@ def _build_cache_data(
         if budget_data:
             cab = budget_data.get("cabecera", {}) or {}
             direccion = (cab.get("direccion") or "").strip()
-            if direccion:
+            direccion_valida = direccion and not _is_suspicious_text_value(direccion)
+            if direccion_valida:
                 datos["direccion"] = direccion
                 datos["localizacion"] = direccion
-            if not datos.get("localidad"):
+            if not datos.get("localidad") and direccion_valida:
                 datos["localidad"] = _infer_localidad_from_direccion(direccion)
             if not datos.get("tipo_obra"):
-                datos["tipo_obra"] = strip_obra_prefix(cab.get("obra", ""))
+                tipo_obra_excel = strip_obra_prefix(cab.get("obra", ""))
+                if not _is_suspicious_text_value(tipo_obra_excel):
+                    datos["tipo_obra"] = tipo_obra_excel
             if not datos.get("cliente"):
-                datos["cliente"] = (cab.get("cliente") or "").strip()
+                cliente_excel = (cab.get("cliente") or "").strip()
+                if not _is_suspicious_text_value(cliente_excel):
+                    datos["cliente"] = cliente_excel
             if not datos.get("fecha"):
                 datos["fecha"] = normalize_date((cab.get("fecha") or "").strip())
 

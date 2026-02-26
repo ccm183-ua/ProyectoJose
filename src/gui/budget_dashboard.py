@@ -45,7 +45,9 @@ _COLUMNS = [
     ("Dirección", 220),
     ("Tipo obra", 120),
     ("Fecha", 90),
-    ("Total", 100),
+    ("Bruto", 100),
+    ("IVA", 90),
+    ("Total+IVA", 110),
     ("Origen", 90),
     ("Finalizado", 90),
     ("Calidad", 80),
@@ -90,6 +92,8 @@ _STATE_FOLDERS = [
     "TERMINADO",
     "ANULADOS",
 ]
+
+_CENTER_BUDGET_COLS = {0, 6, 7, 8, 9}
 
 
 def _sort_tabs(states: list[str]) -> list[str]:
@@ -314,9 +318,9 @@ class BudgetDashboardFrame(QMainWindow):
                 self._apply_extra_columns_visibility(table)
 
     def _apply_extra_columns_visibility(self, table: QTableWidget):
-        # Columnas extra: Origen (8), Finalizado (9), Calidad (10)
+        # Columnas extra: Origen (10), Finalizado (11), Calidad (12)
         visible = self._show_extra_columns
-        for col_idx in (8, 9, 10):
+        for col_idx in (10, 11, 12):
             if col_idx < table.columnCount():
                 table.setColumnHidden(col_idx, not visible)
         self._resize_budget_columns(table)
@@ -336,9 +340,9 @@ class BudgetDashboardFrame(QMainWindow):
     def _resize_budget_columns(self, table: QTableWidget):
         """Ajusta anchos al mostrar/ocultar columnas extra."""
         if self._show_extra_columns:
-            widths = [70, 220, 160, 180, 220, 120, 90, 100, 90, 90, 80]
+            widths = [70, 220, 160, 180, 220, 120, 90, 100, 90, 110, 90, 90, 80]
         else:
-            widths = [80, 280, 180, 220, 320, 170, 110, 130]
+            widths = [80, 280, 180, 220, 320, 170, 110, 120, 100, 140]
         for idx, width in enumerate(widths):
             if idx < table.columnCount():
                 table.setColumnWidth(idx, width)
@@ -457,6 +461,15 @@ class BudgetDashboardFrame(QMainWindow):
         table = QTableWidget(parent)
         table.setColumnCount(len(columns))
         table.setHorizontalHeaderLabels([c[0] for c in columns])
+        if not self._explorer_mode:
+            for i in _CENTER_BUDGET_COLS:
+                if i >= len(columns):
+                    continue
+                h_item = table.horizontalHeaderItem(i)
+                if h_item:
+                    h_item.setTextAlignment(
+                        Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter
+                    )
         for i, (_, w) in enumerate(columns):
             table.setColumnWidth(i, w)
 
@@ -482,6 +495,18 @@ class BudgetDashboardFrame(QMainWindow):
             lambda pos, sn=state_name: ctx_menu_handler(pos, sn)
         )
         return table
+
+    @staticmethod
+    def _align_budget_row_items(table: QTableWidget, row: int):
+        """Centra solo Nº, Fecha y columnas de precio en una fila de presupuesto."""
+        for col in _CENTER_BUDGET_COLS:
+            if col >= table.columnCount():
+                continue
+            item = table.item(row, col)
+            if item is not None:
+                item.setTextAlignment(
+                    Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter
+                )
 
     def _on_header_context_menu(self, table: QTableWidget, pos):
         """Menú contextual en cabecera para ocultar/mostrar columnas."""
@@ -596,8 +621,10 @@ class BudgetDashboardFrame(QMainWindow):
             has_excel = bool(proj.get("ruta_excel")) and os.path.exists(
                 proj.get("ruta_excel", "")
             )
+            motivo = (proj.get("motivo_incompleto") or "").strip()
+            has_warning = bool(motivo)
             nombre = proj.get("nombre_proyecto", "")
-            if not has_excel:
+            if not has_excel or has_warning:
                 nombre = f"\u26A0 {nombre}"
 
             numero = proj.get("numero", "")
@@ -611,6 +638,10 @@ class BudgetDashboardFrame(QMainWindow):
             # Columna 1: Proyecto (sin prefijo numérico duplicado)
             nombre_display = re.sub(r"^(\u26A0\s*)?\d+-\d+\s*", r"\1", nombre)
             table.setItem(i, 1, _SortableItem(nombre_display, sort_key))
+            item_proyecto = table.item(i, 1)
+            if item_proyecto and has_warning:
+                item_proyecto.setToolTip(motivo)
+                item_proyecto.setForeground(QColor("#CC8B00"))
 
             # Columna 2: Cliente
             cliente = proj.get("cliente", "")
@@ -632,63 +663,72 @@ class BudgetDashboardFrame(QMainWindow):
             fecha_raw = normalize_date(proj.get("fecha", ""))
             table.setItem(i, 6, _SortableItem(fecha_raw, fecha_raw))
 
-            # Columna 7: Total (sort numérico)
-            total = proj.get("total")
-            total_text = ""
-            sort_total = 0.0
-            if total is not None:
-                try:
-                    t_val = float(total)
-                    sort_total = t_val
-                    t = (
-                        f"{t_val:,.2f}"
-                        .replace(",", "X")
-                        .replace(".", ",")
-                        .replace("X", ".")
-                    )
-                    total_text = f"{t} \u20AC"
-                except (ValueError, TypeError):
-                    pass
+            # Columnas 7, 8, 9: Bruto, IVA y Total+IVA (sort numérico)
+            def _money_item(value, bold=False):
+                text = ""
+                sort_val = 0.0
+                if value is not None:
+                    try:
+                        v = float(value)
+                        sort_val = v
+                        f = (
+                            f"{v:,.2f}"
+                            .replace(",", "X")
+                            .replace(".", ",")
+                            .replace("X", ".")
+                        )
+                        text = f"{f} \u20AC"
+                    except (ValueError, TypeError):
+                        pass
+                item = _SortableItem(text, sort_val)
+                item.setTextAlignment(
+                    Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+                )
+                if bold:
+                    item.setFont(theme.get_font_bold(9))
+                return item
 
-            total_item = _SortableItem(total_text, sort_total)
-            total_item.setTextAlignment(
-                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-            )
-            total_item.setFont(theme.get_font_bold(9))
-            table.setItem(i, 7, total_item)
+            bruto_item = _money_item(proj.get("subtotal"))
+            iva_item = _money_item(proj.get("iva"))
+            total_item = _money_item(proj.get("total"), bold=True)
+            table.setItem(i, 7, bruto_item)
+            table.setItem(i, 8, iva_item)
+            table.setItem(i, 9, total_item)
 
-            # Columna 8: Origen (scan/finalizado)
+            # Columna 10: Origen (scan/finalizado)
             fuente = proj.get("fuente_datos", "scan")
             fuente_display = "Finalizado" if str(fuente).lower() == "finalizado" else "Escaneo"
-            table.setItem(i, 8, _SortableItem(fuente_display, fuente_display.lower()))
-            item_fuente = table.item(i, 8)
+            table.setItem(i, 10, _SortableItem(fuente_display, fuente_display.lower()))
+            item_fuente = table.item(i, 10)
             if item_fuente:
                 item_fuente.setForeground(
                     QColor("#2E7D32") if fuente_display == "Finalizado" else QColor("#3563A6")
                 )
 
-            # Columna 9: Finalizado (sí/no)
+            # Columna 11: Finalizado (sí/no)
             finalizado = bool(proj.get("es_finalizado", False))
             finalizado_display = "Sí" if finalizado else "No"
-            table.setItem(i, 9, _SortableItem(finalizado_display, 1 if finalizado else 0))
-            item_finalizado = table.item(i, 9)
+            table.setItem(i, 11, _SortableItem(finalizado_display, 1 if finalizado else 0))
+            item_finalizado = table.item(i, 11)
             if item_finalizado and finalizado:
                 item_finalizado.setForeground(QColor("#2E7D32"))
 
-            # Columna 10: Calidad (0-100)
+            # Columna 12: Calidad (0-100)
             calidad = int(proj.get("calidad_datos", 0) or 0)
             calidad_text = f"{calidad}%"
             item_calidad = _SortableItem(calidad_text, calidad)
             item_calidad.setTextAlignment(
                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
             )
-            table.setItem(i, 10, item_calidad)
-            if calidad >= 85:
-                item_calidad.setForeground(QColor("#2E7D32"))
+            table.setItem(i, 12, item_calidad)
+            if calidad >= 80:
+                item_calidad.setForeground(QColor("#1B5E20"))  # Verde oscuro
             elif calidad >= 60:
-                item_calidad.setForeground(QColor("#CC8B00"))
+                item_calidad.setForeground(QColor("#66BB6A"))  # Verde claro
+            elif calidad >= 40:
+                item_calidad.setForeground(QColor("#F9A825"))  # Amarillo
             else:
-                item_calidad.setForeground(QColor("#C44A2A"))
+                item_calidad.setForeground(QColor("#C62828"))  # Rojo
 
             # Color solo en indicadores de calidad/estado (no fila completa)
             datos_ok = proj.get("datos_completos", True)
@@ -696,8 +736,11 @@ class BudgetDashboardFrame(QMainWindow):
                 # Resaltar solo el dato de calidad si no existe fichero
                 item_calidad.setForeground(QColor(theme.TEXT_TERTIARY))
                 item_calidad.setToolTip("El archivo Excel ya no existe en la ruta esperada.")
+            elif has_warning:
+                # Aviso funcional (no necesariamente error): sin coincidencia de hoja.
+                item_calidad.setForeground(QColor("#CC8B00"))
+                item_calidad.setToolTip(motivo)
             elif not datos_ok:
-                motivo = proj.get("motivo_incompleto", "")
                 tip = (
                     "No se pudieron obtener los datos completos de este presupuesto. "
                     "El Excel puede estar dañado o tener un formato inesperado."
@@ -705,6 +748,8 @@ class BudgetDashboardFrame(QMainWindow):
                 if motivo:
                     tip += f"\nDetalle: {motivo}"
                 item_calidad.setToolTip(tip)
+
+            self._align_budget_row_items(table, i)
 
         # Re-habilitar sort y aplicar orden por defecto: Nº descendente (últimos primero)
         table.setSortingEnabled(True)
@@ -778,6 +823,7 @@ class BudgetDashboardFrame(QMainWindow):
                     item = table.item(i, col)
                     if item:
                         item.setForeground(QColor(theme.ACCENT_PRIMARY))
+
 
         table.setSortingEnabled(True)
         table.sortItems(0, Qt.SortOrder.AscendingOrder)
