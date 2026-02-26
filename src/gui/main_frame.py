@@ -252,6 +252,18 @@ class MainFrame(QMainWindow):
             return
 
         self._offer_ai_partidas(result.excel_path, project_data)
+        finalized = self._budget_svc.finalize_budget(
+            result.excel_path,
+            project_data=project_data,
+            comunidad_data=comunidad_data,
+            admin_data=admin_data,
+        )
+        if not finalized:
+            QMessageBox.warning(
+                self,
+                "Aviso",
+                "El presupuesto se creó, pero no se pudo guardar su detalle completo en la base de datos.",
+            )
         self._open_dashboard(refresh=True)
 
     def _obtain_project_data(self):

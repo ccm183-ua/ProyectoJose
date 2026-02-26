@@ -8,7 +8,7 @@ por ``budget_cache`` para normalizar fechas y limpiar textos del Excel.
 import re
 from datetime import datetime, timedelta
 
-_RE_OBRA_PREFIX = re.compile(r"^Obra:\s*", re.IGNORECASE)
+_RE_OBRA_PREFIX = re.compile(r"^\s*Obra\s*:\s*", re.IGNORECASE)
 
 EXCEL_EPOCH = datetime(1899, 12, 30)
 
@@ -49,6 +49,23 @@ def normalize_date(value: str) -> str:
             return dt.strftime("%d-%m-%y")
     except (ValueError, TypeError, OverflowError):
         pass
+
+    # Formatos textuales comunes: DD/MM/YY, DD/MM/YYYY, DD-MM-YY, DD.MM.YYYY
+    text_norm = text.replace(".", "-").replace("/", "-")
+    m = re.match(r"^\s*(\d{1,2})-(\d{1,2})-(\d{2}|\d{4})\s*$", text_norm)
+    if m:
+        day = int(m.group(1))
+        month = int(m.group(2))
+        year_raw = m.group(3)
+        year = int(year_raw)
+        if len(year_raw) == 2:
+            year += 2000
+        try:
+            dt = datetime(year, month, day)
+            return dt.strftime("%d-%m-%y")
+        except ValueError:
+            pass
+
     return text
 
 

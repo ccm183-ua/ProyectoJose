@@ -52,6 +52,22 @@ def _get_file_mtime_iso(filepath: str) -> Optional[str]:
         return None
 
 
+def _infer_localidad_from_direccion(direccion: str) -> str:
+    """Extrae una localidad aproximada desde una dirección textual."""
+    text = (direccion or "").strip()
+    if not text:
+        return ""
+    parts = [p.strip() for p in text.split(",") if p.strip()]
+    if not parts:
+        return ""
+    last = parts[-1]
+    # Limpiar CP al inicio: "03004 Alicante" -> "Alicante"
+    tokens = last.split()
+    if tokens and tokens[0].isdigit() and len(tokens[0]) in (4, 5):
+        last = " ".join(tokens[1:]).strip()
+    return last
+
+
 def _is_template_data(excel_numero: str, expected_numero: str) -> bool:
     """Detecta si los datos del Excel son de la plantilla y no del proyecto real.
 
@@ -127,6 +143,19 @@ def sync_presupuestos(
         # Buscar en cache
         cached = get_presupuesto_por_ruta(ruta_excel)
 
+        # Si el presupuesto ya está finalizado en DB, el escaneo no debe
+        # sobreescribir su contenido aunque el Excel haya cambiado.
+        if cached and cached.get("es_finalizado"):
+            if cached.get("estado") != state_name and state_name:
+                cached["estado"] = state_name
+                try:
+                    actualizar_estado_presupuesto(ruta_excel, state_name)
+                except Exception:
+                    logger.debug("No se pudo actualizar estado finalizado para %s", ruta_excel)
+            _fill_entry_from_cache(entry, cached)
+            result.append(entry)
+            continue
+
         if cached and cached.get("fecha_modificacion_excel") == mtime_actual:
             # Cache válida: mtime coincide
             # Solo actualizar estado si cambió de carpeta
@@ -188,6 +217,8 @@ def _empty_entry(proj: Dict, state_name: str = "") -> Dict:
         "nombre_proyecto": proj.get("nombre_carpeta", ""),
         "numero": proj.get("numero_proyecto", ""),
         "cliente": "",
+        "administracion_nombre": "",
+        "direccion": "",
         "localidad": "",
         "tipo_obra": "",
         "fecha": "",
@@ -196,18 +227,28 @@ def _empty_entry(proj: Dict, state_name: str = "") -> Dict:
         "ruta_carpeta": proj.get("ruta_carpeta", ""),
         "estado": state_name,
         "datos_completos": False,
+        "es_finalizado": False,
+        "fuente_datos": "scan",
+        "calidad_datos": 0,
+        "motivo_incompleto": "",
     }
 
 
 def _fill_entry_from_cache(entry: Dict, cached: Dict) -> None:
     """Rellena la entrada de la UI a partir de un dict de datos (cache DB o recién construido)."""
     entry["cliente"] = cached.get("cliente", "")
+    entry["administracion_nombre"] = cached.get("administracion_nombre", "")
+    entry["direccion"] = cached.get("direccion", "")
     entry["localidad"] = cached.get("localidad", "")
     entry["tipo_obra"] = cached.get("tipo_obra", "")
     entry["fecha"] = cached.get("fecha", "")
     entry["total"] = cached.get("total")
     entry["datos_completos"] = bool(cached.get("datos_completos", False))
     entry["estado"] = cached.get("estado", entry.get("estado", ""))
+    entry["es_finalizado"] = bool(cached.get("es_finalizado", False))
+    entry["fuente_datos"] = cached.get("fuente_datos", "scan")
+    entry["calidad_datos"] = int(cached.get("calidad_datos") or 0)
+    entry["motivo_incompleto"] = cached.get("motivo_incompleto", "")
 
 
 def _lookup_relation(
@@ -259,6 +300,8 @@ def _build_cache_data(
         "estado": state_name,
         "fecha_modificacion_excel": mtime_iso,
         "datos_completos": False,
+        "fuente_datos": "scan",
+        "es_finalizado": False,
     }
 
     # ── Fuente 1: Relación de presupuestos (metadatos) ──────────────
@@ -271,24 +314,43 @@ def _build_cache_data(
         datos["tipo_obra"] = rel.get("tipo", "")
         datos["fecha"] = normalize_date(rel.get("fecha", ""))
 
-    # ── Fuente 2: Total desde texto "Asciende..." del Excel ─────────
-    # El total no tiene una celda fija; se obtiene parseando la frase
-    # "Asciende el presupuesto ... cantidad de X EUROS ..." que siempre
-    # ocupa una fila completa en el presupuesto.
+    # ── Fuente 2: Cabecera y totales desde el Excel ─────────
     try:
-        total = reader.read_total_from_text(ruta_excel, expected_numero=numero)
-        if total is not None:
-            datos["total"] = total
+        budget_data = reader.read(ruta_excel, expected_numero=numero)
+        if budget_data:
+            cab = budget_data.get("cabecera", {}) or {}
+            direccion = (cab.get("direccion") or "").strip()
+            if direccion:
+                datos["direccion"] = direccion
+                datos["localizacion"] = direccion
+            if not datos.get("localidad"):
+                datos["localidad"] = _infer_localidad_from_direccion(direccion)
+            if not datos.get("tipo_obra"):
+                datos["tipo_obra"] = strip_obra_prefix(cab.get("obra", ""))
+            if not datos.get("cliente"):
+                datos["cliente"] = (cab.get("cliente") or "").strip()
+            if not datos.get("fecha"):
+                datos["fecha"] = normalize_date((cab.get("fecha") or "").strip())
+
+            total = budget_data.get("total")
+            if total is not None:
+                datos["total"] = total
+            if budget_data.get("subtotal") is not None:
+                datos["subtotal"] = budget_data.get("subtotal")
+            if budget_data.get("iva") is not None:
+                datos["iva"] = budget_data.get("iva")
+
+        if datos.get("total") is not None:
             datos["datos_completos"] = True
             logger.debug(
-                "Total leído de texto 'Asciende': %.2f para %s", total, ruta_excel
+                "Cabecera/totales leídos de Excel para %s", ruta_excel
             )
         else:
             logger.warning(
-                "No se encontró frase 'Asciende...' en: %s", ruta_excel
+                "No se pudo leer total desde Excel en: %s", ruta_excel
             )
     except Exception:
-        logger.exception("Error al leer total por texto: %s", ruta_excel)
+        logger.exception("Error al leer cabecera/totales: %s", ruta_excel)
 
     # Si tenemos metadatos de la relación pero no total del Excel,
     # marcar como datos_completos=True si al menos tenemos cliente
@@ -316,9 +378,12 @@ def _try_link_fks(datos: Dict) -> None:
         comunidad = buscar_comunidad_por_nombre(cliente)
         if comunidad:
             datos["comunidad_id"] = comunidad["id"]
+            datos["comunidad_nombre"] = comunidad.get("nombre", "")
+            datos["metodo_resolucion_comunidad"] = "por_nombre_cliente"
             admin_id = comunidad.get("administracion_id")
             if admin_id:
                 datos["administracion_id"] = admin_id
+                datos["metodo_resolucion_admin"] = "por_comunidad"
             return
 
         # Si no encontró comunidad, intentar buscar administración directamente
@@ -326,5 +391,7 @@ def _try_link_fks(datos: Dict) -> None:
         admin = buscar_administracion_por_nombre(cliente)
         if admin:
             datos["administracion_id"] = admin["id"]
+            datos["administracion_nombre"] = admin.get("nombre", "")
+            datos["metodo_resolucion_admin"] = "por_nombre_cliente"
     except Exception:
         logger.debug("Error al vincular FKs para cliente '%s'", cliente)

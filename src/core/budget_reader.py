@@ -26,7 +26,7 @@ from src.core.xlsx_cell_utils import (
     get_cell_value,
     read_shared_strings_from_bytes,
 )
-from src.utils.budget_utils import normalize_project_num
+from src.utils.budget_utils import normalize_project_num, strip_obra_prefix
 from src.utils.spanish_number_parser import extract_total_from_asciende
 
 logger = logging.getLogger(__name__)
@@ -229,7 +229,10 @@ class BudgetReader:
             row = rows.get(row_num, {})
             cell = row.get(col)
             if cell:
-                cabecera[field_name] = self._get_cell_value(cell, shared_strings)
+                value = self._get_cell_value(cell, shared_strings)
+                if field_name == "obra":
+                    value = strip_obra_prefix(value)
+                cabecera[field_name] = value
             else:
                 cabecera[field_name] = ""
         return cabecera
