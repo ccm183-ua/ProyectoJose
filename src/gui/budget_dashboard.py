@@ -254,18 +254,16 @@ class BudgetDashboardFrame(QMainWindow):
         tb_layout = QHBoxLayout(toolbar)
         tb_layout.setContentsMargins(theme.SPACE_LG, theme.SPACE_SM, theme.SPACE_LG, theme.SPACE_SM)
 
-        self._btn_preview = self._tb_button(toolbar, "Previsualizar", self._on_preview)
+        self._btn_open = self._tb_button(toolbar, "Abrir \u25BC", self._on_open_menu, primary=True)
         self._btn_edit = self._tb_button(toolbar, "Editar \u25BC", self._on_edit_menu)
-        self._btn_complete = self._tb_button(toolbar, "Completar datos", self._on_complete_data)
-        self._btn_refresh_selected = self._tb_button(
-            toolbar, "Actualizar seleccionados", self._on_refresh_selected
+        self._btn_regen_fields = self._tb_button(
+            toolbar, "Regenerar campos", self._on_regen_fields
         )
-        self._btn_pdf = self._tb_button(toolbar, "Exportar PDF", self._on_export_pdf)
-        self._btn_open = self._tb_button(toolbar, "Abrir Excel", self._on_open_excel, primary=True)
-        self._btn_folder = self._tb_button(toolbar, "Abrir carpeta", self._on_open_folder)
+        self._btn_refresh_selected = self._tb_button(
+            toolbar, "Escanear presupuestos", self._on_refresh_selected
+        )
 
-        for btn in (self._btn_preview, self._btn_edit, self._btn_complete, self._btn_refresh_selected,
-                    self._btn_pdf, self._btn_open, self._btn_folder):
+        for btn in (self._btn_open, self._btn_edit, self._btn_regen_fields, self._btn_refresh_selected):
             tb_layout.addWidget(btn)
         tb_layout.addStretch()
 
@@ -387,9 +385,8 @@ class BudgetDashboardFrame(QMainWindow):
         run_in_background(_scan, _on_done)
 
     def _set_toolbar_enabled(self, enabled):
-        for btn in (self._btn_preview, self._btn_edit, self._btn_complete, self._btn_refresh_selected,
-                    self._btn_pdf,
-                    self._btn_open, self._btn_folder):
+        for btn in (self._btn_edit, self._btn_regen_fields, self._btn_refresh_selected,
+                    self._btn_open):
             btn.setEnabled(enabled)
 
     def _rebuild_tabs(self, states, root_path):
@@ -1073,21 +1070,27 @@ class BudgetDashboardFrame(QMainWindow):
         selected = selected_many[0] if selected_many else None
         has_sel = len(selected_many) > 0
         file_ok = has_sel and selected is not None and os.path.exists(selected.get("ruta_excel", ""))
-        for btn in (self._btn_preview, self._btn_edit, self._btn_complete, self._btn_pdf,
-                    self._btn_open, self._btn_folder):
+        has_excel_any = any(
+            bool(sel.get("ruta_excel")) and os.path.exists(sel.get("ruta_excel", ""))
+            for sel in selected_many
+        )
+        has_folder_any = False
+        for sel in selected_many:
+            folder = sel.get("ruta_carpeta", "")
+            if not folder or not os.path.isdir(folder):
+                ruta = sel.get("ruta_excel", "")
+                folder = os.path.dirname(ruta) if ruta else ""
+            if folder and os.path.isdir(folder):
+                has_folder_any = True
+                break
+        for btn in (self._btn_edit, self._btn_regen_fields,
+                    self._btn_open):
             btn.setEnabled(has_sel)
         self._btn_refresh_selected.setEnabled(has_sel and not self._explorer_mode)
+        self._btn_open.setEnabled(has_sel and (has_excel_any or has_folder_any))
         if has_sel and not file_ok:
-            self._btn_preview.setEnabled(False)
             self._btn_edit.setEnabled(False)
-            self._btn_complete.setEnabled(False)
-            self._btn_pdf.setEnabled(False)
-            self._btn_open.setEnabled(False)
-        # "Completar datos" solo en modo Excel y con datos incompletos
-        if has_sel and file_ok and not self._explorer_mode:
-            self._btn_complete.setEnabled(not bool(selected.get("datos_completos", True)))
-        else:
-            self._btn_complete.setEnabled(False)
+            self._btn_regen_fields.setEnabled(False)
 
     def _on_item_dblclick(self):
         self._on_preview()
@@ -1133,38 +1136,25 @@ class BudgetDashboardFrame(QMainWindow):
         act_regen = menu.addAction("Regenerar todas las partidas (IA)")
         act_add = menu.addAction("A\u00f1adir m\u00e1s partidas (IA)")
         menu.addSeparator()
-        if len(selected_many) > 1:
-            act_header = menu.addAction(
-                f"Regenerar campos en seleccionados ({len(selected_many)})"
-            )
-        else:
-            act_header = menu.addAction("Regenerar campos del presupuesto")
-
+        act_pdf = menu.addAction("Exportar PDF")
         act_regen.triggered.connect(lambda: self._edit_regen_all(ruta))
         act_add.triggered.connect(lambda: self._edit_add_partidas(ruta))
-        if len(selected_many) > 1:
-            act_header.triggered.connect(lambda: self._edit_regen_header_selected(selected_many))
-        else:
-            numero = selected.get("numero", "")
-            act_header.triggered.connect(lambda: self._edit_regen_header(ruta, numero))
+        act_pdf.triggered.connect(self._on_export_pdf)
 
         menu.exec(self._btn_edit.mapToGlobal(self._btn_edit.rect().bottomLeft()))
 
-    def _on_complete_data(self):
+    def _on_regen_fields(self):
         selected_many = self._get_selected_many()
         if not selected_many:
             return
+        if len(selected_many) > 1:
+            self._edit_regen_header_selected(selected_many)
+            return
+
         selected = selected_many[0]
         ruta = os.path.normpath(selected.get("ruta_excel", ""))
         if not os.path.exists(ruta):
             QMessageBox.warning(self, "Error", f"El archivo ya no existe:\n{ruta}")
-            return
-        if bool(selected.get("datos_completos", True)):
-            QMessageBox.information(
-                self,
-                "Información",
-                "Este presupuesto ya figura como completo.",
-            )
             return
         numero = selected.get("numero", "")
         self._edit_regen_header(ruta, numero)
@@ -1175,7 +1165,7 @@ class BudgetDashboardFrame(QMainWindow):
             return
         if self._explorer_mode:
             QMessageBox.information(
-                self, "Actualizar seleccionados",
+                self, "Escanear presupuestos",
                 "Esta acción está disponible en la vista de presupuestos.",
             )
             return
@@ -1200,7 +1190,7 @@ class BudgetDashboardFrame(QMainWindow):
         self._load_data()
         QMessageBox.information(
             self,
-            "Actualizar seleccionados",
+            "Escanear presupuestos",
             f"Actualizados: {ok_count}\nCon error: {fail_count}",
         )
 
@@ -1222,12 +1212,7 @@ class BudgetDashboardFrame(QMainWindow):
             )
             return
 
-        self._btn_pdf.setEnabled(False)
-        self._btn_pdf.setText("Exportando\u2026")
-
         def _on_pdf_done(ok_outer, payload):
-            self._btn_pdf.setEnabled(True)
-            self._btn_pdf.setText("Exportar PDF")
             if not ok_outer:
                 QMessageBox.critical(self, "Error", f"Error al exportar PDF:\n{payload}")
                 return
@@ -1243,6 +1228,40 @@ class BudgetDashboardFrame(QMainWindow):
                 QMessageBox.critical(self, "Error", f"Error al exportar PDF:\n{result}")
 
         run_in_background(lambda: exporter.export(ruta), _on_pdf_done)
+
+    def _on_open_menu(self):
+        selected_many = self._get_selected_many()
+        if not selected_many:
+            return
+
+        has_excel = any(
+            bool(sel.get("ruta_excel")) and os.path.exists(sel.get("ruta_excel", ""))
+            for sel in selected_many
+        )
+
+        has_folder = False
+        for sel in selected_many:
+            folder = sel.get("ruta_carpeta", "")
+            if not folder or not os.path.isdir(folder):
+                ruta = sel.get("ruta_excel", "")
+                folder = os.path.dirname(ruta) if ruta else ""
+            if folder and os.path.isdir(folder):
+                has_folder = True
+                break
+
+        if not has_excel and not has_folder:
+            return
+
+        menu = QMenu(self)
+        act_excel = menu.addAction("Abrir Excel")
+        act_excel.setEnabled(has_excel)
+        act_excel.triggered.connect(self._on_open_excel)
+
+        act_folder = menu.addAction("Abrir carpeta")
+        act_folder.setEnabled(has_folder)
+        act_folder.triggered.connect(self._on_open_folder)
+
+        menu.exec(self._btn_open.mapToGlobal(self._btn_open.rect().bottomLeft()))
 
     def _on_open_excel(self):
         selected_many = self._get_selected_many()
