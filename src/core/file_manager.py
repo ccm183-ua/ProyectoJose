@@ -75,7 +75,7 @@ class FileManager:
                 os.makedirs(parent_dir, exist_ok=True)
             
             # Crear archivo vacío
-            with open(file_path, 'w') as f:
+            with open(file_path, 'w', encoding='utf-8') as f:
                 pass
             
             return True
@@ -106,7 +106,7 @@ class FileManager:
                 os.makedirs(parent_dir, exist_ok=True)
             
             # Crear archivo vacío
-            with open(file_path, 'w') as f:
+            with open(file_path, 'w', encoding='utf-8') as f:
                 pass
             
             return True

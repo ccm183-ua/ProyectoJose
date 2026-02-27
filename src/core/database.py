@@ -14,7 +14,9 @@ import os
 import sqlite3
 import subprocess
 import sys
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterator
 
 
 def get_db_path() -> Path:
@@ -73,6 +75,22 @@ def connect(read_only: bool = False) -> sqlite3.Connection:
     return conn
 
 
+@contextmanager
+def get_connection(read_only: bool = False) -> Iterator[sqlite3.Connection]:
+    """Context manager que abre y cierra automáticamente la conexión SQLite.
+
+    Uso::
+
+        with get_connection() as conn:
+            conn.execute("SELECT ...")
+    """
+    conn = connect(read_only=read_only)
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
 def _migrate_administracion_nombre(conn: sqlite3.Connection) -> None:
     """Añade la columna nombre a administracion si no existe (BDs creadas antes del cambio)."""
     cur = conn.execute("PRAGMA table_info(administracion)")
@@ -91,6 +109,48 @@ def _migrate_comunidad_cif(conn: sqlite3.Connection) -> None:
         conn.commit()
 
 
+def _migrate_presupuesto_v2(conn: sqlite3.Connection) -> None:
+    """Añade columnas nuevas en presupuesto y crea tabla de partidas si faltan."""
+    cur = conn.execute("PRAGMA table_info(presupuesto)")
+    columns = {row[1] for row in cur.fetchall()}
+
+    column_defs = {
+        "direccion": "TEXT",
+        "localizacion": "TEXT",
+        "fuente_datos": "TEXT NOT NULL DEFAULT 'scan'",
+        "es_finalizado": "INTEGER NOT NULL DEFAULT 0",
+        "motivo_incompleto": "TEXT",
+        "calidad_datos": "INTEGER NOT NULL DEFAULT 0",
+        "comunidad_nombre": "TEXT",
+        "administracion_nombre": "TEXT",
+        "fecha_finalizacion": "TEXT",
+        "total_partidas": "REAL",
+        "num_partidas": "INTEGER NOT NULL DEFAULT 0",
+        "metodo_resolucion_admin": "TEXT",
+        "metodo_resolucion_comunidad": "TEXT",
+    }
+
+    changed = False
+    for col_name, col_def in column_defs.items():
+        if col_name not in columns:
+            conn.execute(f"ALTER TABLE presupuesto ADD COLUMN {col_name} {col_def}")
+            changed = True
+
+    if changed:
+        conn.commit()
+
+
+def _ensure_presupuesto_v2_indexes(conn: sqlite3.Connection) -> None:
+    """Crea índices v2 de presupuesto de forma segura en BDs antiguas."""
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_presupuesto_finalizado ON presupuesto(es_finalizado, estado)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_presupuesto_calidad ON presupuesto(calidad_datos)"
+    )
+    conn.commit()
+
+
 def init_schema(conn: sqlite3.Connection) -> None:
     """
     Crea las tablas si no existen. No modifica tablas ya existentes.
@@ -103,6 +163,8 @@ def init_schema(conn: sqlite3.Connection) -> None:
     conn.commit()
     _migrate_administracion_nombre(conn)
     _migrate_comunidad_cif(conn)
+    _migrate_presupuesto_v2(conn)
+    _ensure_presupuesto_v2_indexes(conn)
 
 
 # ---------------------------------------------------------------------------
@@ -181,6 +243,65 @@ CREATE TABLE IF NOT EXISTS historial_presupuesto (
     total_presupuesto REAL
 );
 CREATE INDEX IF NOT EXISTS idx_historial_fecha ON historial_presupuesto(fecha_ultimo_acceso);
+
+-- Cache de presupuestos escaneados (evita re-leer Excels si no han cambiado)
+CREATE TABLE IF NOT EXISTS presupuesto (
+    id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+    numero_proyecto          TEXT,
+    nombre_proyecto          TEXT NOT NULL,
+    ruta_excel               TEXT UNIQUE,
+    ruta_carpeta             TEXT,
+    estado                   TEXT,
+    cliente                  TEXT,
+    localidad                TEXT,
+    tipo_obra                TEXT,
+    fecha                    TEXT,
+    total                    REAL,
+    subtotal                 REAL,
+    iva                      REAL,
+    obra_descripcion         TEXT,
+    cif_admin                TEXT,
+    email_admin              TEXT,
+    telefono_admin           TEXT,
+    codigo_postal            TEXT,
+    direccion                TEXT,
+    localizacion             TEXT,
+    comunidad_id             INTEGER REFERENCES comunidad(id) ON DELETE SET NULL,
+    administracion_id        INTEGER REFERENCES administracion(id) ON DELETE SET NULL,
+    comunidad_nombre         TEXT,
+    administracion_nombre    TEXT,
+    fecha_modificacion_excel TEXT NOT NULL,
+    fecha_cache              TEXT NOT NULL,
+    datos_completos          INTEGER DEFAULT 0,
+    total_partidas           REAL,
+    num_partidas             INTEGER NOT NULL DEFAULT 0,
+    fuente_datos             TEXT NOT NULL DEFAULT 'scan',
+    es_finalizado            INTEGER NOT NULL DEFAULT 0,
+    fecha_finalizacion       TEXT,
+    calidad_datos            INTEGER NOT NULL DEFAULT 0,
+    motivo_incompleto        TEXT,
+    metodo_resolucion_admin  TEXT,
+    metodo_resolucion_comunidad TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_presupuesto_numero ON presupuesto(numero_proyecto);
+CREATE INDEX IF NOT EXISTS idx_presupuesto_estado ON presupuesto(estado);
+CREATE INDEX IF NOT EXISTS idx_presupuesto_ruta ON presupuesto(ruta_excel);
+
+CREATE TABLE IF NOT EXISTS presupuesto_partida (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    presupuesto_id INTEGER NOT NULL REFERENCES presupuesto(id) ON DELETE CASCADE,
+    orden INTEGER NOT NULL,
+    numero TEXT,
+    concepto TEXT NOT NULL,
+    unidad TEXT,
+    cantidad REAL,
+    precio REAL,
+    importe REAL
+);
+CREATE INDEX IF NOT EXISTS idx_presupuesto_partida_presupuesto
+    ON presupuesto_partida(presupuesto_id, orden);
+CREATE INDEX IF NOT EXISTS idx_presupuesto_partida_numero
+    ON presupuesto_partida(numero);
 """
 
 

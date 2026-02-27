@@ -1,4 +1,6 @@
-"""Tests para src.core.project_data_resolver."""
+"""Tests para src.core.project_data_resolver y src.core.budget_cache."""
+
+import os
 
 import pytest
 from unittest.mock import patch, MagicMock
@@ -6,9 +8,37 @@ from unittest.mock import patch, MagicMock
 from src.core.project_data_resolver import (
     resolve_projects,
     build_relation_index,
-    _empty_entry,
-    _fill_from_relation,
 )
+from src.utils.budget_utils import normalize_date, normalize_project_num, strip_obra_prefix
+from src.core.budget_cache import (
+    _empty_entry,
+    _fill_entry_from_cache,
+    _get_file_mtime_iso,
+    _is_template_data,
+    _lookup_relation,
+)
+
+
+class TestNormalizeDate:
+    def test_empty(self):
+        assert normalize_date("") == ""
+
+    def test_text_passthrough(self):
+        assert normalize_date("08-01-26") == "08-01-26"
+
+    def test_excel_serial(self):
+        # 44174 = 06-12-20
+        result = normalize_date("44174")
+        assert result  # no vacío
+        assert "-" in result
+
+
+class TestStripObraPrefix:
+    def test_removes_prefix(self):
+        assert strip_obra_prefix("Obra: Reforma portal.") == "Reforma portal"
+
+    def test_no_prefix(self):
+        assert strip_obra_prefix("Reforma portal") == "Reforma portal"
 
 
 class TestEmptyEntry:
@@ -31,70 +61,157 @@ class TestEmptyEntry:
         assert entry["nombre_proyecto"] == ""
         assert entry["numero"] == ""
 
+    def test_includes_state(self):
+        entry = _empty_entry({}, state_name="PRESUPUESTADO")
+        assert entry["estado"] == "PRESUPUESTADO"
 
-class TestFillFromRelation:
+
+class TestFillEntryFromCache:
     def test_fills_fields(self):
         entry = _empty_entry({"nombre_carpeta": "x", "numero_proyecto": "1-25"})
-        rel = {
+        cached = {
             "cliente": "ACME",
             "localidad": "Madrid",
-            "tipo": "Reforma",
+            "tipo_obra": "Reforma",
             "fecha": "08-01-26",
-            "importe": "1234.56",
+            "total": 1234.56,
+            "datos_completos": True,
+            "estado": "PRESUPUESTADO",
         }
-        _fill_from_relation(entry, rel)
+        _fill_entry_from_cache(entry, cached)
         assert entry["cliente"] == "ACME"
         assert entry["localidad"] == "Madrid"
         assert entry["tipo_obra"] == "Reforma"
         assert entry["fecha"] == "08-01-26"
         assert entry["total"] == pytest.approx(1234.56)
+        assert entry["datos_completos"] is True
 
-    def test_invalid_importe_ignored(self):
-        entry = _empty_entry({"nombre_carpeta": "x"})
-        _fill_from_relation(entry, {"importe": "no-number"})
-        assert entry["total"] is None
+
+class TestGetFileMtimeIso:
+    def test_existing_file(self, tmp_path):
+        f = tmp_path / "test.xlsx"
+        f.write_bytes(b"\x00" * 100)
+        result = _get_file_mtime_iso(str(f))
+        assert result is not None
+        assert "T" in result  # ISO format
+
+    def test_nonexistent_file(self):
+        assert _get_file_mtime_iso("/no/existe/nada.xlsx") is None
+
+
+class TestNormalizeProjectNum:
+    def test_dash_format(self):
+        assert normalize_project_num("71-26") == "71-26"
+
+    def test_slash_format(self):
+        assert normalize_project_num("71/26") == "71-26"
+
+    def test_three_digit(self):
+        assert normalize_project_num("120/20") == "120-20"
+
+    def test_empty(self):
+        assert normalize_project_num("") == ""
+
+    def test_no_match(self):
+        assert normalize_project_num("abc") == ""
+
+    def test_embedded_in_text(self):
+        assert normalize_project_num("Presupuesto 71/26 reforma") == "71-26"
+
+    def test_leading_zeros_stripped(self):
+        assert normalize_project_num("06-26") == "6-26"
+
+    def test_leading_zeros_match(self):
+        assert normalize_project_num("06-26") == normalize_project_num("6/26")
+
+
+class TestIsTemplateData:
+    def test_detects_template_120_20(self):
+        # 120/20 es la plantilla, carpeta es 20-26 → plantilla
+        assert _is_template_data("120/20", "20-26") is True
+
+    def test_detects_template_different_year(self):
+        assert _is_template_data("120/20", "71-26") is True
+
+    def test_real_data_matches(self):
+        assert _is_template_data("71/26", "71-26") is False
+
+    def test_real_data_matches_11(self):
+        assert _is_template_data("11/26", "11-26") is False
+
+    def test_real_data_with_leading_zeros(self):
+        # "6/26" en Excel y "06-26" en carpeta → mismo proyecto, no es plantilla
+        assert _is_template_data("6/26", "06-26") is False
+
+    def test_empty_excel_number(self):
+        # Sin número de Excel, no podemos afirmar que sea plantilla
+        assert _is_template_data("", "71-26") is False
+
+    def test_empty_expected_number(self):
+        assert _is_template_data("71/26", "") is False
+
+    def test_both_empty(self):
+        assert _is_template_data("", "") is False
+
+
+class TestLookupRelation:
+    """Verifica que _lookup_relation enlaza proyectos con la relación."""
+
+    _RELATION = {
+        "1": {"cliente": "A", "importe": "4650"},
+        "11": {"cliente": "B", "importe": "900"},
+        "127-25": {"cliente": "C", "importe": "15000"},
+    }
+
+    def test_exact_match(self):
+        """Clave exacta presente → la devuelve."""
+        assert _lookup_relation(self._RELATION, "127-25") == self._RELATION["127-25"]
+
+    def test_number_only_match(self):
+        """'1-26' debe resolver a clave '1' (sin año)."""
+        result = _lookup_relation(self._RELATION, "1-26")
+        assert result is not None
+        assert result["cliente"] == "A"
+
+    def test_number_only_match_double_digit(self):
+        """'11-26' debe resolver a clave '11'."""
+        result = _lookup_relation(self._RELATION, "11-26")
+        assert result is not None
+        assert result["cliente"] == "B"
+
+    def test_leading_zeros(self):
+        """'06-26' debe resolver a clave '6' si existiera (o None)."""
+        assert _lookup_relation(self._RELATION, "06-26") is None  # no hay '6'
+
+    def test_leading_zeros_stripped_match(self):
+        """'01-26' debe resolver a clave '1'."""
+        result = _lookup_relation(self._RELATION, "01-26")
+        assert result is not None
+        assert result["cliente"] == "A"
+
+    def test_not_found(self):
+        assert _lookup_relation(self._RELATION, "999-26") is None
+
+    def test_empty_index(self):
+        assert _lookup_relation({}, "1-26") is None
+        assert _lookup_relation(None, "1-26") is None
+
+    def test_empty_numero(self):
+        assert _lookup_relation(self._RELATION, "") is None
 
 
 class TestResolveProjects:
-    def test_fills_from_relation_index(self):
-        scanned = [{
-            "nombre_carpeta": "122-20 Portal",
-            "numero_proyecto": "122-20",
-            "ruta_excel": "/excel.xlsx",
-            "ruta_carpeta": "/dir",
-        }]
-        rel_index = {
-            "122-20": {
-                "cliente": "ACME",
-                "localidad": "Madrid",
-                "tipo": "Obra",
-                "fecha": "01-02-26",
-                "importe": "5000",
-            }
-        }
-        result = resolve_projects(scanned, rel_index)
-        assert len(result) == 1
-        assert result[0]["cliente"] == "ACME"
-        assert result[0]["total"] == pytest.approx(5000)
+    @patch("src.core.project_data_resolver.sync_presupuestos")
+    def test_delegates_to_sync(self, mock_sync):
+        mock_sync.return_value = [{"cliente": "ACME"}]
+        scanned = [{"nombre_carpeta": "test", "numero_proyecto": "1-25"}]
+        result = resolve_projects(scanned, {"1-25": {}}, "PRESUPUESTADO")
+        mock_sync.assert_called_once_with(scanned, {"1-25": {}}, "PRESUPUESTADO")
+        assert result == [{"cliente": "ACME"}]
 
-    @patch("src.core.project_data_resolver.BudgetReader")
-    def test_falls_back_to_budget_reader(self, MockReader):
-        mock_instance = MockReader.return_value
-        mock_instance.read.return_value = {
-            "cabecera": {"cliente": "Reader Client", "direccion": "Dir", "obra": "Tipo", "fecha": "01-01-26"},
-            "total": 999.0,
-        }
-        scanned = [{
-            "nombre_carpeta": "1-25 Test",
-            "numero_proyecto": "1-25",
-            "ruta_excel": "/some.xlsx",
-            "ruta_carpeta": "/dir",
-        }]
-        result = resolve_projects(scanned, None)
-        assert result[0]["cliente"] == "Reader Client"
-        assert result[0]["total"] == pytest.approx(999.0)
-
-    def test_empty_scanned(self):
+    @patch("src.core.project_data_resolver.sync_presupuestos")
+    def test_empty_scanned(self, mock_sync):
+        mock_sync.return_value = []
         assert resolve_projects([], {}) == []
 
 

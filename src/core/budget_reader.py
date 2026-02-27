@@ -4,6 +4,13 @@ Lector de presupuestos Excel creados con cubiApp.
 Extrae datos de cabecera, partidas y totales de un .xlsx generado con
 la plantilla 122-20, trabajando directamente con el XML interno para
 máxima compatibilidad (sin abrir con openpyxl, que puede alterar formato).
+
+Detección inteligente de hoja:
+  Algunos archivos .xlsx contienen los datos reales en sheet2 (no en
+  sheet1) porque sheet1 retiene los datos de la plantilla original.
+  Cuando se proporciona ``expected_numero``, el lector compara el número
+  de proyecto de la cabecera (celda E5) con el esperado en cada hoja y
+  usa la que coincide.
 """
 
 import io
@@ -13,11 +20,19 @@ import re
 import zipfile
 from typing import Dict, List, Optional
 
+from src.core.xlsx_cell_utils import (
+    extract_rows,
+    get_cell_number,
+    get_cell_value,
+    read_shared_strings_from_bytes,
+)
+from src.utils.budget_utils import normalize_project_num, strip_obra_prefix
+from src.utils.spanish_number_parser import extract_total_from_asciende
+
 logger = logging.getLogger(__name__)
 
 
-SHEET_PRIMARY = "xl/worksheets/sheet1.xml"
-SHEET_FALLBACK = "xl/worksheets/sheet2.xml"
+_SHEET_PATH_RE = re.compile(r"^xl/worksheets/sheet(\d+)\.xml$")
 
 # Primera fila (1-indexed) que puede contener partidas en la plantilla 122-20
 PARTIDA_START_ROW = 17
@@ -41,12 +56,24 @@ HEADER_CELLS = {
 class BudgetReader:
     """Lee un presupuesto .xlsx de cubiApp y extrae cabecera, partidas y totales."""
 
-    def read(self, file_path: str) -> Optional[Dict]:
+    def read(
+        self,
+        file_path: str,
+        expected_numero: str = "",
+    ) -> Optional[Dict]:
         """
         Lee un presupuesto completo.
 
+        Si se proporciona *expected_numero* (ej: ``"71-26"``), el lector
+        compara el número de proyecto de la cabecera en cada hoja del archivo
+        y selecciona la que coincida.  Esto resuelve el caso habitual en que
+        sheet1 contiene los datos de la plantilla 122-20 y sheet2 los datos
+        reales del proyecto.
+
         Args:
             file_path: Ruta al archivo .xlsx.
+            expected_numero: Número de proyecto esperado (formato ``NNN-YY``).
+                Si está vacío se usa el comportamiento clásico (sheet1 primero).
 
         Returns:
             Dict con 'cabecera', 'partidas', 'subtotal', 'iva', 'total',
@@ -60,11 +87,15 @@ class BudgetReader:
             if file_bytes is None:
                 return None
 
-            sheet_xml = self._read_sheet(file_bytes)
+            shared_strings = self._read_shared_strings(file_bytes)
+
+            # Elegir la hoja correcta
+            sheet_xml = self._select_best_sheet(
+                file_bytes, shared_strings, expected_numero
+            )
             if not sheet_xml:
                 return None
 
-            shared_strings = self._read_shared_strings(file_bytes)
             rows = self._extract_rows(sheet_xml)
 
             cabecera = self._extract_header(rows, shared_strings)
@@ -82,7 +113,51 @@ class BudgetReader:
                 "total": totals["total"],
             }
         except Exception:
-            logger.exception("Error al leer presupuesto: %s", self._file_path)
+            logger.exception("Error al leer presupuesto: %s", file_path)
+            return None
+
+    def has_matching_project_sheet(
+        self,
+        file_path: str,
+        expected_numero: str,
+    ) -> Optional[bool]:
+        """Indica si alguna hoja del Excel coincide con ``expected_numero``.
+
+        Returns:
+            - ``True``: existe al menos una hoja cuyo E5 coincide.
+            - ``False``: hay hojas legibles, pero ninguna coincide.
+            - ``None``: no se pudo comprobar (archivo inválido, sin hojas, etc.).
+        """
+        if not file_path or not os.path.exists(file_path):
+            return None
+
+        norm_expected = normalize_project_num(expected_numero or "")
+        if not norm_expected:
+            return None
+
+        try:
+            file_bytes = self._load_file_bytes(file_path)
+            if file_bytes is None:
+                return None
+
+            shared_strings = self._read_shared_strings(file_bytes)
+            sheets = self._read_all_sheets(file_bytes)
+            if not sheets:
+                return None
+
+            for sheet_xml in sheets:
+                rows = self._extract_rows(sheet_xml)
+                header = self._extract_header(rows, shared_strings)
+                norm_sheet = normalize_project_num(header.get("numero", ""))
+                if norm_sheet == norm_expected:
+                    return True
+            return False
+        except Exception:
+            logger.exception(
+                "Error al verificar coincidencia de hoja para %s (esperado=%s)",
+                file_path,
+                expected_numero,
+            )
             return None
 
     @staticmethod
@@ -96,91 +171,104 @@ class BudgetReader:
 
     @staticmethod
     def _read_sheet(file_bytes: bytes) -> Optional[str]:
+        """Lee la primera hoja disponible en orden (sheet1, sheet2, sheet3...)."""
         try:
             with zipfile.ZipFile(io.BytesIO(file_bytes), "r") as z:
-                names = z.namelist()
-                for sheet in (SHEET_PRIMARY, SHEET_FALLBACK):
-                    if sheet in names:
-                        return z.read(sheet).decode("utf-8")
+                sheet_entries = []
+                for name in z.namelist():
+                    m = _SHEET_PATH_RE.match(name)
+                    if not m:
+                        continue
+                    sheet_entries.append((int(m.group(1)), name))
+                sheet_entries.sort(key=lambda x: x[0])
+                if sheet_entries:
+                    return z.read(sheet_entries[0][1]).decode("utf-8")
         except (zipfile.BadZipFile, IOError, OSError):
             pass
         return None
 
     @staticmethod
-    def _read_shared_strings(file_bytes: bytes) -> List[str]:
+    def _read_all_sheets(file_bytes: bytes) -> List[str]:
+        """Lee todas las hojas de datos disponibles (sheet1, sheet2, sheetN)."""
+        sheets: List[str] = []
         try:
             with zipfile.ZipFile(io.BytesIO(file_bytes), "r") as z:
-                ss_path = "xl/sharedStrings.xml"
-                if ss_path not in z.namelist():
-                    return []
-                ss_xml = z.read(ss_path).decode("utf-8")
-                strings = []
-                for si_match in re.finditer(r'<si>(.*?)</si>', ss_xml, re.DOTALL):
-                    texts = re.findall(r'<t[^>]*>([^<]*)</t>', si_match.group(1))
-                    strings.append(''.join(texts))
-                return strings
+                sheet_entries = []
+                for name in z.namelist():
+                    m = _SHEET_PATH_RE.match(name)
+                    if not m:
+                        continue
+                    sheet_entries.append((int(m.group(1)), name))
+                sheet_entries.sort(key=lambda x: x[0])
+                for _, sheet_path in sheet_entries:
+                    sheets.append(z.read(sheet_path).decode("utf-8"))
         except (zipfile.BadZipFile, IOError, OSError):
-            return []
+            pass
+        return sheets
 
-    def _extract_rows(self, sheet_xml: str) -> Dict[int, Dict]:
+    def _select_best_sheet(
+        self,
+        file_bytes: bytes,
+        shared_strings: List[str],
+        expected_numero: str,
+    ) -> Optional[str]:
+        """Selecciona la hoja que contiene los datos reales del proyecto.
+
+        Si ``expected_numero`` está vacío, devuelve la primera hoja disponible
+        (comportamiento clásico).
+
+        Si se proporciona, lee la cabecera de cada hoja y devuelve la que
+        tenga un número de proyecto coincidente con el esperado.
+
+        Si ninguna coincide, devuelve ``None`` para evitar falsos positivos
+        (leer una hoja de otro proyecto y contaminar el escaneo).
+        """
+        if not expected_numero:
+            return self._read_sheet(file_bytes)
+
+        sheets = self._read_all_sheets(file_bytes)
+        if not sheets:
+            return None
+        if len(sheets) == 1:
+            return sheets[0]
+
+        # Normalizar el número esperado
+        norm_expected = normalize_project_num(expected_numero)
+        if not norm_expected:
+            return sheets[0]
+
+        # Comparar cabeceras de cada hoja
+        for sheet_xml in sheets:
+            rows = self._extract_rows(sheet_xml)
+            header = self._extract_header(rows, shared_strings)
+            norm_sheet = normalize_project_num(header.get("numero", ""))
+            if norm_sheet == norm_expected:
+                return sheet_xml
+
+        # Ninguna hoja fiable coincide: mejor devolver None para no mezclar
+        # datos de otros proyectos.
+        logger.warning(
+            "Ninguna hoja coincide con el número esperado '%s' en el Excel",
+            expected_numero,
+        )
+        return None
+
+    @staticmethod
+    def _read_shared_strings(file_bytes: bytes) -> List[str]:
+        return read_shared_strings_from_bytes(file_bytes)
+
+    @staticmethod
+    def _extract_rows(sheet_xml: str) -> Dict[int, Dict]:
         """Extrae filas como {row_num: {col: cell_info}}."""
-        rows = {}
-        for row_match in re.finditer(
-            r'<row r="(\d+)"[^>]*?(?:/>|>(.*?)</row>)', sheet_xml, re.DOTALL
-        ):
-            row_num = int(row_match.group(1))
-            row_content = row_match.group(2)
-            if not row_content:
-                continue
-            cells = {}
-            for cell_match in re.finditer(
-                r'<c r="([A-Z]+)\d+"([^>]*?)(?:/>|>(.*?)</c>)',
-                row_content, re.DOTALL,
-            ):
-                col = cell_match.group(1)
-                cells[col] = {
-                    "attrs": cell_match.group(2),
-                    "inner": cell_match.group(3) or "",
-                }
-            if cells:
-                rows[row_num] = cells
-        return rows
+        return extract_rows(sheet_xml)
 
-    def _get_cell_value(self, cell_info: Dict, shared_strings: List[str]) -> str:
-        attrs = cell_info.get("attrs", "")
-        inner = cell_info.get("inner", "")
+    @staticmethod
+    def _get_cell_value(cell_info: Dict, shared_strings: List[str]) -> str:
+        return get_cell_value(cell_info, shared_strings)
 
-        # Rich text: concatenate all <t> inside <r> runs within <is>
-        is_match = re.search(r'<is>(.*?)</is>', inner, re.DOTALL)
-        if is_match:
-            is_content = is_match.group(1)
-            texts = re.findall(r'<t[^>]*>([^<]*)</t>', is_content)
-            if texts:
-                return ' '.join(t.strip() for t in texts if t.strip())
-
-        # Shared string
-        if 't="s"' in attrs:
-            v_match = re.search(r'<v>(\d+)</v>', inner)
-            if v_match:
-                idx = int(v_match.group(1))
-                if 0 <= idx < len(shared_strings):
-                    return shared_strings[idx].strip()
-
-        # Direct value
-        v_match = re.search(r'<v>([^<]+)</v>', inner)
-        if v_match:
-            return v_match.group(1).strip()
-
-        return ""
-
-    def _get_cell_number(self, cell_info: Dict, shared_strings: List[str]) -> Optional[float]:
-        value = self._get_cell_value(cell_info, shared_strings)
-        if not value:
-            return None
-        try:
-            return float(value)
-        except (ValueError, TypeError):
-            return None
+    @staticmethod
+    def _get_cell_number(cell_info: Dict, shared_strings: List[str]) -> Optional[float]:
+        return get_cell_number(cell_info, shared_strings)
 
     def _extract_header(self, rows: Dict[int, Dict], shared_strings: List[str]) -> Dict:
         """Extrae los datos de cabecera de las celdas conocidas."""
@@ -191,7 +279,10 @@ class BudgetReader:
             row = rows.get(row_num, {})
             cell = row.get(col)
             if cell:
-                cabecera[field_name] = self._get_cell_value(cell, shared_strings)
+                value = self._get_cell_value(cell, shared_strings)
+                if field_name == "obra":
+                    value = strip_obra_prefix(value)
+                cabecera[field_name] = value
             else:
                 cabecera[field_name] = ""
         return cabecera
@@ -209,7 +300,7 @@ class BudgetReader:
             a_val = self._get_cell_value(cells["A"], shared_strings)
             c_val = self._get_cell_value(cells["C"], shared_strings)
 
-            if not a_val or not re.match(r'^\d+\.?\d*$', a_val.strip()):
+            if not a_val or not re.match(r'^\d+(?:\.\d+)*$', a_val.strip()):
                 continue
             if not c_val or len(c_val.strip()) < 2:
                 continue
@@ -219,18 +310,30 @@ class BudgetReader:
                 unidad = self._get_cell_value(cells["B"], shared_strings)
 
             cantidad = 1.0
-            if "G" in cells:
-                num = self._get_cell_number(cells["G"], shared_strings)
-                if num is not None:
-                    cantidad = num
+            for qty_col in ("G", "K"):
+                if qty_col in cells:
+                    num = self._get_cell_number(cells[qty_col], shared_strings)
+                    if num is not None:
+                        cantidad = num
+                        break
 
             precio = 0.0
-            if "H" in cells:
-                num = self._get_cell_number(cells["H"], shared_strings)
-                if num is not None:
-                    precio = num
+            for price_col in ("H", "L"):
+                if price_col in cells:
+                    num = self._get_cell_number(cells[price_col], shared_strings)
+                    if num is not None:
+                        precio = num
+                        break
 
-            importe = round(cantidad * precio, 2)
+            importe = None
+            for total_col in ("I", "M"):
+                if total_col in cells:
+                    num = self._get_cell_number(cells[total_col], shared_strings)
+                    if num is not None:
+                        importe = num
+                        break
+            if importe is None:
+                importe = round(cantidad * precio, 2)
 
             partidas.append({
                 "numero": a_val.strip(),
@@ -238,7 +341,7 @@ class BudgetReader:
                 "unidad": unidad.strip() if unidad else "ud",
                 "cantidad": cantidad,
                 "precio": precio,
-                "importe": importe,
+                "importe": round(float(importe), 2),
             })
         return partidas
 
@@ -274,7 +377,7 @@ class BudgetReader:
             text_up = row_text.upper()
 
             num_val = None
-            for col in ("I", "H", "J"):
+            for col in ("M", "I", "H", "J"):
                 if col in cells:
                     num_val = self._get_cell_number(cells[col], shared_strings)
                     if num_val is not None:
@@ -300,15 +403,98 @@ class BudgetReader:
             iva = round(total - subtotal, 2)
 
         return {
-            "subtotal": subtotal or 0,
-            "iva": iva or 0,
-            "total": total,
+            "subtotal": float(subtotal) if subtotal else 0.0,
+            "iva": float(iva) if iva else 0.0,
+            "total": float(total),
         }
 
     @staticmethod
     def _calculate_totals(partidas: List[Dict]) -> Dict:
         """Calcula subtotal, IVA y total a partir de las partidas (fallback)."""
-        subtotal = sum(p["importe"] for p in partidas)
+        subtotal = sum((p["importe"] for p in partidas), 0.0)
         iva = round(subtotal * IVA_RATE, 2)
         total = round(subtotal + iva, 2)
         return {"subtotal": round(subtotal, 2), "iva": iva, "total": total}
+
+    # ------------------------------------------------------------------
+    # Lectura de total desde texto "Asciende..."
+    # ------------------------------------------------------------------
+
+    def read_total_from_text(
+        self,
+        file_path: str,
+        expected_numero: str = "",
+    ) -> Optional[float]:
+        """Extrae el total del presupuesto desde la frase ``Asciende...``.
+
+        Busca en todas las hojas del archivo la frase:
+
+          *"Asciende el presupuesto de ejecución material a la expresada
+          cantidad de ... EUROS ..."*
+
+        **Solo** devuelve el total si lo encuentra en una hoja cuyo número
+        de cabecera (celda E5) **coincide** con ``expected_numero``.
+        Esto evita devolver importes de hojas copiadas de otros proyectos
+        (sheet1 suele conservar los datos del proyecto original).
+
+        Args:
+            file_path: Ruta al archivo .xlsx.
+            expected_numero: Número de proyecto esperado (``NNN-YY``).
+
+        Returns:
+            Importe total (float) o ``None`` si no se encuentra en una
+            hoja verificada.
+        """
+        if not file_path or not os.path.exists(file_path):
+            return None
+
+        try:
+            file_bytes = self._load_file_bytes(file_path)
+            if file_bytes is None:
+                return None
+
+            shared_strings = self._read_shared_strings(file_bytes)
+            sheets = self._read_all_sheets(file_bytes)
+            if not sheets:
+                return None
+
+            norm_expected = normalize_project_num(expected_numero) if expected_numero else ""
+
+            for sheet_xml in sheets:
+                rows = self._extract_rows(sheet_xml)
+
+                # Verificar que la hoja pertenece a ESTE proyecto
+                if norm_expected:
+                    header = self._extract_header(rows, shared_strings)
+                    norm_sheet = normalize_project_num(header.get("numero", ""))
+                    if norm_sheet and norm_sheet != norm_expected:
+                        # Hoja de otro proyecto (copiada) → saltar
+                        continue
+
+                total = self._find_asciende_total(rows, shared_strings)
+                if total is not None:
+                    return total
+
+            return None
+
+        except Exception:
+            logger.exception("Error al leer total por texto: %s", file_path)
+            return None
+
+    def _find_asciende_total(
+        self,
+        rows: Dict[int, Dict],
+        shared_strings: List[str],
+    ) -> Optional[float]:
+        """Busca la frase 'Asciende...' en las filas y extrae el importe."""
+        for row_num in sorted(rows.keys()):
+            cells = rows[row_num]
+            for cell_info in cells.values():
+                text = self._get_cell_value(cell_info, shared_strings)
+                if not text:
+                    continue
+                if "asciende" in text.lower():
+                    total = extract_total_from_asciende(text)
+                    if total is not None:
+                        return total
+        return None

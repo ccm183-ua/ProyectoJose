@@ -10,6 +10,7 @@ Recorre la estructura de carpetas de presupuestos existentes:
 
 import os
 import re
+from datetime import datetime
 from typing import Dict, List, Optional
 
 _PROJECT_NUMBER_RE = re.compile(r"(\d{1,4}-\d{2})")
@@ -86,6 +87,137 @@ def scan_projects(state_folder: str) -> List[Dict]:
         })
 
     return projects
+
+
+def scan_projects_depth(state_folder: str, depth: int = 1) -> List[Dict]:
+    """Escanea una carpeta de estado hasta *depth* niveles de profundidad.
+
+    Con ``depth=1`` se comporta igual que ``scan_projects`` (solo primer nivel).
+    Con ``depth=2`` también escanea subcarpetas dentro de cada carpeta de
+    proyecto, buscando proyectos en el segundo nivel.
+
+    Args:
+        state_folder: Ruta absoluta a una carpeta de estado.
+        depth: Niveles de profundidad a explorar (>= 1).
+
+    Returns:
+        Lista de dicts con las mismas claves que ``scan_projects``.
+    """
+    state_folder = os.path.normpath(state_folder) if state_folder else ""
+    if not state_folder or not os.path.isdir(state_folder):
+        return []
+
+    depth = max(1, depth)
+    projects: List[Dict] = []
+    _scan_recursive(state_folder, state_folder, depth, 1, projects)
+    return projects
+
+
+def _scan_recursive(
+    base_folder: str,
+    current_folder: str,
+    max_depth: int,
+    current_depth: int,
+    results: List[Dict],
+) -> None:
+    """Recorrido recursivo para escanear proyectos hasta *max_depth*."""
+    try:
+        entries = sorted(os.listdir(current_folder))
+    except (OSError, PermissionError):
+        return
+
+    for entry in entries:
+        full_path = os.path.normpath(os.path.join(current_folder, entry))
+        if not os.path.isdir(full_path):
+            continue
+
+        numero = _extract_project_number(entry)
+        ruta_excel = _find_best_excel(full_path, numero)
+
+        # Nombre relativo desde la carpeta de estado para mostrar jerarquía
+        rel = os.path.relpath(full_path, base_folder)
+
+        results.append({
+            "nombre_carpeta": rel,
+            "numero_proyecto": numero or "",
+            "ruta_excel": ruta_excel or "",
+            "ruta_carpeta": full_path,
+        })
+
+        # Descender si no hemos alcanzado la profundidad máxima
+        if current_depth < max_depth:
+            _scan_recursive(base_folder, full_path, max_depth, current_depth + 1, results)
+
+
+def scan_explorer(state_folder: str, depth: int = 2) -> List[Dict]:
+    """Escanea una carpeta mostrando TODO el contenido (archivos y carpetas).
+
+    Devuelve una lista plana de entradas similar a un explorador de archivos,
+    recorriendo hasta *depth* niveles.
+
+    Returns:
+        Lista de dicts con claves:
+        ``nombre``, ``ruta``, ``es_carpeta``, ``extension``, ``tamano``,
+        ``fecha_modificacion``, ``nivel``.
+    """
+    state_folder = os.path.normpath(state_folder) if state_folder else ""
+    if not state_folder or not os.path.isdir(state_folder):
+        return []
+
+    depth = max(1, depth)
+    results: List[Dict] = []
+    _scan_explorer_recursive(state_folder, state_folder, depth, 1, results)
+    return results
+
+
+def _scan_explorer_recursive(
+    base_folder: str,
+    current_folder: str,
+    max_depth: int,
+    current_depth: int,
+    results: List[Dict],
+) -> None:
+    """Recorrido recursivo para modo explorador."""
+    try:
+        entries = sorted(os.scandir(current_folder), key=lambda e: e.name)
+    except (OSError, PermissionError):
+        return
+
+    for entry in entries:
+        # Ignorar archivos temporales
+        if entry.name.startswith("~$") or entry.name.startswith("."):
+            continue
+
+        rel = os.path.relpath(entry.path, base_folder)
+        es_carpeta = entry.is_dir(follow_symlinks=False)
+
+        try:
+            stat = entry.stat(follow_symlinks=False)
+            tamano = stat.st_size if not es_carpeta else 0
+            fecha_mod = datetime.fromtimestamp(stat.st_mtime).strftime("%d-%m-%y %H:%M")
+        except OSError:
+            tamano = 0
+            fecha_mod = ""
+
+        ext = ""
+        if not es_carpeta:
+            _, ext = os.path.splitext(entry.name)
+            ext = ext.lower()
+
+        results.append({
+            "nombre": rel,
+            "ruta": os.path.normpath(entry.path),
+            "es_carpeta": es_carpeta,
+            "extension": ext,
+            "tamano": tamano,
+            "fecha_modificacion": fecha_mod,
+            "nivel": current_depth,
+        })
+
+        if es_carpeta and current_depth < max_depth:
+            _scan_explorer_recursive(
+                base_folder, entry.path, max_depth, current_depth + 1, results
+            )
 
 
 def _is_valid_xlsx(filepath: str) -> bool:
