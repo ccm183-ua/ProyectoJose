@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <title>cubiApp</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
+  <base href="">
+  <!-- Fonts -->
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Poppins:300,400,500,600,700" />
+  <!-- Metronic base -->
+  <link href="assets/plugins/global/plugins.bundle.css" rel="stylesheet" type="text/css" />
+  <link href="assets/css/style.bundle.css" rel="stylesheet" type="text/css" />
+  <!-- Layout themes -->
+  <link href="assets/css/themes/layout/header/base/light.css" rel="stylesheet" type="text/css" />
+  <link href="assets/css/themes/layout/header/menu/light.css" rel="stylesheet" type="text/css" />
+  <link href="assets/css/themes/layout/brand/dark.css" rel="stylesheet" type="text/css" />
+  <link href="assets/css/themes/layout/aside/dark.css" rel="stylesheet" type="text/css" />
+  <!-- DataTables -->
+  <link href="assets/plugins/custom/datatables/datatables.bundle.css" rel="stylesheet" type="text/css" />
+  <!-- Paleta cubiApp -->
+  <link href="css/variables.css" rel="stylesheet" type="text/css" />
+  <style>
+    #view-basedatos .dataTables_wrapper .dataTables_scrollHeadInner,
+    #view-basedatos .dataTables_wrapper .dataTables_scrollHeadInner table,
+    #view-basedatos .dataTables_wrapper .dataTables_scrollBody table {
+      width: 100% !important;
+    }
+    #view-basedatos table.dataTable thead th {
+      white-space: normal;
+      word-break: break-word;
+      font-size: 0.78rem;
+      letter-spacing: 0.03em;
+    }
+    #view-basedatos table.dataTable tbody td {
+      font-size: 0.86rem;
+      line-height: 1.2;
+      vertical-align: middle;
+    }
+    #view-basedatos table.dataTable tbody td.text-wrap {
+      white-space: normal;
+      word-break: break-word;
+    }
+    #view-basedatos .btn.btn-icon {
+      width: 26px;
+      height: 26px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .basedatos-detail-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+    }
+    .basedatos-detail-item {
+      padding: 10px 12px;
+      border: 1px solid #ebedf3;
+      border-radius: 6px;
+      background: #ffffff;
+    }
+    .basedatos-detail-label {
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      color: #7e8299;
+      margin-bottom: 6px;
+      letter-spacing: 0.03em;
+    }
+    .basedatos-detail-value {
+      font-size: 0.92rem;
+      color: #181c32;
+      min-height: 20px;
+    }
+  </style>
+  <link rel="shortcut icon" href="assets/media/logos/favicon.ico" />
+</head>
+<body id="kt_body" class="header-fixed header-mobile-fixed subheader-enabled subheader-fixed aside-enabled aside-fixed aside-minimize-hoverable">
+  <!-- Header móvil -->
+  <div id="kt_header_mobile" class="header-mobile align-items-center header-mobile-fixed">
+    <a href="#">
+      <img alt="cubiApp" src="assets/media/logos/logo-light.png" />
+    </a>
+    <div class="d-flex align-items-center">
+      <button class="btn p-0 burger-icon burger-icon-left" id="kt_aside_mobile_toggle">
+        <span></span>
+      </button>
+    </div>
+  </div>
+
+  <div class="d-flex flex-column flex-root">
+    <div class="d-flex flex-row flex-column-fluid page">
+      <!-- Sidebar -->
+      <div class="aside aside-left aside-fixed d-flex flex-column flex-row-auto" id="kt_aside">
+        <div class="brand flex-column-auto" id="kt_brand">
+          <a href="#" class="brand-logo">
+            <img alt="cubiApp" src="assets/media/logos/logo-light.png" />
+          </a>
+          <button class="brand-toggle btn btn-sm px-0" id="kt_aside_toggle">
+            <span class="svg-icon svg-icon svg-icon-xl">
+              <svg xmlns="http://www.w3.org/2000/svg" width="24px" height="24px" viewBox="0 0 24 24">
+                <g stroke="none" stroke-width="1" fill="none" fill-rule="evenodd">
+                  <polygon points="0 0 24 0 24 24 0 24" />
+                  <path d="M5.29288961,6.70710318 C4.90236532,6.31657888 4.90236532,5.68341391 5.29288961,5.29288961 C5.68341391,4.90236532 6.31657888,4.90236532 6.70710318,5.29288961 L12.7071032,11.2928896 C13.0856821,11.6714686 13.0989277,12.281055 12.7371505,12.675721 L7.23715054,18.675721 C6.86395813,19.08284 6.23139076,19.1103429 5.82427177,18.7371505 C5.41715278,18.3639581 5.38964985,17.7313908 5.76284226,17.3242718 L10.6158586,12.0300721 L5.29288961,6.70710318 Z" fill="#000000" fill-rule="nonzero" transform="translate(8.999997, 11.999999) scale(-1, 1) translate(-8.999997, -11.999999)" />
+                  <path d="M10.7071009,15.7071068 C10.3165766,16.0976311 9.68341162,16.0976311 9.29288733,15.7071068 C8.90236304,15.3165825 8.90236304,14.6834175 9.29288733,14.2928932 L15.2928873,8.29289322 C15.6714663,7.91431428 16.2810527,7.90106866 16.6757187,8.26284586 L22.6757187,13.7628459 C23.0828377,14.1360383 23.1103407,14.7686056 22.7371482,15.1757246 C22.3639558,15.5828436 21.7313885,15.6103465 21.3242695,15.2371541 L16.0300699,10.3841378 L10.7071009,15.7071068 Z" fill="#000000" fill-rule="nonzero" opacity="0.3" transform="translate(15.999997, 11.999999) scale(-1, 1) rotate(-270.000000) translate(-15.999997, -11.999999)" />
+                </g>
+              </svg>
+            </span>
+          </button>
+        </div>
+        <div class="aside-menu-wrapper flex-column-fluid" id="kt_aside_menu_wrapper">
+          <div id="kt_aside_menu" class="aside-menu my-4" data-menu-vertical="1" data-menu-scroll="1" data-menu-dropdown-timeout="500">
+            <ul class="menu-nav">
+              <li class="menu-item menu-item-active" aria-haspopup="true" data-view="inicio">
+                <a href="#" class="menu-link">
+                  <span class="svg-icon menu-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24px" height="24px" viewBox="0 0 24 24"><g stroke="none" stroke-width="1" fill="none" fill-rule="evenodd"><polygon points="0 0 24 0 24 24 0 24" /><path d="M12.9336061,16.072447 L19.36,10.9564761 L19.5181585,10.8312381 C20.1676248,10.3169571 20.2772143,9.3735535 19.7629333,8.72408713 C19.6917232,8.63415859 19.6104327,8.55269514 19.5206557,8.48129411 L12.9336854,3.24257445 C12.3871201,2.80788259 11.6128799,2.80788259 11.0663146,3.24257445 L4.47482784,8.48488609 C3.82645598,9.00054628 3.71887192,9.94418071 4.23453211,10.5925526 C4.30500305,10.6811601 4.38527899,10.7615046 4.47382636,10.8320511 L4.63,10.9564761 L11.0659024,16.0730648 C11.6126744,16.5077525 12.3871218,16.5074963 12.9336061,16.072447 Z" fill="#000000" fill-rule="nonzero" /><path d="M11.0563554,18.6706981 L5.33593024,14.122919 C4.94553994,13.8125559 4.37746707,13.8774308 4.06710397,14.2678211 C4.06471678,14.2708238 4.06234874,14.2738418 4.06,14.2768747 L4.06,14.2768747 C3.75257288,14.6738539 3.82516916,15.244888 4.22214834,15.5523151 C4.22358765,15.5534297 4.2250303,15.55454 4.22647627,15.555646 L11.0872776,20.8031356 C11.6250734,21.2144692 12.371757,21.2145375 12.909628,20.8033023 L19.7677785,15.559828 C20.1693192,15.2528257 20.2459576,14.6784381 19.9389553,14.2768974 C19.9376429,14.2751809 19.9363245,14.2734691 19.935,14.2717619 L19.935,14.2717619 C19.6266937,13.8743807 19.0546209,13.8021712 18.6572397,14.1104775 L12.9235044,18.6705218 C12.377022,19.1051477 11.6029199,19.1052208 11.0563554,18.6706981 Z" fill="#000000" opacity="0.3" /></g></svg>
+                  </span>
+                  <span class="menu-text">Inicio</span>
+                </a>
+              </li>
+              <li class="menu-section">
+                <h4 class="menu-text">cubiApp</h4>
+                <i class="menu-icon ki ki-bold-more-hor icon-md"></i>
+              </li>
+              <li class="menu-item" aria-haspopup="true" data-view="presupuestos">
+                <a href="#" class="menu-link">
+                  <span class="svg-icon menu-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24px" height="24px" viewBox="0 0 24 24"><g stroke="none" stroke-width="1" fill="none" fill-rule="evenodd"><rect x="0" y="0" width="24" height="24" /><path d="M4,4 L9.58578644,4 C10.3677454,4 11.0735362,4.40246358 11.4734473,5.05263158 L12,6 L20,6 C20.5522847,6 21,6.44771525 21,7 L21,19 C21,20.1045695 20.1045695,21 19,21 L5,21 C3.8954305,21 3,20.1045695 3,19 L3,5 C3,4.44771525 3.44771525,4 4,4 Z" fill="#000000" fill-rule="nonzero" opacity="0.3" /><path d="M12.5857864,4 L12,6 L20,6 L20,8 L4,8 L4,5 C4,4.44771525 4.44771525,4 5,4 L12.5857864,4 Z" fill="#000000" fill-rule="nonzero" /></g></svg>
+                  </span>
+                  <span class="menu-text">Presupuestos</span>
+                </a>
+              </li>
+              <li class="menu-item" aria-haspopup="true" data-view="basedatos">
+                <a href="#" class="menu-link">
+                  <span class="svg-icon menu-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24px" height="24px" viewBox="0 0 24 24"><g stroke="none" stroke-width="1" fill="none" fill-rule="evenodd"><rect x="0" y="0" width="24" height="24" /><path d="M5,5 L5,19 L19,19 L19,5 L5,5 Z M5,5 L19,5 L19,19 L5,19" fill="#000000" fill-rule="nonzero" opacity="0.3" /><path d="M7,7 L7,17 L17,17 L17,7 L7,7 Z M7,7 L17,7 L17,17 L7,17" fill="#000000" fill-rule="nonzero" /></g></svg>
+                  </span>
+                  <span class="menu-text">Base de datos</span>
+                </a>
+              </li>
+              <li class="menu-item" aria-haspopup="true" data-view="plantillas">
+                <a href="#" class="menu-link">
+                  <span class="svg-icon menu-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24px" height="24px" viewBox="0 0 24 24"><g stroke="none" stroke-width="1" fill="none" fill-rule="evenodd"><rect x="0" y="0" width="24" height="24" /><path d="M5,5 L5,19 L19,19 L19,5 L5,5 Z M5,5 L19,5 L19,19 L5,19" fill="#000000" fill-rule="nonzero" opacity="0.3" /><path d="M7,9 L7,15 L17,15 L17,9 L7,9 Z" fill="#000000" fill-rule="nonzero" /></g></svg>
+                  </span>
+                  <span class="menu-text">Plantillas</span>
+                </a>
+              </li>
+              <li class="menu-item" aria-haspopup="true" data-view="config">
+                <a href="#" class="menu-link">
+                  <span class="svg-icon menu-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24px" height="24px" viewBox="0 0 24 24"><g stroke="none" stroke-width="1" fill="none" fill-rule="evenodd"><polygon points="0 0 24 0 24 24 0 24" /><path d="M12,11 C9.790861,11 8,9.209139 8,7 C8,4.790861 9.790861,3 12,3 C14.209139,3 16,4.790861 16,7 C16,9.209139 14.209139,11 12,11 Z" fill="#000000" fill-rule="nonzero" opacity="0.3" /><path d="M3.00065168,20.1992055 C3.38825852,15.4265159 7.26191235,13 11.9833413,13 C16.7712164,13 20.7048837,15.2931929 20.9979143,20.2 C21.0095879,20.3954741 20.9979143,21 20.2466999,21 C16.541124,21 11.0347247,21 3.72750223,21 C3.47671215,21 2.97953825,20.45918 3.00065168,20.1992055 Z" fill="#000000" fill-rule="nonzero" /></g></svg>
+                  </span>
+                  <span class="menu-text">Configuración</span>
+                </a>
+              </li>
+              <li class="menu-section">
+                <h4 class="menu-text">Sistema</h4>
+                <i class="menu-icon ki ki-bold-more-hor icon-md"></i>
+              </li>
+              <li class="menu-item" aria-haspopup="true" data-action="showAbout">
+                <a href="#" class="menu-link">
+                  <span class="svg-icon menu-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24px" height="24px" viewBox="0 0 24 24"><g stroke="none" stroke-width="1" fill="none" fill-rule="evenodd"><polygon points="0 0 24 0 24 24 0 24" /><path d="M12,21 C7.02943725,21 3,16.9705627 3,12 C3,7.02943725 7.02943725,3 12,3 C16.9705627,3 21,7.02943725 21,12 C21,16.9705627 16.9705627,21 12,21 Z" fill="#000000" fill-rule="nonzero" opacity="0.3" /><path d="M12,17 C14.7614237,17 17,14.7614237 17,12 C17,9.23857625 14.7614237,7 12,7 C9.23857625,7 7,9.23857625 7,12 C7,14.7614237 9.23857625,17 12,17 Z" fill="#000000" fill-rule="nonzero" /></g></svg>
+                  </span>
+                  <span class="menu-text">Ayuda</span>
+                </a>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <!-- Contenido principal -->
+      <div class="d-flex flex-column flex-row-fluid wrapper" id="kt_wrapper">
+        <div id="kt_content" class="content d-flex flex-column flex-column-fluid">
+          <div class="subheader py-2 py-lg-4 subheader-solid" id="kt_subheader">
+            <div class="container-fluid d-flex align-items-center justify-content-between flex-wrap flex-sm-nowrap">
+              <div class="d-flex align-items-center flex-wrap mr-1">
+                <h5 class="text-dark font-weight-bold mt-2 mb-2 mr-5" id="subheader-title">Inicio</h5>
+              </div>
+            </div>
+          </div>
+          <div class="d-flex flex-column-fluid">
+            <div class="container">
+              <!-- Vista Inicio -->
+              <div id="view-inicio" class="view-content">
+                <div class="row">
+                  <div class="col-lg-12">
+                    <div class="card card-custom gutter-b">
+                      <div class="card-header">
+                        <h3 class="card-title">cubiApp</h3>
+                      </div>
+                      <div class="card-body">
+                        <p class="text-dark-50 mb-5">Gestión de presupuestos. Elige una acción:</p>
+                        <div class="row">
+                          <div class="col-md-4 mb-4">
+                            <button type="button" class="btn btn-primary btn-block btn-lg" id="btn-crear-presupuesto">
+                              <i class="flaticon2-plus"></i> Crear nuevo presupuesto
+                            </button>
+                          </div>
+                          <div class="col-md-4 mb-4">
+                            <button type="button" class="btn btn-light-primary btn-block btn-lg" id="btn-presupuestos">
+                              <i class="flaticon2-list"></i> Presupuestos existentes
+                            </button>
+                          </div>
+                          <div class="col-md-4 mb-4">
+                            <button type="button" class="btn btn-light-primary btn-block btn-lg" id="btn-base-datos">
+                              <i class="flaticon2-graphic"></i> Gestionar base de datos
+                            </button>
+                          </div>
+                        </div>
+                        <hr class="my-4">
+                        <button type="button" class="btn btn-sm btn-secondary" id="btn-probar-bridge">
+                          <i class="flaticon2-check-mark"></i> Probar bridge
+                        </button>
+                        <div id="bridge-result" class="mt-3 alert alert-secondary d-none" role="alert"></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Vista Presupuestos -->
+              <div id="view-presupuestos" class="view-content d-none">
+                <div class="row">
+                  <div class="col-lg-12">
+                    <div class="card card-custom gutter-b">
+                      <div class="card-header d-flex justify-content-between align-items-center">
+                        <h3 class="card-title mb-0">Presupuestos existentes</h3>
+                        <button type="button" class="btn btn-sm btn-light-primary" id="presupuestos-refresh">
+                          <i class="flaticon2-refresh"></i> Actualizar
+                        </button>
+                      </div>
+                      <div class="card-body">
+                        <p class="text-muted mb-3" id="presupuestos-hint">Cargando...</p>
+                        <ul class="nav nav-tabs nav-tabs-line mb-4" id="presupuestos-tabs"></ul>
+                        <div class="table-responsive" id="presupuestos-table-wrap">
+                          <table class="table table-head-custom table-vertical-center" id="presupuestos-table">
+                            <thead><tr id="presupuestos-thead"></tr></thead>
+                            <tbody id="presupuestos-tbody"></tbody>
+                          </table>
+                        </div>
+                        <div id="presupuestos-empty" class="text-center py-5 text-muted d-none">
+                          No hay presupuestos en esta carpeta.
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Vista Base de datos -->
+              <div id="view-basedatos" class="view-content d-none">
+                <div class="row">
+                  <div class="col-lg-12">
+                    <div class="card card-custom gutter-b">
+                      <div class="card-header d-flex justify-content-between align-items-center">
+                        <h3 class="card-title mb-0">Base de datos</h3>
+                        <button type="button" class="btn btn-sm btn-light-primary" id="basedatos-refresh">
+                          <i class="flaticon2-refresh"></i> Actualizar
+                        </button>
+                      </div>
+                      <div class="card-body">
+                        <p class="text-muted mb-4">Gestiona administraciones, comunidades y contactos.</p>
+                        <ul class="nav nav-tabs nav-tabs-line mb-4" id="basedatos-tabs">
+                          <li class="nav-item"><a class="nav-link active" href="#" data-tab="admin">Administraciones</a></li>
+                          <li class="nav-item"><a class="nav-link" href="#" data-tab="comunidad">Comunidades</a></li>
+                        </ul>
+                        <div id="basedatos-tab-admin" class="basedatos-tab">
+                          <div class="mb-3">
+                            <button type="button" class="btn btn-primary btn-add-admin">+ Añadir administración</button>
+                          </div>
+                          <table id="kt_datatable_admin" class="table table-sm table-head-custom table-hover" style="width:100%">
+                            <thead><tr><th>Nombre</th><th>Dirección</th><th>Email</th><th>Teléfono</th><th>Contactos</th><th>Acciones</th></tr></thead>
+                            <tbody></tbody>
+                          </table>
+                        </div>
+                        <div id="basedatos-tab-comunidad" class="basedatos-tab d-none">
+                          <div class="mb-3">
+                            <button type="button" class="btn btn-primary btn-add-comunidad">+ Añadir comunidad</button>
+                          </div>
+                          <table id="kt_datatable_comunidad" class="table table-sm table-head-custom table-hover" style="width:100%">
+                            <thead><tr><th>Nombre</th><th>CIF</th><th>Dirección</th><th>Email</th><th>Teléfono</th><th>Administración</th><th>Contactos</th><th>Acciones</th></tr></thead>
+                            <tbody></tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Vista Plantillas (placeholder) -->
+              <div id="view-plantillas" class="view-content d-none">
+                <div class="row">
+                  <div class="col-lg-12">
+                    <div class="card card-custom gutter-b">
+                      <div class="card-header"><h3 class="card-title">Plantillas</h3></div>
+                      <div class="card-body">
+                        <p class="text-muted">Vista en desarrollo. Por ahora puedes abrir la ventana Qt desde Inicio.</p>
+                        <button type="button" class="btn btn-primary" id="plantillas-open-qt">Abrir ventana Plantillas (Qt)</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Vista Configuración -->
+              <div id="view-config" class="view-content d-none">
+                <div class="row">
+                  <div class="col-lg-12">
+                    <div class="card card-custom gutter-b mb-5">
+                      <div class="card-header">
+                        <h3 class="card-title">Rutas por defecto</h3>
+                      </div>
+                      <div class="card-body" id="config-rutas-body">
+                        <p class="text-muted mb-4">Configura las carpetas y archivos por defecto.</p>
+                        <div class="form-group">
+                          <label>Carpeta para guardar presupuestos nuevos</label>
+                          <div class="input-group mb-2">
+                            <input type="text" class="form-control" id="config-path-save" readonly>
+                            <div class="input-group-append"><button type="button" class="btn btn-secondary btn-browse-dir" data-target="config-path-save">Examinar</button></div>
+                            <div class="input-group-append"><button type="button" class="btn btn-outline-secondary btn-clear-path" data-target="config-path-save">Limpiar</button></div>
+                          </div>
+                        </div>
+                        <div class="form-group">
+                          <label>Carpeta para abrir presupuestos existentes</label>
+                          <div class="input-group mb-2">
+                            <input type="text" class="form-control" id="config-path-open" readonly>
+                            <div class="input-group-append"><button type="button" class="btn btn-secondary btn-browse-dir" data-target="config-path-open">Examinar</button></div>
+                            <div class="input-group-append"><button type="button" class="btn btn-outline-secondary btn-clear-path" data-target="config-path-open">Limpiar</button></div>
+                          </div>
+                        </div>
+                        <div class="form-group">
+                          <label>Archivo Excel de relación de presupuestos</label>
+                          <div class="input-group mb-2">
+                            <input type="text" class="form-control" id="config-path-relation" readonly>
+                            <div class="input-group-append"><button type="button" class="btn btn-secondary btn-browse-file" data-target="config-path-relation">Examinar</button></div>
+                            <div class="input-group-append"><button type="button" class="btn btn-outline-secondary btn-clear-path" data-target="config-path-relation">Limpiar</button></div>
+                          </div>
+                        </div>
+                        <button type="button" class="btn btn-primary btn-save-paths">Guardar rutas</button>
+                      </div>
+                    </div>
+                    <div class="card card-custom gutter-b">
+                      <div class="card-header">
+                        <h3 class="card-title">API Key de Gemini</h3>
+                      </div>
+                      <div class="card-body">
+                        <p class="text-muted mb-3">Introduce tu API key de Google Gemini. Puedes obtenerla gratis en <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com/apikey</a></p>
+                        <div class="form-group">
+                          <label>API Key</label>
+                          <input type="password" class="form-control" id="config-api-key" placeholder="AIza..." style="max-width:400px">
+                        </div>
+                        <button type="button" class="btn btn-primary btn-save-api">Guardar API Key</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- QWebChannel (Qt inyecta qt.webChannelTransport) -->
+  <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+  <script>var KTAppSettings = { "breakpoints": { "sm": 576, "md": 768, "lg": 992, "xl": 1200, "xxl": 1200 }, "colors": { "theme": { "base": { "white": "#ffffff", "primary": "#6993FF", "secondary": "#E5EAEE", "success": "#1BC5BD", "info": "#8950FC", "warning": "#FFA800", "danger": "#F64E60", "light": "#F3F6F9", "dark": "#212121" } } }, "font-family": "Poppins" };</script>
+  <script src="assets/plugins/global/plugins.bundle.js"></script>
+  <script src="assets/plugins/custom/datatables/datatables.bundle.js"></script>
+  <script src="assets/js/scripts.bundle.js"></script>
+  <script src="js/app.js"></script>
+  <script>
+    (function() {
+      var btnProbar = document.getElementById('btn-probar-bridge');
+      var btnCrear = document.getElementById('btn-crear-presupuesto');
+      var btnPresupuestos = document.getElementById('btn-presupuestos');
+      var btnBaseDatos = document.getElementById('btn-base-datos');
+      var result = document.getElementById('bridge-result');
+
+      function showResult(ok, msg) {
+        result.classList.remove('d-none', 'alert-success', 'alert-danger');
+        result.classList.add(ok ? 'alert-success' : 'alert-danger');
+        result.textContent = msg;
+      }
+
+      function showView(viewName) {
+        document.querySelectorAll('.view-content').forEach(function(v) { v.classList.add('d-none'); });
+        document.querySelectorAll('.menu-item').forEach(function(m) { m.classList.remove('menu-item-active'); });
+        var viewEl = document.getElementById('view-' + viewName);
+        var menuEl = document.querySelector('[data-view="' + viewName + '"]');
+        if (viewEl) viewEl.classList.remove('d-none');
+        if (menuEl) menuEl.classList.add('menu-item-active');
+        var titles = { inicio: 'Inicio', config: 'Configuración', presupuestos: 'Presupuestos', basedatos: 'Base de datos', plantillas: 'Plantillas' };
+        var title = document.getElementById('subheader-title');
+        if (title) title.textContent = titles[viewName] || viewName;
+        if (viewName === 'config' && window.app && window.appModals) window.appModals.initConfigView();
+        else if (viewName === 'presupuestos' && window.app && window.appModals) window.appModals.initPresupuestosView();
+        else if (viewName === 'basedatos' && window.app && window.appModals) window.appModals.initBasedatosView();
+      }
+
+      window.showConfigView = function() { showView('config'); };
+
+      function initBridge() {
+        if (typeof qt === 'undefined' || !qt.webChannelTransport) {
+          showResult(false, 'QWebChannel no disponible (¿ejecutando en Qt WebEngine?)');
+          return;
+        }
+        new QWebChannel(qt.webChannelTransport, function(channel) {
+          window.app = channel.objects.app;
+
+          btnProbar.onclick = function() {
+            try {
+              app.ping(function(r) {
+                if (typeof r === 'string') {
+                  var data = JSON.parse(r);
+                  showResult(data.ok, data.message || r);
+                } else {
+                  showResult(true, 'Respuesta: ' + String(r));
+                }
+              });
+            } catch (e) {
+              showResult(false, 'Error: ' + e.message);
+            }
+          };
+
+          btnCrear.onclick = function() { app.createBudget(); };
+          btnPresupuestos.onclick = function() { showView('presupuestos'); };
+          btnBaseDatos.onclick = function() { showView('basedatos'); };
+
+          var btnTplQt = document.getElementById('plantillas-open-qt');
+          if (btnTplQt) btnTplQt.onclick = function() { app.openTemplateManager(); }
+
+          document.querySelectorAll('[data-action]').forEach(function(el) {
+            var action = el.getAttribute('data-action');
+            var link = el.querySelector('.menu-link');
+            if (link && action === 'showAbout') {
+              link.addEventListener('click', function(e) { e.preventDefault(); app.showAbout(); });
+            }
+          });
+
+          document.querySelectorAll('[data-view]').forEach(function(el) {
+            var view = el.getAttribute('data-view');
+            var link = el.querySelector('.menu-link');
+            if (link && view) {
+              link.addEventListener('click', function(e) {
+                e.preventDefault();
+                showView(view);
+              });
+            }
+          });
+
+          showResult(true, 'Bridge conectado.');
+        });
+      }
+
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initBridge);
+      } else {
+        initBridge();
+      }
+    })();
+  </script>
+</body>
+</html>

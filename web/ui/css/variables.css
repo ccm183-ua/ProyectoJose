@@ -1,0 +1,47 @@
+/**
+ * Paleta de colores cubiApp - Variables CSS centralizadas.
+ * Modifica estos valores para cambiar el tema de la aplicación.
+ */
+:root {
+  /* === SIDEBAR === */
+  --sidebar-bg:           #1a2332;
+  --sidebar-hover:         #243447;
+  --sidebar-active-bg:     #0d47a1;
+  --sidebar-active-fg:     #ffffff;
+  --sidebar-text:          #e8eef4;
+  --sidebar-text-muted:    #94a3b8;
+
+  /* === HEADER === */
+  --header-bg:             #1a2332;
+  --header-text:            #ffffff;
+
+  /* === ÁREA PRINCIPAL === */
+  --main-bg:               #e8eef4;
+  --card-bg:               #ffffff;
+  --card-border:           #d1dbe6;
+  --card-shadow:           0 1px 3px rgba(26, 35, 50, 0.08);
+
+  /* === ACENTOS === */
+  --accent-primary:        #1565c0;
+  --accent-primary-hover:   #0d47a1;
+  --accent-primary-light:  #e3f2fd;
+
+  /* === TEXTO === */
+  --text-primary:          #1a2332;
+  --text-secondary:        #546e7a;
+  --text-muted:            #78909c;
+
+  /* === ESTADOS (badges, alertas) === */
+  --state-success:         #2e7d32;
+  --state-success-bg:      #e8f5e9;
+  --state-warning:         #f57c00;
+  --state-warning-bg:      #fff3e0;
+  --state-error:           #c62828;
+  --state-error-bg:        #ffebee;
+  --state-pending:         #546e7a;
+  --state-pending-bg:      #eceff1;
+
+  /* === BORDES Y LÍNEAS === */
+  --border-light:          #e2e8f0;
+  --border-default:        #d1dbe6;
+}
