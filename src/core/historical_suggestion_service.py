@@ -130,7 +130,17 @@ class HistoricalSuggestionService:
                     JOIN historical_partida_module hpm ON hpm.partida_id = hp.id
                     JOIN execution_module em ON em.id = hpm.module_id
                     WHERE em.nombre IN ({placeholders})
-                      AND COALESCE(hb.warnings, '') NOT LIKE '%SEVERE:%'""",
+                      AND (
+                          hb.usable_for_learning = 1
+                          OR (
+                              hb.analysis_status IS NULL
+                              AND COALESCE(hb.warnings, '') NOT LIKE '%SEVERE:%'
+                          )
+                      )
+                      AND (
+                          hb.analysis_status IN ('VALID', 'VALID_WITH_WARNINGS')
+                          OR hb.analysis_status IS NULL
+                      )""",
                 module_names,
             )
             cur_partidas = conn.execute(
@@ -140,7 +150,17 @@ class HistoricalSuggestionService:
                     JOIN historical_partida_module hpm ON hpm.partida_id = hp.id
                     JOIN execution_module em ON em.id = hpm.module_id
                     WHERE em.nombre IN ({placeholders})
-                      AND COALESCE(hb.warnings, '') NOT LIKE '%SEVERE:%'""",
+                      AND (
+                          hb.usable_for_learning = 1
+                          OR (
+                              hb.analysis_status IS NULL
+                              AND COALESCE(hb.warnings, '') NOT LIKE '%SEVERE:%'
+                          )
+                      )
+                      AND (
+                          hb.analysis_status IN ('VALID', 'VALID_WITH_WARNINGS')
+                          OR hb.analysis_status IS NULL
+                      )""",
                 module_names,
             )
             presupuestos_base = int((cur_budgets.fetchone() or [0])[0] or 0)

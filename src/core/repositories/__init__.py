@@ -73,6 +73,12 @@ from src.core.repositories.historical_repository import (
     rebuild_budget_module_summary,
     get_suggestion_patterns_by_modules,
     get_templates_by_work_type,
+    list_historical_budgets_by_run,
+    get_historical_budget_issues,
+    get_historical_budget_partidas,
+    set_historical_budget_manual_status,
+    get_historical_learning_metrics,
+    replace_budget_issues,
 )
 
 __all__ = [
@@ -130,4 +136,10 @@ __all__ = [
     "rebuild_budget_module_summary",
     "get_suggestion_patterns_by_modules",
     "get_templates_by_work_type",
+    "list_historical_budgets_by_run",
+    "get_historical_budget_issues",
+    "get_historical_budget_partidas",
+    "set_historical_budget_manual_status",
+    "get_historical_learning_metrics",
+    "replace_budget_issues",
 ]

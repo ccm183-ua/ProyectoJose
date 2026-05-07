@@ -17,6 +17,8 @@ from PySide6.QtWidgets import (
 )
 
 from src.core.historical_budget_analyzer import HistoricalBudgetAnalyzer
+from src.core.historical_analysis_status import AnalysisStatus
+from src.gui.historical_analysis_results_dialog import HistoricalAnalysisResultsDialog
 from src.gui import theme
 from src.utils.helpers import run_in_background
 
@@ -138,14 +140,20 @@ class HistoricalAnalysisDialog(QDialog):
                 return
 
             summary = payload or {}
+            status_counts = summary.get("status_counts", {})
             self._status_label.setText("Análisis completado")
             self._summary.setPlainText(
                 f"Run ID: {summary.get('run_id', '-')}\n"
-                f"Total archivos: {summary.get('total_archivos', 0)}\n"
-                f"Procesados: {summary.get('procesados', 0)}\n"
-                f"Omitidos: {summary.get('omitidos', 0)}\n"
-                f"Errores: {summary.get('errores', 0)}\n"
-                f"Warnings: {summary.get('warnings', 0)}"
+                f"Archivos encontrados: {summary.get('total_archivos', 0)}\n"
+                f"Analizados nuevos: {summary.get('procesados', 0)}\n"
+                f"Omitidos sin cambios: {status_counts.get(AnalysisStatus.SKIPPED_UNCHANGED, 0)}\n"
+                f"Errores técnicos: {status_counts.get(AnalysisStatus.READ_ERROR, 0)}\n\n"
+                f"Aptos para aprendizaje: {status_counts.get(AnalysisStatus.VALID, 0)}\n"
+                f"Aptos con warnings menores: {status_counts.get(AnalysisStatus.VALID_WITH_WARNINGS, 0)}\n"
+                f"Excluidos por datos incompletos: {status_counts.get(AnalysisStatus.EXCLUDED_INCOMPLETE_DATA, 0)}\n"
+                f"No compatibles: {status_counts.get(AnalysisStatus.NOT_COMPATIBLE, 0)}\n"
+                f"Excluidos manualmente: {status_counts.get(AnalysisStatus.MANUALLY_EXCLUDED, 0)}\n\n"
+                f"Incidencias totales (warnings + severos): {summary.get('warnings', 0)}"
             )
             warnings_detail = summary.get("warnings_detail", [])
             if warnings_detail:
@@ -155,5 +163,10 @@ class HistoricalAnalysisDialog(QDialog):
                     for warning in item.get("warnings", []):
                         lines.append(f"    · {warning}")
                 self._summary.append("\n".join(lines))
+
+            run_id = summary.get("run_id")
+            if run_id:
+                dlg = HistoricalAnalysisResultsDialog(self, run_id=run_id)
+                dlg.exec()
 
         run_in_background(_work, _done)

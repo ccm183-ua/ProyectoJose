@@ -61,6 +61,7 @@ class BudgetReader:
         self,
         file_path: str,
         expected_numero: str = "",
+        include_diagnostics: bool = False,
     ) -> Optional[Dict]:
         """
         Lee un presupuesto completo.
@@ -91,11 +92,12 @@ class BudgetReader:
             shared_strings = self._read_shared_strings(file_bytes)
 
             # Elegir la hoja correcta
-            sheet_xml = self._select_best_sheet(
+            selected = self._select_best_sheet_info(
                 file_bytes, shared_strings, expected_numero
             )
-            if not sheet_xml:
+            if not selected:
                 return None
+            sheet_xml = selected["sheet_xml"]
 
             rows = self._extract_rows(sheet_xml)
 
@@ -106,16 +108,37 @@ class BudgetReader:
             if totals is None:
                 totals = self._calculate_totals(partidas)
 
-            return {
+            result = {
                 "cabecera": cabecera,
                 "partidas": partidas,
                 "subtotal": totals["subtotal"],
                 "iva": totals["iva"],
                 "total": totals["total"],
             }
+            if include_diagnostics:
+                detected_numero = (cabecera.get("numero") or "").strip()
+                norm_expected = normalize_project_num(expected_numero)
+                norm_detected = normalize_project_num(detected_numero)
+                result["diagnostics"] = {
+                    "selected_sheet": selected.get("sheet_name", ""),
+                    "selected_sheet_index": selected.get("sheet_index"),
+                    "expected_numero": expected_numero or "",
+                    "detected_numero": detected_numero,
+                    "numero_matches": bool(
+                        norm_expected and norm_detected and norm_expected == norm_detected
+                    ),
+                    "compatibility_score": 0,
+                }
+            return result
         except Exception:
             logger.exception("Error al leer presupuesto: %s", file_path)
             return None
+
+    def probe(self, file_path: str, expected_numero: str = "") -> Dict:
+        """Evalúa compatibilidad del Excel para aprendizaje histórico."""
+        from src.core.budget_file_probe import BudgetFileProbe
+
+        return BudgetFileProbe(self).probe(file_path, expected_numero=expected_numero)
 
     @staticmethod
     def _load_file_bytes(file_path: str) -> Optional[bytes]:
@@ -140,25 +163,73 @@ class BudgetReader:
         return None
 
     @staticmethod
-    def _read_all_sheets(file_bytes: bytes) -> List[str]:
-        """Lee todas las hojas de datos disponibles (sheet1 y sheet2)."""
-        sheets: List[str] = []
+    def _list_sheet_metadata(file_bytes: bytes) -> List[Dict]:
+        """Lista metadatos de hojas (nombre visible + xml path)."""
+        result: List[Dict] = []
         try:
             with zipfile.ZipFile(io.BytesIO(file_bytes), "r") as z:
-                names = z.namelist()
-                for sheet in (SHEET_PRIMARY, SHEET_FALLBACK):
-                    if sheet in names:
-                        sheets.append(z.read(sheet).decode("utf-8"))
+                workbook_xml = z.read("xl/workbook.xml").decode("utf-8")
+                rels_xml = z.read("xl/_rels/workbook.xml.rels").decode("utf-8")
+                rel_map = {
+                    rel_id: target
+                    for rel_id, target in re.findall(r'Id="([^"]+)".*?Target="([^"]+)"', rels_xml)
+                }
+                sheets = re.findall(
+                    r'<sheet[^>]*name="([^"]+)"[^>]*sheetId="([^"]+)"[^>]*r:id="([^"]+)"',
+                    workbook_xml,
+                )
+                for idx, (name, sheet_id, rel_id) in enumerate(sheets, start=1):
+                    target = rel_map.get(rel_id, "")
+                    if not target:
+                        continue
+                    xml_path = f"xl/{target}" if not target.startswith("xl/") else target
+                    xml_path = xml_path.replace("\\", "/")
+                    if xml_path.startswith("xl//"):
+                        xml_path = xml_path.replace("xl//", "xl/")
+                    result.append(
+                        {
+                            "sheet_name": name or f"Hoja{sheet_id}",
+                            "sheet_index": idx,
+                            "xml_path": xml_path,
+                        }
+                    )
+        except (zipfile.BadZipFile, IOError, OSError):
+            pass
+        return result
+
+    @classmethod
+    def _read_all_sheets(cls, file_bytes: bytes) -> List[Dict]:
+        """Lee hojas disponibles con metadatos."""
+        sheets: List[Dict] = []
+        try:
+            with zipfile.ZipFile(io.BytesIO(file_bytes), "r") as z:
+                names = set(z.namelist())
+                meta = cls._list_sheet_metadata(file_bytes)
+                for item in meta:
+                    if item["xml_path"] in names:
+                        item["sheet_xml"] = z.read(item["xml_path"]).decode("utf-8")
+                        sheets.append(item)
+                if not sheets:
+                    for idx, xml_path in enumerate((SHEET_PRIMARY, SHEET_FALLBACK), start=1):
+                        if xml_path in names:
+                            sheets.append(
+                                {
+                                    "sheet_name": f"Hoja{idx}",
+                                    "sheet_index": idx,
+                                    "xml_path": xml_path,
+                                    "sheet_xml": z.read(xml_path).decode("utf-8"),
+                                }
+                            )
         except (zipfile.BadZipFile, IOError, OSError):
             pass
         return sheets
 
-    def _select_best_sheet(
+    def _select_best_sheet_info(
         self,
         file_bytes: bytes,
         shared_strings: List[str],
         expected_numero: str,
-    ) -> Optional[str]:
+    ) -> Optional[Dict]:
         """Selecciona la hoja que contiene los datos reales del proyecto.
 
         Si ``expected_numero`` está vacío, devuelve la primera hoja disponible
@@ -175,7 +246,8 @@ class BudgetReader:
         de otro proyecto o de otro año).
         """
         if not expected_numero:
-            return self._read_sheet(file_bytes)
+            sheets = self._read_all_sheets(file_bytes)
+            return sheets[0] if sheets else None
 
         sheets = self._read_all_sheets(file_bytes)
         if not sheets:
@@ -189,12 +261,12 @@ class BudgetReader:
             return sheets[-1]  # Preferir última hoja (sheet2)
 
         # Comparar cabeceras de cada hoja
-        for sheet_xml in sheets:
-            rows = self._extract_rows(sheet_xml)
+        for sheet in sheets:
+            rows = self._extract_rows(sheet["sheet_xml"])
             header = self._extract_header(rows, shared_strings)
             norm_sheet = normalize_project_num(header.get("numero", ""))
             if norm_sheet == norm_expected:
-                return sheet_xml
+                return sheet
 
         # Ninguna hoja coincide: preferir sheet2 sobre sheet1 (plantilla)
         logger.debug(
@@ -395,8 +467,8 @@ class BudgetReader:
 
             norm_expected = normalize_project_num(expected_numero) if expected_numero else ""
 
-            for sheet_xml in sheets:
-                rows = self._extract_rows(sheet_xml)
+            for sheet in sheets:
+                rows = self._extract_rows(sheet["sheet_xml"])
 
                 # Verificar que la hoja pertenece a ESTE proyecto
                 if norm_expected:

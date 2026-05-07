@@ -122,6 +122,7 @@ def init_schema(conn: sqlite3.Connection) -> None:
     _migrate_administracion_nombre(conn)
     _migrate_comunidad_cif(conn)
     _migrate_historical_budget_warnings(conn)
+    _migrate_historical_budget_status(conn)
     _seed_execution_modules(conn)
 
 
@@ -161,6 +162,29 @@ def _migrate_historical_budget_warnings(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE historical_budget ADD COLUMN warning_count INTEGER DEFAULT 0")
     if "warnings" not in columns:
         conn.execute("ALTER TABLE historical_budget ADD COLUMN warnings TEXT")
+    conn.commit()
+
+
+def _migrate_historical_budget_status(conn: sqlite3.Connection) -> None:
+    """Añade columnas de estado estructurado en historical_budget."""
+    cur = conn.execute("PRAGMA table_info(historical_budget)")
+    columns = [row[1] for row in cur.fetchall()]
+    if "analysis_status" not in columns:
+        conn.execute("ALTER TABLE historical_budget ADD COLUMN analysis_status TEXT")
+    if "compatible_score" not in columns:
+        conn.execute("ALTER TABLE historical_budget ADD COLUMN compatible_score INTEGER DEFAULT 0")
+    if "selected_sheet" not in columns:
+        conn.execute("ALTER TABLE historical_budget ADD COLUMN selected_sheet TEXT")
+    if "selected_sheet_index" not in columns:
+        conn.execute("ALTER TABLE historical_budget ADD COLUMN selected_sheet_index INTEGER")
+    if "expected_numero" not in columns:
+        conn.execute("ALTER TABLE historical_budget ADD COLUMN expected_numero TEXT")
+    if "detected_numero" not in columns:
+        conn.execute("ALTER TABLE historical_budget ADD COLUMN detected_numero TEXT")
+    if "numero_matches" not in columns:
+        conn.execute("ALTER TABLE historical_budget ADD COLUMN numero_matches INTEGER DEFAULT 0")
+    if "usable_for_learning" not in columns:
+        conn.execute("ALTER TABLE historical_budget ADD COLUMN usable_for_learning INTEGER DEFAULT 0")
     conn.commit()
 
 
@@ -306,7 +330,24 @@ CREATE TABLE IF NOT EXISTS historical_budget (
     analisis_ok INTEGER DEFAULT 0,
     warning_count INTEGER DEFAULT 0,
     warnings TEXT,
+    analysis_status TEXT,
+    compatible_score INTEGER DEFAULT 0,
+    selected_sheet TEXT,
+    selected_sheet_index INTEGER,
+    expected_numero TEXT,
+    detected_numero TEXT,
+    numero_matches INTEGER DEFAULT 0,
+    usable_for_learning INTEGER DEFAULT 0,
     error TEXT
+);
+
+CREATE TABLE IF NOT EXISTS historical_budget_issue (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    historical_budget_id INTEGER NOT NULL REFERENCES historical_budget(id) ON DELETE CASCADE,
+    severity TEXT NOT NULL,
+    code TEXT NOT NULL,
+    message TEXT NOT NULL,
+    created_at TEXT NOT NULL
 );
 
 -- Partidas extraídas de presupuestos históricos

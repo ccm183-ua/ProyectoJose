@@ -61,7 +61,17 @@ class HistoricalPatternBuilder:
                      AND hp.concepto_normalizado <> ''
                      AND hp.precio_unitario IS NOT NULL
                      AND hp.precio_unitario > 0
-                     AND COALESCE(hb.warnings, '') NOT LIKE '%SEVERE:%'
+                     AND (
+                         hb.usable_for_learning = 1
+                         OR (
+                             hb.analysis_status IS NULL
+                             AND COALESCE(hb.warnings, '') NOT LIKE '%SEVERE:%'
+                         )
+                     )
+                     AND (
+                         hb.analysis_status IN ('VALID', 'VALID_WITH_WARNINGS')
+                         OR hb.analysis_status IS NULL
+                     )
                    ORDER BY hpm.module_id, hp.concepto_normalizado"""
             )
             rows = cur.fetchall()

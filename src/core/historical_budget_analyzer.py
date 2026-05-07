@@ -8,7 +8,10 @@ from datetime import datetime
 from typing import Dict, List, Optional
 
 from src.core.budget_reader import BudgetReader
+from src.core.budget_file_probe import BudgetFileProbe
 from src.core.historical_partida_classifier import HistoricalPartidaClassifier
+from src.core.historical_analysis_status import AnalysisStatus, IssueSeverity
+from src.core.historical_budget_quality import validate_budget_quality
 from src.core.repositories import (
     assign_partida_module,
     create_analysis_run,
@@ -19,6 +22,7 @@ from src.core.repositories import (
     get_or_create_execution_module,
     insert_historical_partida,
     rebuild_budget_module_summary,
+    replace_budget_issues,
     upsert_historical_budget,
 )
 from src.core.work_type_normalizer import normalize_text, normalize_work_type
@@ -68,6 +72,7 @@ class HistoricalBudgetAnalyzer:
     ):
         self.reader = reader or BudgetReader()
         self.classifier = classifier or HistoricalPartidaClassifier()
+        self.probe = BudgetFileProbe(self.reader)
 
     def analyze_folder(
         self, folder_path: str, recursive: bool = True, force_reanalyze: bool = False
@@ -111,6 +116,14 @@ class HistoricalBudgetAnalyzer:
             "errores": 0,
             "warnings": 0,
             "warnings_detail": [],
+            "status_counts": {
+                AnalysisStatus.VALID: 0,
+                AnalysisStatus.VALID_WITH_WARNINGS: 0,
+                AnalysisStatus.EXCLUDED_INCOMPLETE_DATA: 0,
+                AnalysisStatus.NOT_COMPATIBLE: 0,
+                AnalysisStatus.READ_ERROR: 0,
+                AnalysisStatus.SKIPPED_UNCHANGED: 0,
+            },
             "run_id": run_id,
         }
 
@@ -127,6 +140,9 @@ class HistoricalBudgetAnalyzer:
                 summary["omitidos"] += 1
             else:
                 summary["errores"] += 1
+            analysis_status = result.get("analysis_status")
+            if analysis_status in summary["status_counts"]:
+                summary["status_counts"][analysis_status] += 1
             summary["warnings"] += int(result.get("warning_count", 0))
             if result.get("warnings"):
                 summary["warnings_detail"].append(
@@ -172,11 +188,69 @@ class HistoricalBudgetAnalyzer:
             and existing.get("fecha_modificacion_excel") == mtime
             and existing.get("analisis_ok")
         ):
-            return {"status": "skipped", "excel_path": excel_path}
+            return {
+                "status": "skipped",
+                "excel_path": excel_path,
+                "analysis_status": AnalysisStatus.SKIPPED_UNCHANGED,
+            }
 
         try:
             expected_numero = _resolve_expected_numero(excel_path, existing)
-            read_result = self.reader.read(excel_path, expected_numero=expected_numero)
+            probe_result = self.probe.probe(excel_path, expected_numero=expected_numero)
+            if not probe_result.get("is_compatible"):
+                budget_payload = {
+                    "ruta_excel": excel_path,
+                    "ruta_carpeta": os.path.dirname(excel_path),
+                    "numero_proyecto": "",
+                    "nombre_proyecto": os.path.basename(excel_path),
+                    "cliente": "",
+                    "localidad": "",
+                    "tipo_obra_original": "",
+                    "tipo_obra_normalizado": "",
+                    "estado": "",
+                    "total": 0.0,
+                    "fecha_presupuesto": "",
+                    "fecha_modificacion_excel": mtime,
+                    "fecha_analisis": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "num_partidas": int(probe_result.get("partidas_detectadas", 0)),
+                    "analysis_run_id": metadata.get("analysis_run_id"),
+                    "analisis_ok": True,
+                    "warning_count": len(probe_result.get("issues", [])),
+                    "warnings": " | ".join(
+                        f"{i.get('severity', 'WARN')}:{i.get('message', '')}"
+                        for i in probe_result.get("issues", [])
+                    ),
+                    "analysis_status": AnalysisStatus.NOT_COMPATIBLE,
+                    "compatible_score": int(probe_result.get("score") or 0),
+                    "selected_sheet": probe_result.get("selected_sheet") or "",
+                    "selected_sheet_index": probe_result.get("selected_sheet_index"),
+                    "expected_numero": probe_result.get("expected_numero") or "",
+                    "detected_numero": probe_result.get("detected_numero") or "",
+                    "numero_matches": bool(probe_result.get("numero_matches")),
+                    "usable_for_learning": False,
+                    "error": "",
+                }
+                budget_id, budget_err = upsert_historical_budget(budget_payload)
+                if budget_err or not budget_id:
+                    raise RuntimeError(budget_err or "No se pudo guardar presupuesto histórico")
+                replace_budget_issues(budget_id, probe_result.get("issues", []))
+                return {
+                    "status": "processed",
+                    "excel_path": excel_path,
+                    "historical_budget_id": budget_id,
+                    "analysis_status": AnalysisStatus.NOT_COMPATIBLE,
+                    "warning_count": len(probe_result.get("issues", [])),
+                    "warnings": [
+                        f"{i.get('severity', 'WARN')}:{i.get('message', '')}"
+                        for i in probe_result.get("issues", [])
+                    ],
+                }
+
+            read_result = self.reader.read(
+                excel_path,
+                expected_numero=expected_numero,
+                include_diagnostics=True,
+            )
             if not read_result:
                 raise ValueError("No se pudo leer el presupuesto con BudgetReader")
 
@@ -185,6 +259,10 @@ class HistoricalBudgetAnalyzer:
             tipo_original = cabecera.get("obra", "")
             warnings: List[str] = []
             severe_warnings: List[str] = []
+            issues: List[Dict] = list(probe_result.get("issues", []))
+            diagnostics = read_result.get("diagnostics", {})
+            detected_numero = (diagnostics.get("detected_numero") or cabecera.get("numero") or "").strip()
+            numero_matches = bool(diagnostics.get("numero_matches"))
             budget_payload = {
                 "ruta_excel": excel_path,
                 "ruta_carpeta": os.path.dirname(excel_path),
@@ -204,20 +282,30 @@ class HistoricalBudgetAnalyzer:
                 "analisis_ok": True,
                 "warning_count": 0,
                 "warnings": "",
+                "analysis_status": AnalysisStatus.VALID,
+                "compatible_score": int(probe_result.get("score") or 0),
+                "selected_sheet": diagnostics.get("selected_sheet") or probe_result.get("selected_sheet") or "",
+                "selected_sheet_index": diagnostics.get("selected_sheet_index") or probe_result.get("selected_sheet_index"),
+                "expected_numero": expected_numero,
+                "detected_numero": detected_numero,
+                "numero_matches": numero_matches,
+                "usable_for_learning": True,
                 "error": "",
             }
-            if not expected_numero:
-                warnings.append("Analizado sin numero esperado; posible seleccion incorrecta de hoja.")
-            if not partidas:
-                severe_warnings.append("Presupuesto sin partidas detectadas.")
-            if float(read_result.get("total") or 0) <= 0:
-                severe_warnings.append("Total de presupuesto cero o no detectado.")
-            if partidas:
-                zero_price = sum(
-                    1 for p in partidas if float(p.get("precio") or 0) <= 0
-                )
-                if (zero_price / max(1, len(partidas))) >= 0.5:
-                    severe_warnings.append("Mas del 50% de partidas con precio unitario cero.")
+            quality = validate_budget_quality(read_result, expected_numero=expected_numero)
+            issues.extend(quality.get("issues", []))
+            for issue in quality.get("issues", []):
+                if issue.get("severity") == IssueSeverity.SEVERE:
+                    severe_warnings.append(issue.get("message", ""))
+                elif issue.get("severity") == IssueSeverity.WARN:
+                    warnings.append(issue.get("message", ""))
+
+            if quality.get("has_severe"):
+                budget_payload["analysis_status"] = AnalysisStatus.EXCLUDED_INCOMPLETE_DATA
+                budget_payload["usable_for_learning"] = False
+            elif quality.get("has_warn"):
+                budget_payload["analysis_status"] = AnalysisStatus.VALID_WITH_WARNINGS
+                budget_payload["usable_for_learning"] = True
 
             all_warnings = [f"WARN:{w}" for w in warnings] + [f"SEVERE:{w}" for w in severe_warnings]
             if all_warnings:
@@ -226,10 +314,21 @@ class HistoricalBudgetAnalyzer:
             budget_id, budget_err = upsert_historical_budget(budget_payload)
             if budget_err or not budget_id:
                 raise RuntimeError(budget_err or "No se pudo guardar presupuesto histórico")
+            replace_budget_issues(budget_id, issues)
 
             delete_err = delete_partidas_for_budget(budget_id)
             if delete_err:
                 raise RuntimeError(delete_err)
+
+            if not budget_payload["usable_for_learning"]:
+                return {
+                    "status": "processed",
+                    "excel_path": excel_path,
+                    "historical_budget_id": budget_id,
+                    "analysis_status": budget_payload["analysis_status"],
+                    "warning_count": len(all_warnings),
+                    "warnings": all_warnings,
+                }
 
             for idx, partida in enumerate(partidas, start=1):
                 concepto = (partida.get("concepto") or "").strip()
@@ -274,6 +373,7 @@ class HistoricalBudgetAnalyzer:
                 "status": "processed",
                 "excel_path": excel_path,
                 "historical_budget_id": budget_id,
+                "analysis_status": budget_payload["analysis_status"],
                 "warning_count": len(all_warnings),
                 "warnings": all_warnings,
             }
@@ -287,7 +387,25 @@ class HistoricalBudgetAnalyzer:
                 "num_partidas": 0,
                 "analysis_run_id": metadata.get("analysis_run_id"),
                 "analisis_ok": False,
+                "analysis_status": AnalysisStatus.READ_ERROR,
+                "usable_for_learning": False,
                 "error": str(exc),
             }
-            upsert_historical_budget(error_payload)
-            return {"status": "error", "excel_path": excel_path, "error": str(exc)}
+            budget_id, _ = upsert_historical_budget(error_payload)
+            if budget_id:
+                replace_budget_issues(
+                    budget_id,
+                    [
+                        {
+                            "severity": IssueSeverity.ERROR,
+                            "code": "READ_ERROR",
+                            "message": str(exc),
+                        }
+                    ],
+                )
+            return {
+                "status": "error",
+                "excel_path": excel_path,
+                "analysis_status": AnalysisStatus.READ_ERROR,
+                "error": str(exc),
+            }
