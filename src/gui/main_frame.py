@@ -124,6 +124,10 @@ class MainFrame(QMainWindow):
         act_paths = m_config.addAction("Rutas por defecto...")
         act_paths.triggered.connect(self._open_default_paths)
 
+        m_tools = menubar.addMenu("&Herramientas")
+        act_hist = m_tools.addAction("Analizar presupuestos terminados...")
+        act_hist.triggered.connect(self._open_historical_analysis)
+
         m_ayuda = menubar.addMenu("&Ayuda")
         act_about = m_ayuda.addAction("Acerca de...")
         act_about.triggered.connect(
@@ -261,6 +265,11 @@ class MainFrame(QMainWindow):
     def _open_default_paths(self):
         from src.gui.dialogs import DefaultPathsDialog
         dlg = DefaultPathsDialog(self)
+        dlg.exec()
+
+    def _open_historical_analysis(self):
+        from src.gui.historical_analysis_dialog import HistoricalAnalysisDialog
+        dlg = HistoricalAnalysisDialog(self)
         dlg.exec()
 
     def _buscar_comunidad_para_presupuesto(self, nombre_cliente: str, direccion: str = "") -> dict | None:
