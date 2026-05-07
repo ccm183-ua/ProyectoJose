@@ -63,3 +63,6 @@ Consulta `.env.example` para ejemplos.
 
 - **"No se encontró .venv"** → Crea el entorno e instala: `python3 -m venv .venv` y `pip install -r requirements.txt`.
 - **En macOS:** si wxPython da error al instalar, prueba con `pip install --upgrade pip` y luego `pip install wxPython`. Si usas Apple Silicon (M1/M2), asegúrate de tener una versión de wxPython compatible con tu Python.
+
+
+https://chatgpt.com/share/69fc7e89-0778-83eb-ba94-19f9493074ad
