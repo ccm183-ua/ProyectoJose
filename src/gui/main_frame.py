@@ -255,7 +255,7 @@ class MainFrame(QMainWindow):
             QMessageBox.critical(self, "Error", result.error)
             return
 
-        self._offer_ai_partidas(result.excel_path, project_data)
+        self._offer_partidas(result.excel_path, project_data)
         self._open_dashboard(refresh=True)
 
     def _obtain_project_data(self):
@@ -357,6 +357,54 @@ class MainFrame(QMainWindow):
                 self, "Éxito",
                 f"Presupuesto creado (sin partidas):\n{excel_path}",
             )
+
+    def _offer_partidas(self, excel_path, project_data):
+        historical_result = self._try_historical_suggestions(project_data)
+        if historical_result and historical_result.get("partidas"):
+            from src.gui.historical_suggestions_dialog import HistoricalSuggestionsDialog
+
+            dlg = HistoricalSuggestionsDialog(self, historical_result)
+            if dlg.exec() == 1:
+                selected = dlg.get_selected_partidas()
+                if selected:
+                    if self._budget_svc.insert_partidas(excel_path, selected, project_data):
+                        QMessageBox.information(
+                            self, "Éxito",
+                            f"Presupuesto creado con {len(selected)} partidas históricas:\n{excel_path}",
+                        )
+                        ask_ai = QMessageBox.question(
+                            self,
+                            "Completar con IA",
+                            "¿Desea usar IA para adaptar o completar más partidas?",
+                            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                        )
+                        if ask_ai == QMessageBox.StandardButton.Yes:
+                            self._offer_ai_partidas(excel_path, project_data)
+                        return
+                    QMessageBox.warning(
+                        self, "Aviso",
+                        f"Presupuesto creado pero hubo un error al insertar partidas históricas.\n{excel_path}",
+                    )
+                    self._offer_ai_partidas(excel_path, project_data)
+                    return
+                # Si acepta sin seleccionar, continuar a IA opcional
+                self._offer_ai_partidas(excel_path, project_data)
+                return
+            # Si cancela el diálogo histórico, continuar con fallback IA
+            self._offer_ai_partidas(excel_path, project_data)
+            return
+
+        self._offer_ai_partidas(excel_path, project_data)
+
+    @staticmethod
+    def _try_historical_suggestions(project_data):
+        try:
+            from src.core.historical_suggestion_service import HistoricalSuggestionService
+
+            service = HistoricalSuggestionService()
+            return service.suggest_for_project(project_data or {})
+        except Exception:
+            return None
 
     def _open_template_manager(self):
         from src.gui.template_manager_dialog import TemplateManagerDialog
