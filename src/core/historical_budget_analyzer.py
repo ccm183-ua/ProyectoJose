@@ -69,7 +69,9 @@ class HistoricalBudgetAnalyzer:
         self.reader = reader or BudgetReader()
         self.classifier = classifier or HistoricalPartidaClassifier()
 
-    def analyze_folder(self, folder_path: str, recursive: bool = True) -> Dict:
+    def analyze_folder(
+        self, folder_path: str, recursive: bool = True, force_reanalyze: bool = False
+    ) -> Dict:
         excel_paths: List[str] = []
         if recursive:
             for root, _, files in os.walk(folder_path):
@@ -81,9 +83,16 @@ class HistoricalBudgetAnalyzer:
                 full_path = os.path.join(folder_path, name)
                 if os.path.isfile(full_path) and name.lower().endswith((".xlsx", ".xlsm")):
                     excel_paths.append(full_path)
-        return self.analyze_files(excel_paths, source_folder=folder_path)
+        return self.analyze_files(
+            excel_paths, source_folder=folder_path, force_reanalyze=force_reanalyze
+        )
 
-    def analyze_files(self, excel_paths: List[str], source_folder: str = "") -> Dict:
+    def analyze_files(
+        self,
+        excel_paths: List[str],
+        source_folder: str = "",
+        force_reanalyze: bool = False,
+    ) -> Dict:
         run_id, run_err = create_analysis_run(source_folder)
         if run_err:
             return {
@@ -106,7 +115,11 @@ class HistoricalBudgetAnalyzer:
         }
 
         for path in excel_paths:
-            result = self.analyze_budget(path, metadata={"analysis_run_id": run_id})
+            result = self.analyze_budget(
+                path,
+                metadata={"analysis_run_id": run_id},
+                force_reanalyze=force_reanalyze,
+            )
             status = result.get("status")
             if status == "processed":
                 summary["procesados"] += 1
@@ -141,14 +154,24 @@ class HistoricalBudgetAnalyzer:
         )
         return summary
 
-    def analyze_budget(self, excel_path: str, metadata: Optional[Dict] = None) -> Dict:
+    def analyze_budget(
+        self,
+        excel_path: str,
+        metadata: Optional[Dict] = None,
+        force_reanalyze: bool = False,
+    ) -> Dict:
         metadata = metadata or {}
         mtime = _file_mtime_iso(excel_path)
         if not mtime:
             return {"status": "error", "excel_path": excel_path, "error": "No se pudo leer mtime"}
 
         existing = get_historical_budget_by_path(excel_path)
-        if existing and existing.get("fecha_modificacion_excel") == mtime and existing.get("analisis_ok"):
+        if (
+            not force_reanalyze
+            and existing
+            and existing.get("fecha_modificacion_excel") == mtime
+            and existing.get("analisis_ok")
+        ):
             return {"status": "skipped", "excel_path": excel_path}
 
         try:

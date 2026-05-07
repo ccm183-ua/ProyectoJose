@@ -70,6 +70,11 @@ class HistoricalAnalysisDialog(QDialog):
         self._recursive_check.setFont(theme.font_base())
         layout.addWidget(self._recursive_check)
 
+        self._force_check = QCheckBox("Reanalizar todo (ignorar caché por fecha)", self)
+        self._force_check.setChecked(False)
+        self._force_check.setFont(theme.font_base())
+        layout.addWidget(self._force_check)
+
         self._status_label = QLabel("Pendiente", self)
         self._status_label.setFont(theme.font_sm())
         self._status_label.setStyleSheet(f"color: {theme.TEXT_MUTED}; background: transparent;")
@@ -118,9 +123,12 @@ class HistoricalAnalysisDialog(QDialog):
         self._summary.setPlainText("Procesando archivos, por favor espera...")
 
         recursive = self._recursive_check.isChecked()
+        force_reanalyze = self._force_check.isChecked()
 
         def _work():
-            return self._analyzer.analyze_folder(folder, recursive=recursive)
+            return self._analyzer.analyze_folder(
+                folder, recursive=recursive, force_reanalyze=force_reanalyze
+            )
 
         def _done(ok: bool, payload):
             self._run_btn.setEnabled(True)

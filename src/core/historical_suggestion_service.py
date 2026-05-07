@@ -126,17 +126,21 @@ class HistoricalSuggestionService:
             cur_budgets = conn.execute(
                 f"""SELECT COUNT(DISTINCT hp.historical_budget_id)
                     FROM historical_partida hp
+                    JOIN historical_budget hb ON hb.id = hp.historical_budget_id
                     JOIN historical_partida_module hpm ON hpm.partida_id = hp.id
                     JOIN execution_module em ON em.id = hpm.module_id
-                    WHERE em.nombre IN ({placeholders})""",
+                    WHERE em.nombre IN ({placeholders})
+                      AND COALESCE(hb.warnings, '') NOT LIKE '%SEVERE:%'""",
                 module_names,
             )
             cur_partidas = conn.execute(
                 f"""SELECT COUNT(*)
                     FROM historical_partida hp
+                    JOIN historical_budget hb ON hb.id = hp.historical_budget_id
                     JOIN historical_partida_module hpm ON hpm.partida_id = hp.id
                     JOIN execution_module em ON em.id = hpm.module_id
-                    WHERE em.nombre IN ({placeholders})""",
+                    WHERE em.nombre IN ({placeholders})
+                      AND COALESCE(hb.warnings, '') NOT LIKE '%SEVERE:%'""",
                 module_names,
             )
             presupuestos_base = int((cur_budgets.fetchone() or [0])[0] or 0)
