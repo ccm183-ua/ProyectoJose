@@ -33,6 +33,7 @@ class BudgetGenerator:
         descripcion: str,
         plantilla: Optional[Dict] = None,
         datos_proyecto: Optional[Dict] = None,
+        historical_context: Optional[Dict] = None,
     ) -> Dict:
         """
         Genera partidas presupuestarias para un tipo de obra.
@@ -42,6 +43,7 @@ class BudgetGenerator:
             descripcion: Descripción adicional del usuario.
             plantilla: Plantilla seleccionada del catálogo (None = sin plantilla).
             datos_proyecto: Datos del proyecto (localidad, cliente, etc.).
+            historical_context: Contexto histórico opcional para enriquecer el prompt.
 
         Returns:
             Diccionario con:
@@ -59,6 +61,7 @@ class BudgetGenerator:
             descripcion=descripcion,
             plantilla=plantilla,
             datos_proyecto=datos_proyecto,
+            historical_context=historical_context,
         )
 
         # Intentar generar con IA

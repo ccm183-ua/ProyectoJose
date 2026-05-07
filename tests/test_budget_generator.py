@@ -198,3 +198,22 @@ class TestResultFormat:
         assert 'error' in result
         assert 'source' in result
         assert isinstance(result['partidas'], list)
+
+    def test_generate_passes_historical_context_to_prompt_builder(self, sample_datos_proyecto):
+        """El generador propaga historical_context al PromptBuilder."""
+        generator = BudgetGenerator(api_key="fake-key")
+        historical_context = {"detected_modules": [{"name": "sustitucion_bajante"}]}
+
+        with patch.object(generator._prompt_builder, "build_prompt", return_value="PROMPT") as build_mock:
+            with patch.object(generator._ai_service, "generate_partidas", return_value=([], "error")):
+                generator.generate(
+                    tipo_obra="Reparación",
+                    descripcion="Test",
+                    plantilla=None,
+                    datos_proyecto=sample_datos_proyecto,
+                    historical_context=historical_context,
+                )
+
+        assert build_mock.called
+        kwargs = build_mock.call_args.kwargs
+        assert kwargs.get("historical_context") == historical_context

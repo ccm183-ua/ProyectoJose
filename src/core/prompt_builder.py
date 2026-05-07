@@ -58,6 +58,7 @@ class PromptBuilder:
         descripcion: str,
         plantilla: Optional[Dict] = None,
         datos_proyecto: Optional[Dict] = None,
+        historical_context: Optional[Dict] = None,
     ) -> str:
         """
         Construye el prompt completo según el camino A o B.
@@ -67,6 +68,7 @@ class PromptBuilder:
             descripcion: Descripción adicional del usuario para dar contexto.
             plantilla: Plantilla seleccionada del catálogo (None = Camino B).
             datos_proyecto: Datos del proyecto (localidad, cliente, calle...).
+            historical_context: Sugerencias históricas opcionales para guiar a la IA.
 
         Returns:
             String con el prompt completo listo para enviar a la IA.
@@ -84,6 +86,10 @@ class PromptBuilder:
 
         # 3. Datos del usuario y del proyecto (siempre)
         parts.append(self._build_user_context(tipo_obra, descripcion, datos_proyecto))
+
+        # 4. Contexto histórico opcional para reducir alucinaciones
+        if historical_context:
+            parts.append(self._build_historical_context(historical_context))
 
         return "\n".join(parts)
 
@@ -151,4 +157,38 @@ class PromptBuilder:
             "\nGenera las partidas presupuestarias en formato JSON para esta obra."
         )
 
+        return "\n".join(lines)
+
+    def _build_historical_context(self, historical_context: Dict) -> str:
+        """
+        Construye la sección de contexto histórico opcional.
+        """
+        lines = [
+            "\n--- CONTEXTO HISTÓRICO (REAL) ---",
+            "Estas son partidas históricas reales usadas por la empresa en obras similares.",
+            "Prioriza estas partidas. No inventes partidas nuevas salvo que la descripción "
+            "del usuario lo justifique claramente.",
+        ]
+
+        modules = historical_context.get("detected_modules", []) or []
+        if modules:
+            lines.append("Módulos detectados:")
+            for module in modules[:8]:
+                name = module.get("label") or module.get("name", "")
+                confidence = int((module.get("confidence", 0) or 0) * 100)
+                lines.append(f"  - {name} (confianza: {confidence}%)")
+
+        partidas = historical_context.get("partidas", []) or []
+        if partidas:
+            lines.append("Partidas históricas recomendadas:")
+            for partida in partidas[:20]:
+                concepto = partida.get("concepto") or partida.get("titulo") or ""
+                unidad = partida.get("unidad", "ud")
+                precio = partida.get("precio_unitario", 0)
+                freq = partida.get("historical_frequency", 0)
+                lines.append(
+                    f"  - {concepto} | {unidad} | {precio}€ | frecuencia histórica: {freq}"
+                )
+
+        lines.append("--- FIN CONTEXTO HISTÓRICO ---")
         return "\n".join(lines)

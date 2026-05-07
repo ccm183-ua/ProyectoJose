@@ -310,11 +310,15 @@ class MainFrame(QMainWindow):
 
         return None
 
-    def _offer_ai_partidas(self, excel_path, project_data):
+    def _offer_ai_partidas(self, excel_path, project_data, historical_context=None):
         from src.gui.ai_budget_dialog import AIBudgetDialog
         from src.gui.partidas_dialog import SuggestedPartidasDialog
 
-        ai_dlg = AIBudgetDialog(self, datos_proyecto=project_data)
+        ai_dlg = AIBudgetDialog(
+            self,
+            datos_proyecto=project_data,
+            historical_context=historical_context or {},
+        )
         if ai_dlg.exec() != 1:
             QMessageBox.information(
                 self, "Éxito",
@@ -379,7 +383,9 @@ class MainFrame(QMainWindow):
                             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                         )
                         if ask_ai == QMessageBox.StandardButton.Yes:
-                            self._offer_ai_partidas(excel_path, project_data)
+                            self._offer_ai_partidas(
+                                excel_path, project_data, historical_context=historical_result
+                            )
                         return
                     QMessageBox.warning(
                         self, "Aviso",
@@ -388,10 +394,14 @@ class MainFrame(QMainWindow):
                     self._offer_ai_partidas(excel_path, project_data)
                     return
                 # Si acepta sin seleccionar, continuar a IA opcional
-                self._offer_ai_partidas(excel_path, project_data)
+                self._offer_ai_partidas(
+                    excel_path, project_data, historical_context=historical_result
+                )
                 return
             # Si cancela el diálogo histórico, continuar con fallback IA
-            self._offer_ai_partidas(excel_path, project_data)
+            self._offer_ai_partidas(
+                excel_path, project_data, historical_context=historical_result
+            )
             return
 
         self._offer_ai_partidas(excel_path, project_data)

@@ -27,13 +27,20 @@ class AIBudgetDialog(QDialog):
 
     _generation_done = Signal(dict)
 
-    def __init__(self, parent=None, datos_proyecto=None, context_extra=""):
+    def __init__(
+        self,
+        parent=None,
+        datos_proyecto=None,
+        context_extra="",
+        historical_context=None,
+    ):
         super().__init__(parent)
         self.setWindowTitle("Generar Partidas con IA")
         self._generation_done.connect(self._on_generation_complete)
 
         self._datos_proyecto = datos_proyecto or {}
         self._context_extra = context_extra or ""
+        self._historical_context = historical_context or {}
         self._catalog = WorkTypeCatalog()
         self._settings = Settings()
         self._selected_plantilla = None
@@ -197,6 +204,7 @@ class AIBudgetDialog(QDialog):
                 descripcion=full_desc,
                 plantilla=self._selected_plantilla,
                 datos_proyecto=self._datos_proyecto,
+                historical_context=self._historical_context,
             )
 
             self._generation_done.emit(result)
