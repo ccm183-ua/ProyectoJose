@@ -123,6 +123,7 @@ def init_schema(conn: sqlite3.Connection) -> None:
     _migrate_comunidad_cif(conn)
     _migrate_historical_budget_warnings(conn)
     _migrate_historical_budget_status(conn)
+    _migrate_historical_budget_probe_scores(conn)
     _seed_execution_modules(conn)
 
 
@@ -185,6 +186,17 @@ def _migrate_historical_budget_status(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE historical_budget ADD COLUMN numero_matches INTEGER DEFAULT 0")
     if "usable_for_learning" not in columns:
         conn.execute("ALTER TABLE historical_budget ADD COLUMN usable_for_learning INTEGER DEFAULT 0")
+    conn.commit()
+
+
+def _migrate_historical_budget_probe_scores(conn: sqlite3.Connection) -> None:
+    """Añade columnas de score de probe en historical_budget."""
+    cur = conn.execute("PRAGMA table_info(historical_budget)")
+    columns = [row[1] for row in cur.fetchall()]
+    if "header_score" not in columns:
+        conn.execute("ALTER TABLE historical_budget ADD COLUMN header_score INTEGER DEFAULT 0")
+    if "partida_score" not in columns:
+        conn.execute("ALTER TABLE historical_budget ADD COLUMN partida_score INTEGER DEFAULT 0")
     conn.commit()
 
 
@@ -338,6 +350,8 @@ CREATE TABLE IF NOT EXISTS historical_budget (
     detected_numero TEXT,
     numero_matches INTEGER DEFAULT 0,
     usable_for_learning INTEGER DEFAULT 0,
+    header_score INTEGER DEFAULT 0,
+    partida_score INTEGER DEFAULT 0,
     error TEXT
 );
 

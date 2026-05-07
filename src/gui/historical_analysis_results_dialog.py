@@ -95,9 +95,9 @@ class HistoricalAnalysisResultsDialog(QDialog):
         layout.addLayout(filter_row)
 
         self._table = QTableWidget(self)
-        self._table.setColumnCount(10)
+        self._table.setColumnCount(11)
         self._table.setHorizontalHeaderLabels(
-            ["Estado", "Archivo", "Nº esperado", "Nº detectado", "Hoja", "Partidas", "Total", "Warnings", "Aprende", "Acciones"]
+            ["Estado", "Archivo", "Nº esperado", "Nº detectado", "Hoja", "Score", "Partidas", "Total", "Warnings", "Aprende", "Acciones"]
         )
         self._table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self._table.setColumnWidth(0, 180)
@@ -105,10 +105,11 @@ class HistoricalAnalysisResultsDialog(QDialog):
         self._table.setColumnWidth(3, 110)
         self._table.setColumnWidth(4, 130)
         self._table.setColumnWidth(5, 80)
-        self._table.setColumnWidth(6, 100)
-        self._table.setColumnWidth(7, 80)
-        self._table.setColumnWidth(8, 90)
-        self._table.setColumnWidth(9, 110)
+        self._table.setColumnWidth(6, 80)
+        self._table.setColumnWidth(7, 100)
+        self._table.setColumnWidth(8, 80)
+        self._table.setColumnWidth(9, 90)
+        self._table.setColumnWidth(10, 110)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self._table.verticalHeader().setVisible(False)
@@ -155,24 +156,28 @@ class HistoricalAnalysisResultsDialog(QDialog):
             self._table.setItem(i, 3, QTableWidgetItem(row.get("detected_numero", "")))
             self._table.setItem(i, 4, QTableWidgetItem(row.get("selected_sheet", "")))
 
+            score_item = QTableWidgetItem(str(row.get("compatible_score", 0)))
+            score_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            self._table.setItem(i, 5, score_item)
+
             partidas = QTableWidgetItem(str(row.get("num_partidas", 0)))
             partidas.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            self._table.setItem(i, 5, partidas)
+            self._table.setItem(i, 6, partidas)
 
             total = QTableWidgetItem(f"{float(row.get('total', 0.0)):.2f} €")
             total.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            self._table.setItem(i, 6, total)
+            self._table.setItem(i, 7, total)
 
             warnings = QTableWidgetItem(str(row.get("warning_count", 0)))
             warnings.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            self._table.setItem(i, 7, warnings)
+            self._table.setItem(i, 8, warnings)
 
-            self._table.setItem(i, 8, QTableWidgetItem("Sí" if row.get("usable_for_learning") else "No"))
+            self._table.setItem(i, 9, QTableWidgetItem("Sí" if row.get("usable_for_learning") else "No"))
             self._table.item(i, 0).setData(Qt.ItemDataRole.UserRole, row)
             btn_detail_row = QPushButton("Ver detalle", self._table)
             btn_detail_row.setFont(theme.font_sm())
             btn_detail_row.clicked.connect(lambda _checked=False, data=row: self._show_detail_for_data(data))
-            self._table.setCellWidget(i, 9, btn_detail_row)
+            self._table.setCellWidget(i, 10, btn_detail_row)
 
         self._stats_lbl.setText(f"Mostrando {len(filtered)} de {len(self._rows)} archivos")
 
@@ -224,9 +229,11 @@ class HistoricalAnalysisResultsDialog(QDialog):
         lines = [
             f"Archivo: {data.get('ruta_excel', '')}",
             f"Estado: {data.get('analysis_status', '')}",
+            f"Motivo: {self._status_explanation(data.get('analysis_status', ''))}",
             f"Hoja usada: {data.get('selected_sheet', '')}",
             f"Número esperado: {data.get('expected_numero', '')}",
             f"Número detectado: {data.get('detected_numero', '')}",
+            f"Score compatibilidad: {int(data.get('compatible_score', 0))}",
             f"Partidas detectadas: {data.get('num_partidas', 0)}",
             f"Total detectado: {float(data.get('total', 0.0)):.2f} €",
             "",
@@ -278,6 +285,18 @@ class HistoricalAnalysisResultsDialog(QDialog):
         lay.addLayout(actions)
         theme.fit_dialog(dlg, 900, 540)
         dlg.exec()
+
+    @staticmethod
+    def _status_explanation(status: str) -> str:
+        return {
+            AnalysisStatus.VALID: "Archivo apto para aprendizaje.",
+            AnalysisStatus.VALID_WITH_WARNINGS: "Apto para aprendizaje, con avisos menores.",
+            AnalysisStatus.EXCLUDED_INCOMPLETE_DATA: "Compatible, pero excluido por calidad económica incompleta.",
+            AnalysisStatus.NOT_COMPATIBLE: "No se detectó estructura compatible de presupuesto cubiApp.",
+            AnalysisStatus.SKIPPED_UNCHANGED: "Sin cambios desde el último análisis.",
+            AnalysisStatus.READ_ERROR: "Error técnico durante lectura/análisis del Excel.",
+            AnalysisStatus.MANUALLY_EXCLUDED: "Excluido manualmente por decisión del usuario.",
+        }.get(status, "Estado no especificado.")
 
     def _reload_rows(self):
         self._rows = list_historical_budgets_by_run(self._run_id) if self._run_id else []
@@ -355,6 +374,13 @@ class HistoricalAnalysisResultsDialog(QDialog):
                 }
             ],
         )
+        reclass_result = self._analyzer.reclassify_budget_modules(budget_id)
+        if not reclass_result.get("ok"):
+            QMessageBox.warning(
+                self,
+                "Marcar como apto",
+                f"Marcado como apto, pero falló la reclasificación: {reclass_result.get('error', 'desconocido')}",
+            )
         self._rebuild_patterns()
         QMessageBox.information(self, "Marcar como apto", "Archivo marcado como apto para aprendizaje.")
         parent_dialog.accept()

@@ -67,7 +67,8 @@ def get_historical_budget_by_path(ruta_excel: str) -> Optional[Dict]:
                       total, fecha_presupuesto, fecha_modificacion_excel, fecha_analisis,
                       num_partidas, analysis_run_id, analisis_ok, warning_count, warnings,
                       analysis_status, compatible_score, selected_sheet, selected_sheet_index,
-                      expected_numero, detected_numero, numero_matches, usable_for_learning, error
+                      expected_numero, detected_numero, numero_matches, usable_for_learning,
+                      header_score, partida_score, error
                FROM historical_budget WHERE ruta_excel=?""",
             (ruta,),
         )
@@ -102,7 +103,9 @@ def get_historical_budget_by_path(ruta_excel: str) -> Optional[Dict]:
         "detected_numero": row[24] or "",
         "numero_matches": bool(row[25]),
         "usable_for_learning": bool(row[26]),
-        "error": row[27] or "",
+        "header_score": int(row[27] or 0),
+        "partida_score": int(row[28] or 0),
+        "error": row[29] or "",
     }
 
 
@@ -120,8 +123,9 @@ def upsert_historical_budget(data: Dict) -> Tuple[Optional[int], Optional[str]]:
                     fecha_presupuesto, fecha_modificacion_excel, fecha_analisis, num_partidas,
                     analysis_run_id, analisis_ok, warning_count, warnings, analysis_status,
                     compatible_score, selected_sheet, selected_sheet_index, expected_numero,
-                    detected_numero, numero_matches, usable_for_learning, error)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    detected_numero, numero_matches, usable_for_learning, header_score,
+                    partida_score, error)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(ruta_excel) DO UPDATE SET
                        ruta_carpeta=excluded.ruta_carpeta,
                        numero_proyecto=excluded.numero_proyecto,
@@ -148,6 +152,8 @@ def upsert_historical_budget(data: Dict) -> Tuple[Optional[int], Optional[str]]:
                        detected_numero=excluded.detected_numero,
                        numero_matches=excluded.numero_matches,
                        usable_for_learning=excluded.usable_for_learning,
+                       header_score=excluded.header_score,
+                       partida_score=excluded.partida_score,
                        error=excluded.error
                 """,
                 (
@@ -177,6 +183,8 @@ def upsert_historical_budget(data: Dict) -> Tuple[Optional[int], Optional[str]]:
                     (data.get("detected_numero") or "").strip() or None,
                     1 if data.get("numero_matches") else 0,
                     1 if data.get("usable_for_learning") else 0,
+                    int(data.get("header_score", 0)),
+                    int(data.get("partida_score", 0)),
                     (data.get("error") or "").strip() or None,
                 ),
             )
@@ -409,7 +417,7 @@ def list_historical_budgets_by_run(analysis_run_id: int) -> List[Dict]:
         cur = conn.execute(
             """SELECT id, ruta_excel, numero_proyecto, total, num_partidas, warning_count,
                       analysis_status, selected_sheet, expected_numero, detected_numero,
-                      numero_matches, usable_for_learning
+                      numero_matches, usable_for_learning, compatible_score
                FROM historical_budget
                WHERE analysis_run_id=?
                ORDER BY ruta_excel ASC""",
@@ -430,6 +438,7 @@ def list_historical_budgets_by_run(analysis_run_id: int) -> List[Dict]:
             "detected_numero": r[9] or "",
             "numero_matches": bool(r[10]),
             "usable_for_learning": bool(r[11]),
+            "compatible_score": int(r[12] or 0),
         }
         for r in rows
     ]
@@ -556,3 +565,42 @@ def get_historical_learning_metrics(analysis_run_id: Optional[int] = None) -> Di
         "partidas_utiles": partidas_utiles,
         "patrones_generados": patrones_generados,
     }
+
+
+def get_historical_partidas_for_classification(historical_budget_id: int) -> List[Dict]:
+    with database.get_connection(read_only=True) as conn:
+        cur = conn.execute(
+            """SELECT id, COALESCE(concepto_original, ''), COALESCE(titulo, ''), COALESCE(capitulo, '')
+               FROM historical_partida
+               WHERE historical_budget_id=?
+               ORDER BY orden ASC""",
+            (historical_budget_id,),
+        )
+        rows = cur.fetchall()
+    return [
+        {
+            "id": int(r[0]),
+            "concepto_original": r[1] or "",
+            "titulo": r[2] or "",
+            "capitulo": r[3] or "",
+        }
+        for r in rows
+    ]
+
+
+def clear_historical_partida_modules_for_budget(historical_budget_id: int) -> Optional[str]:
+    with database.get_connection() as conn:
+        try:
+            conn.execute(
+                """DELETE FROM historical_partida_module
+                   WHERE partida_id IN (
+                       SELECT id FROM historical_partida WHERE historical_budget_id=?
+                   )""",
+                (historical_budget_id,),
+            )
+            conn.execute("DELETE FROM budget_module_summary WHERE historical_budget_id=?", (historical_budget_id,))
+            conn.commit()
+            return None
+        except sqlite3.OperationalError as e:
+            conn.rollback()
+            return f"Error de base de datos: {e.args[0] if e.args else 'desconocido'}."

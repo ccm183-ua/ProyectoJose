@@ -55,6 +55,17 @@ class BudgetFileProbe:
                     and normalize_project_num(detected_numero)
                     and normalize_project_num(detected_numero) == norm_expected
                 ),
+                "header_score": self._header_score(
+                    header,
+                    expected_numero,
+                    detected_numero,
+                    self._contains_budget_terms(rows, shared_strings),
+                ),
+                "partida_score": self._partida_score(
+                    len(partidas),
+                    total,
+                    has_positive_price,
+                ),
             }
             if best is None or item["score"] > best["score"]:
                 best = item
@@ -91,8 +102,8 @@ class BudgetFileProbe:
             "expected_numero": expected_numero or "",
             "detected_numero": best["detected_numero"],
             "numero_matches": bool(best["numero_matches"]),
-            "header_score": int(self._header_score(best["header"], expected_numero, best["detected_numero"])),
-            "partida_score": int(self._partida_score(best["partidas_count"], best["total"])),
+            "header_score": int(best.get("header_score") or 0),
+            "partida_score": int(best.get("partida_score") or 0),
             "partidas_detectadas": int(best["partidas_count"]),
             "total_detectado": float(best["total"]),
             "issues": issues,

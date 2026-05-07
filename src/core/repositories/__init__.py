@@ -78,6 +78,8 @@ from src.core.repositories.historical_repository import (
     get_historical_budget_partidas,
     set_historical_budget_manual_status,
     get_historical_learning_metrics,
+    get_historical_partidas_for_classification,
+    clear_historical_partida_modules_for_budget,
     replace_budget_issues,
 )
 
@@ -141,5 +143,7 @@ __all__ = [
     "get_historical_budget_partidas",
     "set_historical_budget_manual_status",
     "get_historical_learning_metrics",
+    "get_historical_partidas_for_classification",
+    "clear_historical_partida_modules_for_budget",
     "replace_budget_issues",
 ]

@@ -14,10 +14,12 @@ from src.core.historical_analysis_status import AnalysisStatus, IssueSeverity
 from src.core.historical_budget_quality import validate_budget_quality
 from src.core.repositories import (
     assign_partida_module,
+    clear_historical_partida_modules_for_budget,
     create_analysis_run,
     delete_partidas_for_budget,
     finish_analysis_run,
     get_historical_budget_by_path,
+    get_historical_partidas_for_classification,
     get_presupuesto_por_ruta,
     get_or_create_execution_module,
     insert_historical_partida,
@@ -123,6 +125,7 @@ class HistoricalBudgetAnalyzer:
                 AnalysisStatus.NOT_COMPATIBLE: 0,
                 AnalysisStatus.READ_ERROR: 0,
                 AnalysisStatus.SKIPPED_UNCHANGED: 0,
+                AnalysisStatus.MANUALLY_EXCLUDED: 0,
             },
             "run_id": run_id,
         }
@@ -228,6 +231,8 @@ class HistoricalBudgetAnalyzer:
                     "detected_numero": probe_result.get("detected_numero") or "",
                     "numero_matches": bool(probe_result.get("numero_matches")),
                     "usable_for_learning": False,
+                    "header_score": int(probe_result.get("header_score") or 0),
+                    "partida_score": int(probe_result.get("partida_score") or 0),
                     "error": "",
                 }
                 budget_id, budget_err = upsert_historical_budget(budget_payload)
@@ -290,6 +295,8 @@ class HistoricalBudgetAnalyzer:
                 "detected_numero": detected_numero,
                 "numero_matches": numero_matches,
                 "usable_for_learning": True,
+                "header_score": int(probe_result.get("header_score") or 0),
+                "partida_score": int(probe_result.get("partida_score") or 0),
                 "error": "",
             }
             quality = validate_budget_quality(read_result, expected_numero=expected_numero)
@@ -320,16 +327,6 @@ class HistoricalBudgetAnalyzer:
             if delete_err:
                 raise RuntimeError(delete_err)
 
-            if not budget_payload["usable_for_learning"]:
-                return {
-                    "status": "processed",
-                    "excel_path": excel_path,
-                    "historical_budget_id": budget_id,
-                    "analysis_status": budget_payload["analysis_status"],
-                    "warning_count": len(all_warnings),
-                    "warnings": all_warnings,
-                }
-
             for idx, partida in enumerate(partidas, start=1):
                 concepto = (partida.get("concepto") or "").strip()
                 partida_payload = {
@@ -349,24 +346,25 @@ class HistoricalBudgetAnalyzer:
                 if partida_err or not partida_id:
                     continue
 
-                classifications = self.classifier.classify(
-                    {
-                        "titulo": concepto,
-                        "descripcion": "",
-                        "concepto": concepto,
-                        "capitulo": "",
-                    }
-                )
-                for row in classifications:
-                    module_id, module_err = get_or_create_execution_module(row.get("module", ""))
-                    if module_err or not module_id:
-                        continue
-                    assign_partida_module(
-                        partida_id=partida_id,
-                        module_id=module_id,
-                        confidence=float(row.get("confidence") or 0),
-                        source=row.get("source", "rules"),
+                if budget_payload["usable_for_learning"]:
+                    classifications = self.classifier.classify(
+                        {
+                            "titulo": concepto,
+                            "descripcion": "",
+                            "concepto": concepto,
+                            "capitulo": "",
+                        }
                     )
+                    for row in classifications:
+                        module_id, module_err = get_or_create_execution_module(row.get("module", ""))
+                        if module_err or not module_id:
+                            continue
+                        assign_partida_module(
+                            partida_id=partida_id,
+                            module_id=module_id,
+                            confidence=float(row.get("confidence") or 0),
+                            source=row.get("source", "rules"),
+                        )
 
             rebuild_budget_module_summary(budget_id)
             return {
@@ -409,3 +407,37 @@ class HistoricalBudgetAnalyzer:
                 "analysis_status": AnalysisStatus.READ_ERROR,
                 "error": str(exc),
             }
+
+    def reclassify_budget_modules(self, historical_budget_id: int) -> Dict:
+        clear_err = clear_historical_partida_modules_for_budget(historical_budget_id)
+        if clear_err:
+            return {"ok": False, "error": clear_err}
+
+        partidas = get_historical_partidas_for_classification(historical_budget_id)
+        assigned = 0
+        for partida in partidas:
+            concepto = (partida.get("concepto_original") or partida.get("titulo") or "").strip()
+            if not concepto:
+                continue
+            classifications = self.classifier.classify(
+                {
+                    "titulo": partida.get("titulo") or concepto,
+                    "descripcion": "",
+                    "concepto": concepto,
+                    "capitulo": partida.get("capitulo") or "",
+                }
+            )
+            for row in classifications:
+                module_id, module_err = get_or_create_execution_module(row.get("module", ""))
+                if module_err or not module_id:
+                    continue
+                assign_err = assign_partida_module(
+                    partida_id=int(partida.get("id") or 0),
+                    module_id=module_id,
+                    confidence=float(row.get("confidence") or 0),
+                    source=row.get("source", "rules"),
+                )
+                if not assign_err:
+                    assigned += 1
+        rebuild_budget_module_summary(historical_budget_id)
+        return {"ok": True, "partidas": len(partidas), "assignments": assigned}
