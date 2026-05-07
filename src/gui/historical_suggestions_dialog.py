@@ -28,7 +28,13 @@ class HistoricalSuggestionsDialog(QDialog):
         self._result = suggestion_result or {}
         self._modules = self._result.get("detected_modules", [])
         self._partidas = self._result.get("partidas", [])
-        self._selected = [True] * len(self._partidas)
+        self._selected = [
+            (
+                float(p.get("confidence", 0.0)) >= 0.7
+                and int(p.get("historical_frequency", 0)) >= 3
+            )
+            for p in self._partidas
+        ]
         self._selected_partidas = []
         self._build_ui()
         self._populate()
@@ -48,7 +54,7 @@ class HistoricalSuggestionsDialog(QDialog):
         stats = self._result.get("stats", {})
         msg = theme.create_text(
             panel,
-            f"Basado en {stats.get('presupuestos_base', 0)} presupuestos históricos similares.",
+            f"Basado en {stats.get('partidas_base', 0)} partidas históricas asociadas a los módulos detectados.",
         )
         msg.setWordWrap(True)
         layout.addWidget(msg)
@@ -117,7 +123,7 @@ class HistoricalSuggestionsDialog(QDialog):
     def _populate(self):
         self._table.setRowCount(len(self._partidas))
         for i, partida in enumerate(self._partidas):
-            self._table.setItem(i, 0, QTableWidgetItem("✓"))
+            self._table.setItem(i, 0, QTableWidgetItem("✓" if self._selected[i] else ""))
             self._table.item(i, 0).setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self._table.setItem(i, 1, QTableWidgetItem(str(partida.get("module", ""))))
             self._table.setItem(i, 2, QTableWidgetItem(str(partida.get("concepto", ""))))

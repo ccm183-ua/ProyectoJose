@@ -3,6 +3,7 @@ Analizador de presupuestos históricos para inteligencia offline.
 """
 
 import os
+import re
 from datetime import datetime
 from typing import Dict, List, Optional
 
@@ -28,6 +29,22 @@ def _file_mtime_iso(path: str) -> Optional[str]:
         return datetime.fromtimestamp(stat.st_mtime).isoformat()
     except (OSError, ValueError):
         return None
+
+
+def _guess_expected_numero(excel_path: str) -> str:
+    """
+    Intenta deducir el número de proyecto desde ruta/nombre de archivo.
+    """
+    candidates = [
+        os.path.basename(excel_path),
+        os.path.basename(os.path.dirname(excel_path)),
+        excel_path,
+    ]
+    for text in candidates:
+        match = re.search(r"\b(\d{1,4}-\d{2})\b", text)
+        if match:
+            return match.group(1)
+    return ""
 
 
 class HistoricalBudgetAnalyzer:
@@ -85,6 +102,15 @@ class HistoricalBudgetAnalyzer:
             else:
                 summary["errores"] += 1
 
+        # Regenerar patrones tras cada análisis (aunque solo haya omitidos),
+        # para cubrir el caso de datos históricos ya cacheados sin patrones previos.
+        try:
+            from src.core.historical_pattern_builder import HistoricalPatternBuilder
+
+            HistoricalPatternBuilder().rebuild_patterns()
+        except Exception:
+            summary["errores"] += 1
+
         finish_analysis_run(
             run_id,
             {
@@ -108,7 +134,8 @@ class HistoricalBudgetAnalyzer:
             return {"status": "skipped", "excel_path": excel_path}
 
         try:
-            read_result = self.reader.read(excel_path)
+            expected_numero = _guess_expected_numero(excel_path)
+            read_result = self.reader.read(excel_path, expected_numero=expected_numero)
             if not read_result:
                 raise ValueError("No se pudo leer el presupuesto con BudgetReader")
 
@@ -134,6 +161,10 @@ class HistoricalBudgetAnalyzer:
                 "analisis_ok": True,
                 "error": "",
             }
+            if not expected_numero:
+                budget_payload["error"] = (
+                    "Analizado sin numero esperado; posible seleccion incorrecta de hoja."
+                )
             budget_id, budget_err = upsert_historical_budget(budget_payload)
             if budget_err or not budget_id:
                 raise RuntimeError(budget_err or "No se pudo guardar presupuesto histórico")

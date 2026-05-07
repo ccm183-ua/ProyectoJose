@@ -394,14 +394,27 @@ class MainFrame(QMainWindow):
                     self._offer_ai_partidas(excel_path, project_data)
                     return
                 # Si acepta sin seleccionar, continuar a IA opcional
-                self._offer_ai_partidas(
-                    excel_path, project_data, historical_context=historical_result
+                ask_ai_no_sel = QMessageBox.question(
+                    self,
+                    "Sin partidas históricas seleccionadas",
+                    "No has seleccionado partidas históricas.\n\n"
+                    "¿Deseas continuar con IA usando contexto histórico?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 )
+                if ask_ai_no_sel == QMessageBox.StandardButton.Yes:
+                    self._offer_ai_partidas(
+                        excel_path, project_data, historical_context=historical_result
+                    )
                 return
-            # Si cancela el diálogo histórico, continuar con fallback IA
-            self._offer_ai_partidas(
-                excel_path, project_data, historical_context=historical_result
+            # Si cancela el diálogo histórico, preguntar IA sin contexto.
+            ask_ai = QMessageBox.question(
+                self,
+                "Sugerencias históricas canceladas",
+                "¿Deseas continuar con generación IA sin contexto histórico?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
+            if ask_ai == QMessageBox.StandardButton.Yes:
+                self._offer_ai_partidas(excel_path, project_data, historical_context=None)
             return
 
         self._offer_ai_partidas(excel_path, project_data)

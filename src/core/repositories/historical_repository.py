@@ -292,7 +292,8 @@ def get_suggestion_patterns_by_modules(module_names: List[str]) -> List[Dict]:
                 FROM suggested_partida_pattern spp
                 JOIN execution_module em ON em.id = spp.module_id
                 WHERE em.nombre IN ({placeholders}) AND spp.activo = 1
-                ORDER BY spp.confianza DESC, spp.frecuencia DESC""",
+                ORDER BY spp.confianza DESC, spp.frecuencia DESC
+                LIMIT 50""",
             names,
         )
         rows = cur.fetchall()
