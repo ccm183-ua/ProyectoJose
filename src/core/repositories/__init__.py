@@ -61,6 +61,19 @@ from src.core.repositories.presupuesto_cache_repository import (
     limpiar_presupuestos_huerfanos,
     get_all_presupuestos_cache,
 )
+from src.core.repositories.historical_repository import (
+    create_analysis_run,
+    finish_analysis_run,
+    get_historical_budget_by_path,
+    upsert_historical_budget,
+    delete_partidas_for_budget,
+    insert_historical_partida,
+    get_or_create_execution_module,
+    assign_partida_module,
+    rebuild_budget_module_summary,
+    get_suggestion_patterns_by_modules,
+    get_templates_by_work_type,
+)
 
 __all__ = [
     "FUZZY_MATCH_THRESHOLD",
@@ -106,4 +119,15 @@ __all__ = [
     "actualizar_estado_presupuesto",
     "limpiar_presupuestos_huerfanos",
     "get_all_presupuestos_cache",
+    "create_analysis_run",
+    "finish_analysis_run",
+    "get_historical_budget_by_path",
+    "upsert_historical_budget",
+    "delete_partidas_for_budget",
+    "insert_historical_partida",
+    "get_or_create_execution_module",
+    "assign_partida_module",
+    "rebuild_budget_module_summary",
+    "get_suggestion_patterns_by_modules",
+    "get_templates_by_work_type",
 ]

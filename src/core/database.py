@@ -121,6 +121,35 @@ def init_schema(conn: sqlite3.Connection) -> None:
     conn.commit()
     _migrate_administracion_nombre(conn)
     _migrate_comunidad_cif(conn)
+    _seed_execution_modules(conn)
+
+
+def _seed_execution_modules(conn: sqlite3.Connection) -> None:
+    """Inserta módulos de ejecución iniciales de forma idempotente."""
+    modules = (
+        ("demolicion", "obra_civil", "Demolición y desmontajes", "demolicion,demoler,picado,levantado,desmontaje,apertura"),
+        ("desmontaje", "obra_civil", "Trabajos de desmontaje", "desmontaje,retirada"),
+        ("sustitucion_bajante", "fontaneria", "Sustitución de bajantes", "bajante,pvc,fecales,pluviales,manguito,codo,abrazadera"),
+        ("fontaneria", "instalaciones", "Trabajos de fontanería", "fontaneria,tuberia,saneamiento"),
+        ("impermeabilizacion", "obra_civil", "Impermeabilización", "impermeabilizacion,tela asfaltica,membrana,filtracion"),
+        ("andamio", "medios_auxiliares", "Andamios y medios de elevación", "andamio,plataforma,elevadora"),
+        ("medios_auxiliares", "medios_auxiliares", "Medios auxiliares y seguridad", "medio auxiliar,proteccion,seguridad"),
+        ("pintura", "acabados", "Pintura y acabados", "pintura,pintado,plastico,revestimiento"),
+        ("alicatado", "acabados", "Alicatado y cerámica", "alicatado,azulejo,ceramico,rejuntado"),
+        ("enlucido", "acabados", "Enlucidos y enfoscados", "enlucido,enfoscado,mortero"),
+        ("gestion_residuos", "logistica", "Gestión de residuos y escombros", "escombro,vertedero,residuo,contenedor,saca"),
+        ("limpieza_final", "logistica", "Limpieza final de obra", "limpieza final"),
+        ("electricidad", "instalaciones", "Trabajos de electricidad", "electricidad,cableado,cuadro,iluminacion"),
+        ("carpinteria", "acabados", "Trabajos de carpintería", "carpinteria,puerta,madera"),
+        ("cerrajeria", "acabados", "Trabajos de cerrajería", "cerrajeria,metal,barandilla"),
+        ("albanileria", "obra_civil", "Trabajos de albañilería", "albanileria,roza,tabique,recibido,mortero"),
+    )
+    conn.executemany(
+        """INSERT OR IGNORE INTO execution_module (nombre, categoria, descripcion, keywords, activo)
+           VALUES (?, ?, ?, ?, 1)""",
+        modules,
+    )
+    conn.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -229,6 +258,135 @@ CREATE TABLE IF NOT EXISTS presupuesto (
 CREATE INDEX IF NOT EXISTS idx_presupuesto_numero ON presupuesto(numero_proyecto);
 CREATE INDEX IF NOT EXISTS idx_presupuesto_estado ON presupuesto(estado);
 CREATE INDEX IF NOT EXISTS idx_presupuesto_ruta ON presupuesto(ruta_excel);
+
+-- Ejecuciones de análisis histórico
+CREATE TABLE IF NOT EXISTS historical_analysis_run (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    fecha_inicio TEXT NOT NULL,
+    fecha_fin TEXT,
+    carpeta_origen TEXT,
+    total_archivos INTEGER DEFAULT 0,
+    archivos_procesados INTEGER DEFAULT 0,
+    archivos_omitidos INTEGER DEFAULT 0,
+    archivos_error INTEGER DEFAULT 0,
+    estado TEXT,
+    error TEXT
+);
+
+-- Presupuestos históricos analizados
+CREATE TABLE IF NOT EXISTS historical_budget (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ruta_excel TEXT NOT NULL UNIQUE,
+    ruta_carpeta TEXT,
+    numero_proyecto TEXT,
+    nombre_proyecto TEXT,
+    cliente TEXT,
+    localidad TEXT,
+    tipo_obra_original TEXT,
+    tipo_obra_normalizado TEXT,
+    estado TEXT,
+    total REAL,
+    fecha_presupuesto TEXT,
+    fecha_modificacion_excel TEXT NOT NULL,
+    fecha_analisis TEXT NOT NULL,
+    num_partidas INTEGER DEFAULT 0,
+    analysis_run_id INTEGER REFERENCES historical_analysis_run(id) ON DELETE SET NULL,
+    analisis_ok INTEGER DEFAULT 0,
+    error TEXT
+);
+
+-- Partidas extraídas de presupuestos históricos
+CREATE TABLE IF NOT EXISTS historical_partida (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    historical_budget_id INTEGER NOT NULL REFERENCES historical_budget(id) ON DELETE CASCADE,
+    orden INTEGER,
+    codigo TEXT,
+    titulo TEXT,
+    descripcion TEXT,
+    concepto_original TEXT,
+    concepto_normalizado TEXT,
+    unidad TEXT,
+    cantidad REAL,
+    precio_unitario REAL,
+    total_linea REAL,
+    capitulo TEXT,
+    created_at TEXT NOT NULL
+);
+
+-- Módulos de ejecución reutilizables
+CREATE TABLE IF NOT EXISTS execution_module (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nombre TEXT NOT NULL UNIQUE,
+    categoria TEXT,
+    descripcion TEXT,
+    keywords TEXT,
+    activo INTEGER DEFAULT 1
+);
+
+-- Relación N:M partida <-> módulo
+CREATE TABLE IF NOT EXISTS historical_partida_module (
+    partida_id INTEGER NOT NULL REFERENCES historical_partida(id) ON DELETE CASCADE,
+    module_id INTEGER NOT NULL REFERENCES execution_module(id) ON DELETE CASCADE,
+    confidence REAL DEFAULT 1.0,
+    source TEXT DEFAULT 'rules',
+    PRIMARY KEY (partida_id, module_id)
+);
+
+-- Resumen de módulos por presupuesto
+CREATE TABLE IF NOT EXISTS budget_module_summary (
+    historical_budget_id INTEGER NOT NULL REFERENCES historical_budget(id) ON DELETE CASCADE,
+    module_id INTEGER NOT NULL REFERENCES execution_module(id) ON DELETE CASCADE,
+    num_partidas INTEGER DEFAULT 0,
+    total_importe REAL DEFAULT 0,
+    porcentaje_presupuesto REAL DEFAULT 0,
+    PRIMARY KEY (historical_budget_id, module_id)
+);
+
+-- Plantillas aprendidas
+CREATE TABLE IF NOT EXISTS suggestion_template (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nombre TEXT NOT NULL,
+    tipo_obra_normalizado TEXT,
+    descripcion TEXT,
+    min_confidence REAL DEFAULT 0.0,
+    num_presupuestos_base INTEGER DEFAULT 0,
+    fecha_actualizacion TEXT NOT NULL,
+    activo INTEGER DEFAULT 1
+);
+
+-- Módulos por plantilla
+CREATE TABLE IF NOT EXISTS suggestion_template_module (
+    template_id INTEGER NOT NULL REFERENCES suggestion_template(id) ON DELETE CASCADE,
+    module_id INTEGER NOT NULL REFERENCES execution_module(id) ON DELETE CASCADE,
+    frecuencia REAL DEFAULT 0,
+    obligatorio INTEGER DEFAULT 0,
+    orden INTEGER DEFAULT 0,
+    PRIMARY KEY (template_id, module_id)
+);
+
+-- Patrones reutilizables de partidas
+CREATE TABLE IF NOT EXISTS suggested_partida_pattern (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    module_id INTEGER NOT NULL REFERENCES execution_module(id) ON DELETE CASCADE,
+    concepto_normalizado TEXT NOT NULL,
+    titulo_sugerido TEXT,
+    descripcion_sugerida TEXT,
+    unidad_habitual TEXT,
+    precio_unitario_medio REAL,
+    precio_unitario_mediana REAL,
+    precio_unitario_min REAL,
+    precio_unitario_max REAL,
+    frecuencia INTEGER DEFAULT 0,
+    confianza REAL DEFAULT 0,
+    activo INTEGER DEFAULT 1
+);
+
+CREATE INDEX IF NOT EXISTS idx_historical_budget_ruta ON historical_budget(ruta_excel);
+CREATE INDEX IF NOT EXISTS idx_historical_budget_mtime ON historical_budget(fecha_modificacion_excel);
+CREATE INDEX IF NOT EXISTS idx_historical_partida_budget ON historical_partida(historical_budget_id);
+CREATE INDEX IF NOT EXISTS idx_historical_partida_module_module ON historical_partida_module(module_id);
+CREATE INDEX IF NOT EXISTS idx_suggested_partida_pattern_module ON suggested_partida_pattern(module_id);
+CREATE INDEX IF NOT EXISTS idx_suggested_partida_pattern_concepto ON suggested_partida_pattern(concepto_normalizado);
 """
 
 
