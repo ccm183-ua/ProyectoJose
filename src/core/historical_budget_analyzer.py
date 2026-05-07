@@ -89,6 +89,7 @@ class HistoricalBudgetAnalyzer:
             "procesados": 0,
             "omitidos": 0,
             "errores": 0,
+            "warnings": 0,
             "run_id": run_id,
         }
 
@@ -101,6 +102,7 @@ class HistoricalBudgetAnalyzer:
                 summary["omitidos"] += 1
             else:
                 summary["errores"] += 1
+            summary["warnings"] += int(result.get("warning_count", 0))
 
         # Regenerar patrones tras cada análisis (aunque solo haya omitidos),
         # para cubrir el caso de datos históricos ya cacheados sin patrones previos.
@@ -142,6 +144,7 @@ class HistoricalBudgetAnalyzer:
             cabecera = read_result.get("cabecera", {})
             partidas = read_result.get("partidas", [])
             tipo_original = cabecera.get("obra", "")
+            warnings: List[str] = []
             budget_payload = {
                 "ruta_excel": excel_path,
                 "ruta_carpeta": os.path.dirname(excel_path),
@@ -162,9 +165,19 @@ class HistoricalBudgetAnalyzer:
                 "error": "",
             }
             if not expected_numero:
-                budget_payload["error"] = (
-                    "Analizado sin numero esperado; posible seleccion incorrecta de hoja."
+                warnings.append("Analizado sin numero esperado; posible seleccion incorrecta de hoja.")
+            if not partidas:
+                warnings.append("Presupuesto sin partidas detectadas.")
+            if float(read_result.get("total") or 0) <= 0:
+                warnings.append("Total de presupuesto cero o no detectado.")
+            if partidas:
+                zero_price = sum(
+                    1 for p in partidas if float(p.get("precio") or 0) <= 0
                 )
+                if (zero_price / max(1, len(partidas))) >= 0.5:
+                    warnings.append("Mas del 50% de partidas con precio unitario cero.")
+            if warnings:
+                budget_payload["error"] = "WARN: " + " | ".join(warnings)
             budget_id, budget_err = upsert_historical_budget(budget_payload)
             if budget_err or not budget_id:
                 raise RuntimeError(budget_err or "No se pudo guardar presupuesto histórico")
@@ -212,7 +225,12 @@ class HistoricalBudgetAnalyzer:
                     )
 
             rebuild_budget_module_summary(budget_id)
-            return {"status": "processed", "excel_path": excel_path, "historical_budget_id": budget_id}
+            return {
+                "status": "processed",
+                "excel_path": excel_path,
+                "historical_budget_id": budget_id,
+                "warning_count": len(warnings),
+            }
 
         except Exception as exc:
             error_payload = {

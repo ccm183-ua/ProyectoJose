@@ -136,7 +136,8 @@ class HistoricalAnalysisDialog(QDialog):
                 f"Total archivos: {summary.get('total_archivos', 0)}\n"
                 f"Procesados: {summary.get('procesados', 0)}\n"
                 f"Omitidos: {summary.get('omitidos', 0)}\n"
-                f"Errores: {summary.get('errores', 0)}"
+                f"Errores: {summary.get('errores', 0)}\n"
+                f"Warnings: {summary.get('warnings', 0)}"
             )
 
         run_in_background(_work, _done)

@@ -71,9 +71,9 @@ class HistoricalSuggestionsDialog(QDialog):
             layout.addWidget(modules_lbl)
 
         self._table = QTableWidget(panel)
-        self._table.setColumnCount(8)
+        self._table.setColumnCount(9)
         self._table.setHorizontalHeaderLabels(
-            ["", "Módulo", "Concepto", "Cantidad", "Unidad", "Precio Unit.", "Frecuencia", "Conf."]
+            ["", "Módulo", "Concepto", "Cantidad", "Unidad", "Precio Unit.", "Rango €", "Frecuencia", "Conf."]
         )
         self._table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         self._table.setColumnWidth(0, 32)
@@ -81,8 +81,9 @@ class HistoricalSuggestionsDialog(QDialog):
         self._table.setColumnWidth(3, 85)
         self._table.setColumnWidth(4, 70)
         self._table.setColumnWidth(5, 95)
-        self._table.setColumnWidth(6, 80)
-        self._table.setColumnWidth(7, 70)
+        self._table.setColumnWidth(6, 110)
+        self._table.setColumnWidth(7, 80)
+        self._table.setColumnWidth(8, 70)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self._table.setAlternatingRowColors(True)
@@ -138,14 +139,20 @@ class HistoricalSuggestionsDialog(QDialog):
             price_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             self._table.setItem(i, 5, price_item)
 
+            rango_min = float(partida.get("precio_min", 0.0))
+            rango_max = float(partida.get("precio_max", 0.0))
+            rango_item = QTableWidgetItem(f"{rango_min:.2f}-{rango_max:.2f}")
+            rango_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            self._table.setItem(i, 6, rango_item)
+
             freq_item = QTableWidgetItem(str(partida.get("historical_frequency", 0)))
             freq_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            self._table.setItem(i, 6, freq_item)
+            self._table.setItem(i, 7, freq_item)
 
             conf = float(partida.get("confidence", 0.0))
             conf_item = QTableWidgetItem(f"{int(conf * 100)}%")
             conf_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            self._table.setItem(i, 7, conf_item)
+            self._table.setItem(i, 8, conf_item)
 
         # Solo cantidad y precio son editables
         for row in range(self._table.rowCount()):

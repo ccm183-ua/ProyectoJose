@@ -99,6 +99,7 @@ class HistoricalSuggestionService:
         titulo = (pattern.get("titulo_sugerido") or pattern.get("concepto_normalizado") or "").upper()
         concepto = pattern.get("concepto_normalizado") or ""
         return {
+            "pattern_id": pattern.get("id"),
             "titulo": titulo,
             "descripcion": pattern.get("descripcion_sugerida") or "",
             "concepto": concepto,
@@ -108,6 +109,9 @@ class HistoricalSuggestionService:
             "module": pattern.get("module") or "",
             "confidence": float(pattern.get("confianza") or 0.0),
             "historical_frequency": int(pattern.get("frecuencia") or 0),
+            "precio_min": float(pattern.get("precio_unitario_min") or 0.0),
+            "precio_max": float(pattern.get("precio_unitario_max") or 0.0),
+            "precio_mediana": float(pattern.get("precio_unitario_mediana") or 0.0),
         }
 
     @staticmethod
