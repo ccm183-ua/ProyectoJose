@@ -139,5 +139,13 @@ class HistoricalAnalysisDialog(QDialog):
                 f"Errores: {summary.get('errores', 0)}\n"
                 f"Warnings: {summary.get('warnings', 0)}"
             )
+            warnings_detail = summary.get("warnings_detail", [])
+            if warnings_detail:
+                lines = ["", "Detalle warnings por archivo:"]
+                for item in warnings_detail[:40]:
+                    lines.append(f"- {item.get('excel_path', '')}")
+                    for warning in item.get("warnings", []):
+                        lines.append(f"    · {warning}")
+                self._summary.append("\n".join(lines))
 
         run_in_background(_work, _done)

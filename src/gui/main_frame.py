@@ -364,6 +364,12 @@ class MainFrame(QMainWindow):
 
     def _offer_partidas(self, excel_path, project_data):
         historical_result = self._try_historical_suggestions(project_data)
+        if historical_result and historical_result.get("message") and not historical_result.get("partidas"):
+            QMessageBox.information(
+                self,
+                "Sugerencias históricas",
+                historical_result.get("message", "No hay sugerencias históricas disponibles."),
+            )
         if historical_result and historical_result.get("partidas"):
             from src.gui.historical_suggestions_dialog import HistoricalSuggestionsDialog
 

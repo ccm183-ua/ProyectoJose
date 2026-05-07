@@ -121,6 +121,7 @@ def init_schema(conn: sqlite3.Connection) -> None:
     conn.commit()
     _migrate_administracion_nombre(conn)
     _migrate_comunidad_cif(conn)
+    _migrate_historical_budget_warnings(conn)
     _seed_execution_modules(conn)
 
 
@@ -149,6 +150,17 @@ def _seed_execution_modules(conn: sqlite3.Connection) -> None:
            VALUES (?, ?, ?, ?, 1)""",
         modules,
     )
+    conn.commit()
+
+
+def _migrate_historical_budget_warnings(conn: sqlite3.Connection) -> None:
+    """Añade columnas de warnings en historical_budget si no existen."""
+    cur = conn.execute("PRAGMA table_info(historical_budget)")
+    columns = [row[1] for row in cur.fetchall()]
+    if "warning_count" not in columns:
+        conn.execute("ALTER TABLE historical_budget ADD COLUMN warning_count INTEGER DEFAULT 0")
+    if "warnings" not in columns:
+        conn.execute("ALTER TABLE historical_budget ADD COLUMN warnings TEXT")
     conn.commit()
 
 
@@ -292,6 +304,8 @@ CREATE TABLE IF NOT EXISTS historical_budget (
     num_partidas INTEGER DEFAULT 0,
     analysis_run_id INTEGER REFERENCES historical_analysis_run(id) ON DELETE SET NULL,
     analisis_ok INTEGER DEFAULT 0,
+    warning_count INTEGER DEFAULT 0,
+    warnings TEXT,
     error TEXT
 );
 

@@ -56,9 +56,12 @@ class HistoricalPatternBuilder:
                           hp.precio_unitario
                    FROM historical_partida hp
                    JOIN historical_partida_module hpm ON hpm.partida_id = hp.id
+                   JOIN historical_budget hb ON hb.id = hp.historical_budget_id
                    WHERE hp.concepto_normalizado IS NOT NULL
                      AND hp.concepto_normalizado <> ''
                      AND hp.precio_unitario IS NOT NULL
+                     AND hp.precio_unitario > 0
+                     AND COALESCE(hb.warnings, '') NOT LIKE '%SEVERE:%'
                    ORDER BY hpm.module_id, hp.concepto_normalizado"""
             )
             rows = cur.fetchall()

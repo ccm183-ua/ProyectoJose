@@ -29,8 +29,6 @@ class HistoricalSuggestionService:
         detected_modules = self._detect_modules(text)
         module_names = [m["name"] for m in detected_modules]
         patterns = get_suggestion_patterns_by_modules(module_names)
-        if not patterns:
-            patterns = self._get_top_patterns(limit=25)
         partidas = [self._pattern_to_partida(p) for p in patterns]
         partidas = [
             p for p in partidas
@@ -44,13 +42,18 @@ class HistoricalSuggestionService:
                 sum(m["confidence"] for m in detected_modules) / len(detected_modules), 2
             )
 
-        return {
+        result = {
             "source": "historical",
             "confidence": confidence,
             "detected_modules": detected_modules,
             "partidas": partidas,
             "stats": stats,
         }
+        if not module_names:
+            result["message"] = "No se han detectado módulos suficientes para sugerencias históricas."
+        elif not partidas:
+            result["message"] = "No hay patrones históricos con confianza/frecuencia suficientes."
+        return result
 
     def _detect_modules(self, text: str) -> List[Dict]:
         classified = self.classifier.classify_text(text)
@@ -143,36 +146,3 @@ class HistoricalSuggestionService:
             "partidas_base": partidas_base,
         }
 
-    @staticmethod
-    def _get_top_patterns(limit: int = 25) -> List[Dict]:
-        with database.get_connection(read_only=True) as conn:
-            cur = conn.execute(
-                """SELECT spp.id, em.nombre, spp.concepto_normalizado, spp.titulo_sugerido,
-                          spp.descripcion_sugerida, spp.unidad_habitual, spp.precio_unitario_medio,
-                          spp.precio_unitario_mediana, spp.precio_unitario_min, spp.precio_unitario_max,
-                          spp.frecuencia, spp.confianza
-                   FROM suggested_partida_pattern spp
-                   JOIN execution_module em ON em.id = spp.module_id
-                   WHERE spp.activo = 1
-                   ORDER BY spp.frecuencia DESC, spp.confianza DESC
-                   LIMIT ?""",
-                (limit,),
-            )
-            rows = cur.fetchall()
-        return [
-            {
-                "id": r[0],
-                "module": r[1] or "",
-                "concepto_normalizado": r[2] or "",
-                "titulo_sugerido": r[3] or "",
-                "descripcion_sugerida": r[4] or "",
-                "unidad_habitual": r[5] or "",
-                "precio_unitario_medio": r[6],
-                "precio_unitario_mediana": r[7],
-                "precio_unitario_min": r[8],
-                "precio_unitario_max": r[9],
-                "frecuencia": int(r[10] or 0),
-                "confianza": float(r[11] or 0),
-            }
-            for r in rows
-        ]

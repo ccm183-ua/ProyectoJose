@@ -65,7 +65,7 @@ def get_historical_budget_by_path(ruta_excel: str) -> Optional[Dict]:
             """SELECT id, ruta_excel, ruta_carpeta, numero_proyecto, nombre_proyecto,
                       cliente, localidad, tipo_obra_original, tipo_obra_normalizado, estado,
                       total, fecha_presupuesto, fecha_modificacion_excel, fecha_analisis,
-                      num_partidas, analysis_run_id, analisis_ok, error
+                      num_partidas, analysis_run_id, analisis_ok, warning_count, warnings, error
                FROM historical_budget WHERE ruta_excel=?""",
             (ruta,),
         )
@@ -90,7 +90,9 @@ def get_historical_budget_by_path(ruta_excel: str) -> Optional[Dict]:
         "num_partidas": int(row[14] or 0),
         "analysis_run_id": row[15],
         "analisis_ok": bool(row[16]),
-        "error": row[17] or "",
+        "warning_count": int(row[17] or 0),
+        "warnings": row[18] or "",
+        "error": row[19] or "",
     }
 
 
@@ -106,8 +108,8 @@ def upsert_historical_budget(data: Dict) -> Tuple[Optional[int], Optional[str]]:
                    (ruta_excel, ruta_carpeta, numero_proyecto, nombre_proyecto, cliente,
                     localidad, tipo_obra_original, tipo_obra_normalizado, estado, total,
                     fecha_presupuesto, fecha_modificacion_excel, fecha_analisis, num_partidas,
-                    analysis_run_id, analisis_ok, error)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    analysis_run_id, analisis_ok, warning_count, warnings, error)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(ruta_excel) DO UPDATE SET
                        ruta_carpeta=excluded.ruta_carpeta,
                        numero_proyecto=excluded.numero_proyecto,
@@ -124,6 +126,8 @@ def upsert_historical_budget(data: Dict) -> Tuple[Optional[int], Optional[str]]:
                        num_partidas=excluded.num_partidas,
                        analysis_run_id=excluded.analysis_run_id,
                        analisis_ok=excluded.analisis_ok,
+                       warning_count=excluded.warning_count,
+                       warnings=excluded.warnings,
                        error=excluded.error
                 """,
                 (
@@ -143,6 +147,8 @@ def upsert_historical_budget(data: Dict) -> Tuple[Optional[int], Optional[str]]:
                     int(data.get("num_partidas", 0)),
                     data.get("analysis_run_id"),
                     1 if data.get("analisis_ok") else 0,
+                    int(data.get("warning_count", 0)),
+                    (data.get("warnings") or "").strip() or None,
                     (data.get("error") or "").strip() or None,
                 ),
             )
