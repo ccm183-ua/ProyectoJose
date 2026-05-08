@@ -93,20 +93,6 @@ MODULE_RULES = {
         "acero",
         "cerrajeria",
     ],
-    "hormigon": [
-        "hormigon",
-        "dado",
-        "dados",
-        "parking",
-        "garaje",
-        "viga",
-        "vigas",
-        "atado",
-        "zuncho",
-        "pilar",
-        "pilares",
-        "refuerzo",
-    ],
     "estructura": [
         "viga",
         "vigas",
@@ -117,6 +103,11 @@ MODULE_RULES = {
         "estructura",
         "estructural",
         "refuerzo",
+        "hormigon",
+        "dado",
+        "dados",
+        "parking",
+        "garaje",
     ],
     "fachada": [
         "fachada",
@@ -125,18 +116,6 @@ MODULE_RULES = {
         "grieta",
         "fisura",
         "enfoscado exterior",
-    ],
-    "rehabilitacion": [
-        "rehabilitacion",
-        "rehab",
-        "saneado",
-        "reparacion edificio",
-        "saneado edificio",
-    ],
-    "reparacion": [
-        "rep",
-        "reparacion",
-        "reparación",
     ],
 }
 

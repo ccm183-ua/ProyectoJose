@@ -27,3 +27,23 @@ class TestHistoricalPartidaClassifier:
         assert "demolicion" in modules
         assert "albanileria" in modules
         assert "sustitucion_bajante" in modules
+
+    def test_hormigon_terms_classify_as_estructura_not_hormigon(self):
+        classifier = HistoricalPartidaClassifier()
+        results = classifier.classify_text("Dados de hormigon en parking con refuerzo de viga")
+        modules = [row["module"] for row in results]
+        assert "estructura" in modules
+        assert "hormigon" not in modules
+
+    def test_generic_reparacion_and_rehabilitacion_are_not_final_modules(self):
+        classifier = HistoricalPartidaClassifier()
+        results = classifier.classify_text("Rehabilitacion y reparacion general de edificio")
+        modules = [row["module"] for row in results]
+        assert "rehabilitacion" not in modules
+        assert "reparacion" not in modules
+
+    def test_fachada_classifies_as_real_module(self):
+        classifier = HistoricalPartidaClassifier()
+        results = classifier.classify_text("Revision fachadas con grieta y fisura")
+        modules = [row["module"] for row in results]
+        assert "fachada" in modules

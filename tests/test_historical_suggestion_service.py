@@ -155,12 +155,13 @@ class TestHistoricalSuggestionService:
         module_names = {m.get("name") for m in result.get("detected_modules", [])}
         assert "carpinteria" in module_names
 
-    def test_detects_hormigon_module_from_text(self):
+    def test_detects_estructura_from_hormigon_context(self):
         result = HistoricalSuggestionService().suggest_for_project(
             {"tipo": "dados hormigón parking"}
         )
         module_names = {m.get("name") for m in result.get("detected_modules", [])}
-        assert "hormigon" in module_names
+        assert "estructura" in module_names
+        assert "hormigon" not in module_names
 
     def test_detects_fachada_module_from_text(self):
         result = HistoricalSuggestionService().suggest_for_project(
@@ -197,10 +198,14 @@ class TestHistoricalSuggestionService:
     def test_real_case_rep_viga_atado_detects_structure_related_module(self):
         result = HistoricalSuggestionService().suggest_for_project({"tipo": "REP. VIGA ATADO PLANTA 12º"})
         module_names = {m.get("name") for m in result.get("detected_modules", [])}
-        assert any(name in module_names for name in ("estructura", "hormigon", "albanileria"))
+        assert "estructura" in module_names
+        assert "reparacion" not in module_names
+        assert "hormigon" not in module_names
         assert result["failure_reason"] != "NO_MODULES"
 
     def test_real_case_rehabilitacion_de_edificio_is_too_generic(self):
         result = HistoricalSuggestionService().suggest_for_project({"tipo": "REHABILITACIÓN DE EDIFICIO"})
         assert result["failure_reason"] == "TOO_GENERIC"
         assert "demasiado general" in result["message"].lower()
+        module_names = {m.get("name") for m in result.get("detected_modules", [])}
+        assert "rehabilitacion" not in module_names

@@ -41,8 +41,15 @@ def test_diagnostics_empty_initialized_schema_is_clean(tmp_path, monkeypatch):
 
     assert report["schema_ok"] is True
     assert report["missing_tables"] == []
-    assert all(finding["check"] == "classifier_module_not_seeded" for finding in report["findings"])
+    assert [finding for finding in report["findings"] if finding["check"] == "classifier_module_not_seeded"] == []
     assert report["counts"]["historical_budget"] == 0
+
+    with database.get_connection(read_only=True) as conn:
+        row = conn.execute(
+            "SELECT nombre, descripcion FROM execution_module WHERE nombre='fachada'"
+        ).fetchone()
+    assert row is not None
+    assert "fachada" in row[1].lower()
 
 
 def test_diagnostics_detect_contaminated_memory_and_unknown_issue(tmp_path, monkeypatch):

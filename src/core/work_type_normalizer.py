@@ -34,10 +34,17 @@ _SIGNAL_TERMS = {
     "impermeabilizacion",
     "cubierta",
     "fachada",
+    "garaje",
+    "hormigon",
     "filtracion",
+    "parking",
+    "pilar",
     "rehabilitacion",
+    "refuerzo",
     "sustitucion",
     "reparacion",
+    "viga",
+    "zuncho",
 }
 
 

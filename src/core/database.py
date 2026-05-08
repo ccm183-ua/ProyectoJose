@@ -149,6 +149,7 @@ def _seed_execution_modules(conn: sqlite3.Connection) -> None:
         ("carpinteria", "acabados", "Trabajos de carpintería", "carpinteria,puerta,madera"),
         ("cerrajeria", "acabados", "Trabajos de cerrajería", "cerrajeria,metal,barandilla"),
         ("albanileria", "obra_civil", "Trabajos de albañilería", "albanileria,roza,tabique,recibido,mortero"),
+        ("fachada", "obra_civil", "Trabajos en fachada, revisión, grietas, fisuras y enfoscados exteriores", "fachada,fachadas,revision fachada,grieta,fisura,enfoscado exterior"),
         ("estructura", "obra_civil", "Refuerzos y estructura", "viga,atado,zuncho,pilar,estructura,estructural,refuerzo,hormigon"),
     )
     conn.executemany(

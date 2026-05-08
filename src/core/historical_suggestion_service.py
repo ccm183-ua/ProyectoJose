@@ -66,7 +66,14 @@ class HistoricalSuggestionService:
             "stats": stats,
             "failure_reason": "OK",
         }
-        if not module_names:
+        if not module_names and self._has_generic_context_only(detected_signals):
+            result["failure_reason"] = "TOO_GENERIC"
+            result["reason"] = "Se ha detectado una actuación demasiado general y hace falta más detalle."
+            result["message"] = (
+                "Se ha detectado una actuación demasiado general. Añade detalle del elemento: "
+                "fachada, cubierta, estructura, pintura, patios, etc."
+            )
+        elif not module_names:
             reason = "No se han podido detectar módulos porque la descripción del trabajo está vacía o es demasiado genérica."
             result["failure_reason"] = "NO_MODULES"
             result["reason"] = reason
@@ -111,8 +118,13 @@ class HistoricalSuggestionService:
             "cubierta": "impermeabilizacion",
             "filtracion": "impermeabilizacion",
             "fachada": "fachada",
-            "rehabilitacion": "rehabilitacion",
-            "reparacion": "reparacion",
+            "garaje": "estructura",
+            "hormigon": "estructura",
+            "parking": "estructura",
+            "pilar": "estructura",
+            "refuerzo": "estructura",
+            "viga": "estructura",
+            "zuncho": "estructura",
         }
         if not by_name and signals:
             for signal in signals:
@@ -146,11 +158,15 @@ class HistoricalSuggestionService:
         unique_modules = {m for m in module_names if m}
         if not unique_modules:
             return False
-        if unique_modules == {"rehabilitacion"}:
-            return True
         if unique_modules == {"albanileria"}:
             return True
         return False
+
+    @staticmethod
+    def _has_generic_context_only(signals: List[str]) -> bool:
+        signal_set = {s for s in signals if s}
+        generic = {"rehabilitacion", "reparacion"}
+        return bool(signal_set) and signal_set.issubset(generic)
 
     @staticmethod
     def _pattern_to_partida(pattern: Dict) -> Dict:
