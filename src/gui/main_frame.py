@@ -365,10 +365,19 @@ class MainFrame(QMainWindow):
     def _offer_partidas(self, excel_path, project_data):
         historical_result = self._try_historical_suggestions(project_data)
         if historical_result and historical_result.get("message") and not historical_result.get("partidas"):
+            analyzed_text = (historical_result.get("input_text") or "").strip()
+            if not analyzed_text:
+                analyzed_text = "(vacío)"
+            details = (
+                f"{historical_result.get('message', 'No hay sugerencias históricas disponibles.')}\n\n"
+                f"Texto analizado:\n{analyzed_text}\n\n"
+                "Consejo: añade una descripción más específica del trabajo.\n"
+                "Ejemplo válido: \"Impermeabilización de cubierta con reparación de filtraciones y sumideros\"."
+            )
             QMessageBox.information(
                 self,
                 "Sugerencias históricas",
-                historical_result.get("message", "No hay sugerencias históricas disponibles."),
+                details,
             )
         if historical_result and historical_result.get("partidas"):
             from src.gui.historical_suggestions_dialog import HistoricalSuggestionsDialog

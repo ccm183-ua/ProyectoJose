@@ -7,11 +7,14 @@ from typing import Dict, List, Optional
 from src.core import database
 from src.core.historical_partida_classifier import HistoricalPartidaClassifier
 from src.core.repositories import get_suggestion_patterns_by_modules
-from src.core.work_type_normalizer import extract_work_signals
+from src.core.work_type_normalizer import extract_work_signals, normalize_work_type
 
 
 class HistoricalSuggestionService:
     """Genera módulos y partidas sugeridas desde el histórico persistido."""
+
+    MIN_FREQUENCY = 2
+    MIN_CONFIDENCE = 0.2
 
     def __init__(self, classifier: Optional[HistoricalPartidaClassifier] = None):
         self.classifier = classifier or HistoricalPartidaClassifier()
@@ -25,15 +28,20 @@ class HistoricalSuggestionService:
                 str(user_description or ""),
             ]
         ).strip()
+        normalized_text = normalize_work_type(text)
 
-        detected_modules = self._detect_modules(text)
+        detected_signals = extract_work_signals(text)
+        detected_modules = self._detect_modules(text, detected_signals)
         module_names = [m["name"] for m in detected_modules]
         patterns = get_suggestion_patterns_by_modules(module_names)
         partidas = [self._pattern_to_partida(p) for p in patterns]
+        patterns_found = len(partidas)
         partidas = [
             p for p in partidas
-            if p.get("historical_frequency", 0) >= 2 and p.get("confidence", 0.0) >= 0.2
+            if p.get("historical_frequency", 0) >= self.MIN_FREQUENCY
+            and p.get("confidence", 0.0) >= self.MIN_CONFIDENCE
         ]
+        patterns_after_filters = len(partidas)
         stats = self._build_stats(module_names)
 
         confidence = 0.0
@@ -45,39 +53,77 @@ class HistoricalSuggestionService:
         result = {
             "source": "historical",
             "confidence": confidence,
+            "input_text": text,
+            "normalized_text": normalized_text,
+            "detected_signals": detected_signals,
             "detected_modules": detected_modules,
+            "patterns_found": patterns_found,
+            "patterns_after_filters": patterns_after_filters,
+            "min_frequency": self.MIN_FREQUENCY,
+            "min_confidence": self.MIN_CONFIDENCE,
             "partidas": partidas,
             "stats": stats,
+            "failure_reason": "OK",
         }
         if not module_names:
-            result["message"] = "No se han detectado módulos suficientes para sugerencias históricas."
-        elif not partidas:
-            result["message"] = "No hay patrones históricos con confianza/frecuencia suficientes."
+            reason = "No se han podido detectar módulos porque la descripción del trabajo está vacía o es demasiado genérica."
+            result["failure_reason"] = "NO_MODULES"
+            result["reason"] = reason
+            result["message"] = reason
+        elif self._is_too_generic(module_names):
+            result["failure_reason"] = "TOO_GENERIC"
+            result["reason"] = "Se ha detectado una actuación demasiado general y hace falta más detalle."
+            result["message"] = (
+                "Se ha detectado una actuación demasiado general. Añade detalle del elemento: "
+                "fachada, cubierta, estructura, pintura, patios, etc."
+            )
+        elif patterns_found == 0:
+            result["failure_reason"] = "NO_PATTERNS"
+            if "impermeabilizacion" in module_names:
+                result["message"] = (
+                    "Se ha detectado Impermeabilización/Cubierta, pero no hay patrones históricos suficientes en memoria. "
+                    "Revisa que existan presupuestos incluidos y reconstruye patrones."
+                )
+            else:
+                result["message"] = "Se detectaron módulos concretos, pero no hay patrones históricos suficientes."
+        elif patterns_after_filters == 0:
+            result["failure_reason"] = "FILTERED_OUT"
+            result["message"] = (
+                "Se han encontrado patrones, pero ninguno supera la frecuencia/confianza mínima configurada."
+            )
         return result
 
-    def _detect_modules(self, text: str) -> List[Dict]:
+    def _detect_modules(self, text: str, signals: Optional[List[str]] = None) -> List[Dict]:
         classified = self.classifier.classify_text(text)
-        signals = extract_work_signals(text)
+        signals = signals or []
         by_name = {row["module"]: row for row in classified}
 
-        # Señales simples para no perder módulos frecuentes cuando el texto es breve.
+        # Fallback mínimo: cuando no hay módulos por reglas, usar señales del texto.
         signal_boost = {
             "bajante": "sustitucion_bajante",
             "residuo": "gestion_residuos",
+            "escombro": "gestion_residuos",
             "albanileria": "albanileria",
             "pintura": "pintura",
             "alicatado": "alicatado",
+            "impermeabilizacion": "impermeabilizacion",
+            "cubierta": "impermeabilizacion",
+            "filtracion": "impermeabilizacion",
+            "fachada": "fachada",
+            "rehabilitacion": "rehabilitacion",
+            "reparacion": "reparacion",
         }
-        for signal in signals:
-            module_name = signal_boost.get(signal)
-            if not module_name:
-                continue
-            if module_name not in by_name:
-                by_name[module_name] = {
-                    "module": module_name,
-                    "confidence": 0.6,
-                    "source": "rules",
-                }
+        if not by_name and signals:
+            for signal in signals:
+                module_name = signal_boost.get(signal)
+                if not module_name:
+                    continue
+                if module_name not in by_name:
+                    by_name[module_name] = {
+                        "module": module_name,
+                        "confidence": 0.6,
+                        "source": "signals_fallback",
+                    }
 
         results = []
         for row in by_name.values():
@@ -93,6 +139,17 @@ class HistoricalSuggestionService:
             )
         results.sort(key=lambda item: item["confidence"], reverse=True)
         return results
+
+    @staticmethod
+    def _is_too_generic(module_names: List[str]) -> bool:
+        unique_modules = {m for m in module_names if m}
+        if not unique_modules:
+            return False
+        if unique_modules == {"rehabilitacion"}:
+            return True
+        if unique_modules == {"albanileria"}:
+            return True
+        return False
 
     @staticmethod
     def _pattern_to_partida(pattern: Dict) -> Dict:
