@@ -8,6 +8,7 @@ import sys
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QGroupBox,
@@ -44,6 +45,7 @@ class HistoricalAnalysisResultsDialog(QDialog):
         self._rows = list_historical_budgets_by_run(run_id) if run_id else []
         self._metrics = get_historical_learning_metrics(run_id)
         self._analyzer = HistoricalBudgetAnalyzer()
+        self._pending_learning_decisions: dict[int, bool] = {}
         self._build_ui()
         self._populate_table()
 
@@ -89,6 +91,10 @@ class HistoricalAnalysisResultsDialog(QDialog):
         self._search.setPlaceholderText("Buscar por archivo...")
         self._search.textChanged.connect(self._populate_table)
         filter_row.addWidget(self._search, 1)
+
+        self._only_review = QCheckBox("Solo revisar", self)
+        self._only_review.stateChanged.connect(self._populate_table)
+        filter_row.addWidget(self._only_review)
         layout.addLayout(filter_row)
 
         self._table = QTableWidget(self)
@@ -104,7 +110,7 @@ class HistoricalAnalysisResultsDialog(QDialog):
                 "Partidas",
                 "Total",
                 "Avisos",
-                "Usado para aprender",
+                "Memoria",
             ]
         )
         self._table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
@@ -118,7 +124,7 @@ class HistoricalAnalysisResultsDialog(QDialog):
         self._table.setColumnWidth(8, 80)
         self._table.setColumnWidth(9, 140)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self._table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self._table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.verticalHeader().setVisible(False)
         self._table.doubleClicked.connect(self._show_detail_selected)
@@ -135,6 +141,18 @@ class HistoricalAnalysisResultsDialog(QDialog):
         btn_detail.clicked.connect(self._show_detail_selected)
         actions.addWidget(btn_detail)
 
+        btn_include_selected = QPushButton("Incluir en memoria", self)
+        btn_include_selected.clicked.connect(self._include_selected_memory)
+        actions.addWidget(btn_include_selected)
+
+        btn_exclude_selected = QPushButton("Excluir de memoria", self)
+        btn_exclude_selected.clicked.connect(self._exclude_selected_memory)
+        actions.addWidget(btn_exclude_selected)
+
+        btn_apply = QPushButton("Aplicar cambios", self)
+        btn_apply.clicked.connect(self._apply_learning_decisions)
+        actions.addWidget(btn_apply)
+
         btn_close = QPushButton("Cerrar", self)
         btn_close.clicked.connect(self.accept)
         actions.addWidget(btn_close)
@@ -146,6 +164,8 @@ class HistoricalAnalysisResultsDialog(QDialog):
         search = self._search.text().strip().lower()
         filtered = []
         for row in self._rows:
+            if self._only_review.isChecked() and row.get("analysis_status") != AnalysisStatus.VALID_WITH_WARNINGS:
+                continue
             if status and row.get("analysis_status") != status:
                 continue
             path = row.get("ruta_excel", "")
@@ -180,7 +200,8 @@ class HistoricalAnalysisResultsDialog(QDialog):
             warnings.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             self._table.setItem(i, 8, warnings)
 
-            self._table.setItem(i, 9, QTableWidgetItem("Sí" if row.get("usable_for_learning") else "No"))
+            memory_item = self._memory_item_for_row(row)
+            self._table.setItem(i, 9, memory_item)
             self._table.item(i, 0).setData(Qt.ItemDataRole.UserRole, row)
 
         self._stats_lbl.setText(f"Mostrando {len(filtered)} de {len(self._rows)} archivos")
@@ -223,21 +244,48 @@ class HistoricalAnalysisResultsDialog(QDialog):
     def _issue_code_label(code: str) -> str:
         key = (code or "").strip().upper()
         return {
-            "SEVERE_MANY_ZERO_PRICES": "Mas del 50% de las partidas tienen precio unitario igual o menor que 0.",
+            "SEVERE_MANY_ZERO_PRICES": "Más del 50% de las partidas tienen precio unitario igual o menor que 0.",
             "SEVERE_TOTAL_ZERO": "El presupuesto tiene total 0 o no se ha detectado correctamente.",
-            "SEVERE_NO_PARTIDAS": "No se han detectado partidas validas en el presupuesto.",
+            "SEVERE_NO_PARTIDAS": "No se han detectado partidas válidas en el presupuesto.",
             "NO_PARTIDA_STRUCTURE": "El archivo no tiene una estructura de partidas compatible.",
             "NO_BUDGET_HEADER": "No se ha detectado la cabecera esperada del presupuesto.",
-            "NO_EXPECTED_NUMERO": "No se pudo confirmar el numero de presupuesto esperado.",
-            "WARN_NO_EXPECTED_NUMERO": "No se pudo confirmar el numero de presupuesto esperado.",
-            "WARN_NUMERO_MISMATCH": "El numero detectado no coincide con el numero esperado.",
+            "NO_EXPECTED_NUMERO": "No se pudo confirmar el número de presupuesto esperado.",
+            "WARN_NO_EXPECTED_NUMERO": "No se pudo confirmar el número de presupuesto esperado.",
+            "WARN_NUMERO_MISMATCH": "El número detectado no coincide con el número esperado.",
             "WARN_LOW_PARTIDA_COUNT": "Se detectaron pocas partidas; conviene revisar.",
-            "READ_ERROR": "Error tecnico durante la lectura del Excel.",
+            "READ_ERROR": "Error técnico durante la lectura del Excel.",
             "MANUALLY_EXCLUDED": "Archivo excluido manualmente del aprendizaje.",
             "MANUALLY_INCLUDED": "Archivo marcado manualmente como apto para aprendizaje.",
-            "NO_WORKSHEETS": "No se encontraron hojas de calculo legibles en el archivo.",
+            "NO_WORKSHEETS": "No se encontraron hojas de cálculo legibles en el archivo.",
             "NO_PROBE_RESULT": "No se pudo evaluar la compatibilidad del archivo.",
-        }.get(key, "Aviso del analisis historico.")
+        }.get(key, "Aviso del análisis histórico.")
+
+    def _memory_item_for_row(self, row: dict) -> QTableWidgetItem:
+        budget_id = int(row.get("id") or 0)
+        status = row.get("analysis_status")
+        current = bool(row.get("usable_for_learning"))
+        decision = self._pending_learning_decisions.get(budget_id, current)
+        is_pending = budget_id in self._pending_learning_decisions and decision != current
+
+        if status in (AnalysisStatus.EXCLUDED_INCOMPLETE_DATA, AnalysisStatus.NOT_COMPATIBLE, AnalysisStatus.READ_ERROR):
+            label = "● No apto"
+            color = theme.qcolor(theme.TEXT_SECONDARY if status == AnalysisStatus.NOT_COMPATIBLE else theme.ERROR)
+        elif decision:
+            label = "● Incluido"
+            color = theme.qcolor(theme.SUCCESS)
+        elif status == AnalysisStatus.VALID_WITH_WARNINGS:
+            label = "● Pendiente"
+            color = theme.qcolor(theme.WARNING)
+        else:
+            label = "● Excluido"
+            color = theme.qcolor(theme.TEXT_SECONDARY)
+
+        if is_pending:
+            label = f"{label} *"
+
+        item = QTableWidgetItem(label)
+        item.setForeground(color)
+        return item
 
     @staticmethod
     def _set_dynamic_table_height(table: QTableWidget, row_count: int, min_rows: int, max_rows: int) -> None:
@@ -427,8 +475,126 @@ class HistoricalAnalysisResultsDialog(QDialog):
     def _reload_rows(self):
         self._rows = list_historical_budgets_by_run(self._run_id) if self._run_id else []
         self._metrics = get_historical_learning_metrics(self._run_id)
+        self._pending_learning_decisions = {}
         self._refresh_kpis()
         self._populate_table()
+
+    def _selected_rows_data(self) -> list[dict]:
+        selected_data: list[dict] = []
+        row_indexes = sorted({item.row() for item in self._table.selectedItems()})
+        for row_index in row_indexes:
+            item = self._table.item(row_index, 0)
+            data = item.data(Qt.ItemDataRole.UserRole) if item else None
+            if data:
+                selected_data.append(data)
+        return selected_data
+
+    def _include_selected_memory(self):
+        changed = 0
+        for data in self._selected_rows_data():
+            status = data.get("analysis_status")
+            if status not in (AnalysisStatus.VALID, AnalysisStatus.VALID_WITH_WARNINGS, AnalysisStatus.MANUALLY_EXCLUDED):
+                continue
+            budget_id = int(data.get("id") or 0)
+            if budget_id <= 0:
+                continue
+            if status == AnalysisStatus.MANUALLY_EXCLUDED:
+                partidas = get_historical_budget_partidas(budget_id, limit=500)
+                has_positive_price = any(float(p.get("precio_unitario", 0.0) or 0.0) > 0 for p in partidas)
+                if not partidas or not has_positive_price:
+                    continue
+            self._pending_learning_decisions[budget_id] = True
+            changed += 1
+        if changed:
+            self._populate_table()
+
+    def _exclude_selected_memory(self):
+        changed = 0
+        for data in self._selected_rows_data():
+            if data.get("analysis_status") not in (
+                AnalysisStatus.VALID,
+                AnalysisStatus.VALID_WITH_WARNINGS,
+                AnalysisStatus.MANUALLY_EXCLUDED,
+            ):
+                continue
+            budget_id = int(data.get("id") or 0)
+            if budget_id > 0:
+                self._pending_learning_decisions[budget_id] = False
+                changed += 1
+        if changed:
+            self._populate_table()
+
+    def _apply_learning_decisions(self):
+        if not self._pending_learning_decisions:
+            QMessageBox.information(self, "Aplicar decisiones", "No hay cambios pendientes.")
+            return
+
+        has_changes = False
+        for data in self._rows:
+            status = data.get("analysis_status")
+            if status not in (
+                AnalysisStatus.VALID,
+                AnalysisStatus.VALID_WITH_WARNINGS,
+                AnalysisStatus.MANUALLY_EXCLUDED,
+            ):
+                continue
+            budget_id = int(data.get("id") or 0)
+            if budget_id <= 0 or budget_id not in self._pending_learning_decisions:
+                continue
+
+            decision = bool(self._pending_learning_decisions[budget_id])
+            current = bool(data.get("usable_for_learning"))
+            if decision == current:
+                continue
+
+            if decision:
+                err = set_historical_budget_manual_status(
+                    budget_id,
+                    AnalysisStatus.VALID_WITH_WARNINGS if status != AnalysisStatus.VALID else AnalysisStatus.VALID,
+                    True,
+                )
+                if err:
+                    QMessageBox.warning(self, "Aplicar decisiones", err)
+                    continue
+                replace_budget_issues(
+                    budget_id,
+                    [
+                        {
+                            "severity": "WARN",
+                            "code": "MANUALLY_INCLUDED",
+                            "message": "Marcado manualmente como apto para aprendizaje.",
+                        }
+                    ],
+                )
+                self._analyzer.reclassify_budget_modules(budget_id)
+                has_changes = True
+            else:
+                err = set_historical_budget_manual_status(
+                    budget_id,
+                    AnalysisStatus.MANUALLY_EXCLUDED,
+                    False,
+                )
+                if err:
+                    QMessageBox.warning(self, "Aplicar decisiones", err)
+                    continue
+                replace_budget_issues(
+                    budget_id,
+                    [
+                        {
+                            "severity": "WARN",
+                            "code": "MANUALLY_EXCLUDED",
+                            "message": "Excluido manualmente por usuario.",
+                        }
+                    ],
+                )
+                has_changes = True
+
+        if has_changes:
+            self._rebuild_patterns()
+            QMessageBox.information(self, "Aplicar decisiones", "Decisiones aplicadas correctamente.")
+        else:
+            QMessageBox.information(self, "Aplicar decisiones", "No hubo cambios efectivos para aplicar.")
+        self._reload_rows()
 
     def _refresh_kpis(self):
         self._kpi_budgets.setText(f"Presupuestos usados: {int(self._metrics.get('presupuestos_usados', 0))}")
