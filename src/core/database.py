@@ -510,12 +510,37 @@ CREATE TABLE IF NOT EXISTS suggested_partida_pattern (
     activo INTEGER DEFAULT 1
 );
 
+-- Ejecuciones de construcción de patrones históricos
+CREATE TABLE IF NOT EXISTS historical_pattern_build_run (
+    id TEXT PRIMARY KEY,
+    started_at TEXT,
+    finished_at TEXT,
+    source_budget_count INTEGER DEFAULT 0,
+    source_partida_count INTEGER DEFAULT 0,
+    patterns_inserted INTEGER DEFAULT 0,
+    builder_version TEXT,
+    error TEXT
+);
+
+-- Trazabilidad de fuentes por patrón sugerido
+CREATE TABLE IF NOT EXISTS suggested_partida_pattern_source (
+    pattern_id INTEGER NOT NULL REFERENCES suggested_partida_pattern(id) ON DELETE CASCADE,
+    historical_partida_id INTEGER NOT NULL REFERENCES historical_partida(id) ON DELETE CASCADE,
+    historical_budget_id INTEGER NOT NULL REFERENCES historical_budget(id) ON DELETE CASCADE,
+    precio_unitario REAL,
+    total_linea REAL,
+    created_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_historical_budget_ruta ON historical_budget(ruta_excel);
 CREATE INDEX IF NOT EXISTS idx_historical_budget_mtime ON historical_budget(fecha_modificacion_excel);
 CREATE INDEX IF NOT EXISTS idx_historical_partida_budget ON historical_partida(historical_budget_id);
 CREATE INDEX IF NOT EXISTS idx_historical_partida_module_module ON historical_partida_module(module_id);
 CREATE INDEX IF NOT EXISTS idx_suggested_partida_pattern_module ON suggested_partida_pattern(module_id);
 CREATE INDEX IF NOT EXISTS idx_suggested_partida_pattern_concepto ON suggested_partida_pattern(concepto_normalizado);
+CREATE INDEX IF NOT EXISTS idx_pattern_source_pattern ON suggested_partida_pattern_source(pattern_id);
+CREATE INDEX IF NOT EXISTS idx_pattern_source_partida ON suggested_partida_pattern_source(historical_partida_id);
+CREATE INDEX IF NOT EXISTS idx_pattern_source_budget ON suggested_partida_pattern_source(historical_budget_id);
 """
 
 

@@ -165,3 +165,101 @@ class TestHistoricalPatternBuilder:
         assert row[1] == 1
         assert row[2].startswith("pattern_build_")
         assert row[3] == HistoricalPatternBuilder.PATTERN_SOURCE
+
+    def test_rebuild_patterns_persists_build_run_and_pattern_sources(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "datos_pattern_traceability_test.db"))
+
+        budget_id, err = upsert_historical_budget(
+            {
+                "ruta_excel": str(tmp_path / "trace.xlsx"),
+                "ruta_carpeta": str(tmp_path),
+                "nombre_proyecto": "trace.xlsx",
+                "fecha_modificacion_excel": datetime.now().isoformat(),
+                "fecha_analisis": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "analisis_ok": True,
+                "analysis_status": "VALID",
+                "usable_for_learning": True,
+                "learning_status": "INCLUDED",
+            }
+        )
+        assert err is None
+        assert budget_id is not None
+
+        module_id, module_err = get_or_create_execution_module("sustitucion_bajante")
+        assert module_err is None
+        assert module_id is not None
+
+        partida_ids = []
+        for price in [15.0, 25.0]:
+            partida_id, perr = insert_historical_partida(
+                budget_id,
+                {
+                    "titulo": "Desmontaje bajante existente",
+                    "concepto_original": "Desmontaje bajante existente",
+                    "concepto_normalizado": "desmontaje bajante existente",
+                    "unidad": "ml",
+                    "precio_unitario": price,
+                    "cantidad": 1,
+                    "total_linea": price,
+                },
+            )
+            assert perr is None
+            partida_ids.append(int(partida_id))
+            assert assign_partida_module(partida_id, module_id, 0.9, "rules") is None
+
+        result1 = HistoricalPatternBuilder().rebuild_patterns()
+        result2 = HistoricalPatternBuilder().rebuild_patterns()
+        assert result1["pattern_build_run"] != result2["pattern_build_run"]
+
+        with database.get_connection(read_only=True) as conn:
+            cur_run = conn.execute(
+                """SELECT id, started_at, finished_at, source_budget_count, source_partida_count,
+                          patterns_inserted, builder_version, error
+                   FROM historical_pattern_build_run
+                   WHERE id=?""",
+                (result2["pattern_build_run"],),
+            )
+            run_row = cur_run.fetchone()
+            assert run_row is not None
+            assert run_row[0] == result2["pattern_build_run"]
+            assert run_row[1]
+            assert run_row[2]
+            assert int(run_row[3] or 0) >= 1
+            assert int(run_row[4] or 0) >= 2
+            assert int(run_row[5] or 0) >= 1
+            assert run_row[6] == HistoricalPatternBuilder.BUILDER_VERSION
+            assert (run_row[7] or "") == ""
+
+            cur_pattern = conn.execute(
+                """SELECT id
+                   FROM suggested_partida_pattern
+                   WHERE pattern_build_run=?
+                   LIMIT 1""",
+                (result2["pattern_build_run"],),
+            )
+            pattern_row = cur_pattern.fetchone()
+            assert pattern_row is not None
+            pattern_id = int(pattern_row[0])
+
+            cur_sources = conn.execute(
+                """SELECT pattern_id, historical_partida_id, historical_budget_id, precio_unitario, total_linea
+                   FROM suggested_partida_pattern_source
+                   WHERE pattern_id=?""",
+                (pattern_id,),
+            )
+            source_rows = cur_sources.fetchall()
+            assert len(source_rows) >= 1
+
+            cur_real_refs = conn.execute(
+                """SELECT COUNT(*)
+                   FROM suggested_partida_pattern_source spps
+                   JOIN historical_partida hp ON hp.id = spps.historical_partida_id
+                   JOIN historical_budget hb ON hb.id = spps.historical_budget_id
+                   WHERE spps.pattern_id=?""",
+                (pattern_id,),
+            )
+            real_ref_count = int((cur_real_refs.fetchone() or [0])[0] or 0)
+            assert real_ref_count == len(source_rows)
+
+            partida_ids_from_source = {int(r[1]) for r in source_rows}
+            assert partida_ids_from_source.issubset(set(partida_ids))
