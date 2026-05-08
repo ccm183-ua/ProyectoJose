@@ -109,6 +109,13 @@ class HistoricalSuggestionContextDialog(QDialog):
 
     def _on_retry(self):
         self._manual_context = self._context_edit.toPlainText().strip()
+        if not self._manual_context:
+            QMessageBox.warning(
+                self,
+                "Contexto requerido",
+                "Escribe un contexto manual antes de volver a buscar sugerencias históricas.",
+            )
+            return
         self._search_again = True
         self.accept()
 
@@ -346,11 +353,20 @@ class HistoricalSuggestionsDialog(QDialog):
             user_description=manual_context,
         )
         if not fresh.get("partidas"):
+            detected_modules = ", ".join(
+                m.get("label") or m.get("name") or ""
+                for m in fresh.get("detected_modules", [])
+            ) or "-"
             QMessageBox.information(
                 self,
                 "Sugerencias históricas",
                 (
                     f"{fresh.get('message', 'No se han encontrado sugerencias suficientes.')}\n\n"
+                    f"Motivo: {fresh.get('failure_reason', '-')}\n"
+                    f"Texto analizado: {fresh.get('input_text', '') or '(vacío)'}\n"
+                    f"Módulos detectados: {detected_modules}\n"
+                    f"Patrones encontrados: {int(fresh.get('patterns_found') or 0)} | "
+                    f"Tras filtros: {int(fresh.get('patterns_after_filters') or 0)}\n\n"
                     "Puedes continuar con las sugerencias actuales o seguir con IA."
                 ),
             )
@@ -359,6 +375,7 @@ class HistoricalSuggestionsDialog(QDialog):
         self._result = fresh
         self._modules = fresh.get("detected_modules", [])
         self._partidas = fresh.get("partidas", [])
+        self._selected_partidas = []
         self._selected = [
             (
                 float(p.get("confidence", 0.0)) >= 0.7
