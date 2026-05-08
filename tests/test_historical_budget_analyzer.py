@@ -209,3 +209,146 @@ class TestHistoricalBudgetAnalyzer:
         diagnostics = json.loads(stored["probe_diagnostics_json"])
         assert diagnostics["is_compatible"] is True
         assert diagnostics["selected_sheet"] == "PTO"
+
+    def test_reanalysis_preserves_manual_exclusion_when_budget_is_valid(self, tmp_path, monkeypatch):
+        db_path = tmp_path / "datos_historical_manual_exclusion.db"
+        monkeypatch.setenv("CUBIAPP_DB_PATH", str(db_path))
+        with database.get_connection() as _conn:
+            pass
+
+        excel_path = tmp_path / "manual_excluded.xlsx"
+        excel_path.write_text("placeholder", encoding="utf-8")
+        mtime = datetime.fromtimestamp(excel_path.stat().st_mtime).isoformat()
+
+        budget_id, err = upsert_historical_budget(
+            {
+                "ruta_excel": str(excel_path),
+                "ruta_carpeta": str(tmp_path),
+                "numero_proyecto": "001-26",
+                "nombre_proyecto": "manual_excluded.xlsx",
+                "fecha_modificacion_excel": mtime,
+                "fecha_analisis": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "analisis_ok": True,
+                "analysis_status": "VALID",
+                "usable_for_learning": False,
+                "learning_status": "EXCLUDED",
+                "learning_status_source": "MANUAL",
+                "learning_decision_reason": "Usuario no quiere usar este archivo.",
+                "learning_decision_at": "2026-01-01 10:00:00",
+            }
+        )
+        assert err is None
+        assert budget_id is not None
+
+        analyzer = HistoricalBudgetAnalyzer()
+        monkeypatch.setattr(
+            analyzer.probe,
+            "probe",
+            lambda *_args, **_kwargs: {
+                "is_compatible": True,
+                "score": 24,
+                "header_score": 12,
+                "partida_score": 12,
+                "selected_sheet": "PTO",
+                "selected_sheet_index": 0,
+                "expected_numero": "001-26",
+                "detected_numero": "001-26",
+                "numero_matches": True,
+                "partidas_detectadas": 1,
+                "issues": [],
+            },
+        )
+        monkeypatch.setattr(
+            analyzer.reader,
+            "read",
+            lambda *_args, **_kwargs: {
+                "cabecera": {"numero": "001-26", "obra": "Reparacion bajante", "fecha": "2026-01-01", "cliente": "Test"},
+                "partidas": [
+                    {"numero": "1.1", "concepto": "Desmontaje bajante", "unidad": "ml", "cantidad": 1, "precio": 10, "importe": 10},
+                    {"numero": "1.2", "concepto": "Instalacion bajante", "unidad": "ml", "cantidad": 1, "precio": 15, "importe": 15},
+                ],
+                "subtotal": 25.0,
+                "total": 25.0,
+                "diagnostics": {"selected_sheet": "PTO", "selected_sheet_index": 0, "detected_numero": "001-26", "numero_matches": True},
+            },
+        )
+
+        result = analyzer.analyze_budget(str(excel_path), force_reanalyze=True)
+        assert result["status"] == "processed"
+
+        stored = get_historical_budget_by_path(str(excel_path))
+        assert stored["analysis_status"] == "VALID"
+        assert stored["learning_status"] == "EXCLUDED"
+        assert stored["learning_status_source"] == "MANUAL"
+        assert stored["usable_for_learning"] is False
+
+    def test_reanalysis_does_not_preserve_manual_inclusion_when_budget_becomes_invalid(self, tmp_path, monkeypatch):
+        db_path = tmp_path / "datos_historical_manual_inclusion_invalid.db"
+        monkeypatch.setenv("CUBIAPP_DB_PATH", str(db_path))
+        with database.get_connection() as _conn:
+            pass
+
+        excel_path = tmp_path / "manual_included_invalid.xlsx"
+        excel_path.write_text("placeholder", encoding="utf-8")
+        mtime = datetime.fromtimestamp(excel_path.stat().st_mtime).isoformat()
+
+        budget_id, err = upsert_historical_budget(
+            {
+                "ruta_excel": str(excel_path),
+                "ruta_carpeta": str(tmp_path),
+                "nombre_proyecto": "manual_included_invalid.xlsx",
+                "fecha_modificacion_excel": mtime,
+                "fecha_analisis": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "analisis_ok": True,
+                "analysis_status": "VALID_WITH_WARNINGS",
+                "usable_for_learning": True,
+                "learning_status": "INCLUDED",
+                "learning_status_source": "MANUAL",
+                "learning_decision_reason": "Incluido tras revision.",
+                "learning_decision_at": "2026-01-01 10:00:00",
+            }
+        )
+        assert err is None
+        assert budget_id is not None
+
+        analyzer = HistoricalBudgetAnalyzer()
+        monkeypatch.setattr(
+            analyzer.probe,
+            "probe",
+            lambda *_args, **_kwargs: {
+                "is_compatible": True,
+                "score": 24,
+                "header_score": 12,
+                "partida_score": 12,
+                "selected_sheet": "PTO",
+                "selected_sheet_index": 0,
+                "expected_numero": "001-26",
+                "detected_numero": "001-26",
+                "numero_matches": True,
+                "partidas_detectadas": 2,
+                "issues": [],
+            },
+        )
+        monkeypatch.setattr(
+            analyzer.reader,
+            "read",
+            lambda *_args, **_kwargs: {
+                "cabecera": {"numero": "001-26", "obra": "Reparacion bajante", "fecha": "2026-01-01", "cliente": "Test"},
+                "partidas": [
+                    {"numero": "1.1", "concepto": "Desmontaje bajante", "unidad": "ml", "cantidad": 1, "precio": 0, "importe": 0},
+                    {"numero": "1.2", "concepto": "Instalacion bajante", "unidad": "ml", "cantidad": 1, "precio": 0, "importe": 0},
+                ],
+                "subtotal": 0.0,
+                "total": 0.0,
+                "diagnostics": {"selected_sheet": "PTO", "selected_sheet_index": 0, "detected_numero": "001-26", "numero_matches": True},
+            },
+        )
+
+        result = analyzer.analyze_budget(str(excel_path), force_reanalyze=True)
+        assert result["status"] == "processed"
+
+        stored = get_historical_budget_by_path(str(excel_path))
+        assert stored["analysis_status"] == "EXCLUDED_INCOMPLETE_DATA"
+        assert stored["learning_status"] == "NOT_ELIGIBLE"
+        assert stored["learning_status_source"] == "AUTO"
+        assert stored["usable_for_learning"] is False

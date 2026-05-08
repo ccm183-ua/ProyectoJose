@@ -30,6 +30,7 @@ class HistoricalPatternBuilder:
                    VALUES (?, ?, ?)""",
                 (build_run, started_at, self.BUILDER_VERSION),
             )
+            conn.execute("SAVEPOINT pattern_rebuild")
             try:
                 # Borrado explícito para no depender de ON DELETE CASCADE.
                 conn.execute("DELETE FROM suggested_partida_pattern_source")
@@ -99,8 +100,11 @@ class HistoricalPatternBuilder:
                         build_run,
                     ),
                 )
+                conn.execute("RELEASE SAVEPOINT pattern_rebuild")
                 conn.commit()
             except Exception as exc:
+                conn.execute("ROLLBACK TO SAVEPOINT pattern_rebuild")
+                conn.execute("RELEASE SAVEPOINT pattern_rebuild")
                 conn.execute(
                     """UPDATE historical_pattern_build_run
                        SET finished_at=?, source_budget_count=?, source_partida_count=?,
@@ -142,6 +146,7 @@ class HistoricalPatternBuilder:
                      AND hp.concepto_normalizado <> ''
                      AND hp.precio_unitario IS NOT NULL
                      AND hp.precio_unitario > 0
+                     AND hb.analysis_status IN ('VALID', 'VALID_WITH_WARNINGS')
                      AND (
                          hb.learning_status = 'INCLUDED'
                          OR (

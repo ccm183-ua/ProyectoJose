@@ -2,6 +2,7 @@
 Tests del servicio de sugerencias históricas.
 """
 
+import sqlite3
 from datetime import datetime
 
 from src.core.historical_pattern_builder import HistoricalPatternBuilder
@@ -15,6 +16,30 @@ from src.core.repositories import (
 
 
 class TestHistoricalSuggestionService:
+    def test_suggestion_service_initializes_missing_historical_schema(self, tmp_path, monkeypatch):
+        db_path = tmp_path / "legacy_without_historical_tables.db"
+        conn = sqlite3.connect(db_path)
+        conn.execute("CREATE TABLE legacy_marker (id INTEGER PRIMARY KEY)")
+        conn.commit()
+        conn.close()
+        monkeypatch.setenv("CUBIAPP_DB_PATH", str(db_path))
+
+        result = HistoricalSuggestionService().suggest_for_project(
+            {"tipo": "reparacion de bajante en patio"}
+        )
+
+        assert result["source"] == "historical"
+        assert result["failure_reason"] in {"NO_PATTERNS", "FILTERED_OUT", "OK"}
+
+        conn = sqlite3.connect(db_path)
+        try:
+            cur = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='suggested_partida_pattern'"
+            )
+            assert cur.fetchone() is not None
+        finally:
+            conn.close()
+
     def test_suggestion_service_returns_expected_format(self, tmp_path, monkeypatch):
         monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "datos_suggestion_test.db"))
         budget_id, err = upsert_historical_budget(

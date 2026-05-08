@@ -166,6 +166,49 @@ class TestHistoricalPatternBuilder:
         assert row[2].startswith("pattern_build_")
         assert row[3] == HistoricalPatternBuilder.PATTERN_SOURCE
 
+    def test_rebuild_patterns_ignores_technically_invalid_manual_included_budgets(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "datos_pattern_invalid_included.db"))
+
+        budget_id, err = upsert_historical_budget(
+            {
+                "ruta_excel": str(tmp_path / "invalid_but_included.xlsx"),
+                "ruta_carpeta": str(tmp_path),
+                "nombre_proyecto": "invalid_but_included.xlsx",
+                "fecha_modificacion_excel": datetime.now().isoformat(),
+                "fecha_analisis": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "analisis_ok": True,
+                "analysis_status": "EXCLUDED_INCOMPLETE_DATA",
+                "usable_for_learning": True,
+                "learning_status": "INCLUDED",
+                "learning_status_source": "MANUAL",
+            }
+        )
+        assert err is None
+
+        module_id, module_err = get_or_create_execution_module("albanileria")
+        assert module_err is None
+        partida_id, perr = insert_historical_partida(
+            budget_id,
+            {
+                "titulo": "Roza y mortero",
+                "concepto_original": "Roza y mortero",
+                "concepto_normalizado": "roza y mortero",
+                "unidad": "ml",
+                "precio_unitario": 30.0,
+                "cantidad": 1,
+                "total_linea": 30.0,
+            },
+        )
+        assert perr is None
+        assert assign_partida_module(partida_id, module_id, 0.9, "rules") is None
+
+        result = HistoricalPatternBuilder().rebuild_patterns()
+        assert result["patterns_inserted"] == 0
+
+        with database.get_connection(read_only=True) as conn:
+            cur = conn.execute("SELECT COUNT(*) FROM suggested_partida_pattern")
+            assert int((cur.fetchone() or [0])[0] or 0) == 0
+
     def test_rebuild_patterns_persists_build_run_and_pattern_sources(self, tmp_path, monkeypatch):
         monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "datos_pattern_traceability_test.db"))
 
@@ -263,3 +306,78 @@ class TestHistoricalPatternBuilder:
 
             partida_ids_from_source = {int(r[1]) for r in source_rows}
             assert partida_ids_from_source.issubset(set(partida_ids))
+
+    def test_rebuild_patterns_preserves_previous_patterns_when_rebuild_fails(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "datos_pattern_failure_preserve.db"))
+
+        budget_id, err = upsert_historical_budget(
+            {
+                "ruta_excel": str(tmp_path / "stable.xlsx"),
+                "ruta_carpeta": str(tmp_path),
+                "nombre_proyecto": "stable.xlsx",
+                "fecha_modificacion_excel": datetime.now().isoformat(),
+                "fecha_analisis": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "analisis_ok": True,
+                "analysis_status": "VALID",
+                "usable_for_learning": True,
+                "learning_status": "INCLUDED",
+            }
+        )
+        assert err is None
+        module_id, module_err = get_or_create_execution_module("sustitucion_bajante")
+        assert module_err is None
+        partida_id, perr = insert_historical_partida(
+            budget_id,
+            {
+                "titulo": "Desmontaje bajante existente",
+                "concepto_original": "Desmontaje bajante existente",
+                "concepto_normalizado": "desmontaje bajante existente",
+                "unidad": "ml",
+                "precio_unitario": 20.0,
+                "cantidad": 1,
+                "total_linea": 20.0,
+            },
+        )
+        assert perr is None
+        assert assign_partida_module(partida_id, module_id, 0.9, "rules") is None
+
+        HistoricalPatternBuilder().rebuild_patterns()
+        with database.get_connection(read_only=True) as conn:
+            before_count = int(conn.execute("SELECT COUNT(*) FROM suggested_partida_pattern").fetchone()[0])
+        assert before_count > 0
+
+        class BrokenPatternBuilder(HistoricalPatternBuilder):
+            def _load_groups(self):
+                return [
+                    {
+                        "module_id": module_id,
+                        "concepto_normalizado": "patron roto",
+                        "titulo_sugerido": "Patron roto",
+                        "unidad": "ud",
+                        "prices": [10.0],
+                        "sources": [
+                            {
+                                "historical_partida_id": 999999,
+                                "historical_budget_id": 999999,
+                                "precio_unitario": 10.0,
+                                "total_linea": 10.0,
+                            }
+                        ],
+                    }
+                ]
+
+        try:
+            BrokenPatternBuilder().rebuild_patterns()
+            assert False, "El rebuild roto deberia fallar por claves foraneas"
+        except Exception:
+            pass
+
+        with database.get_connection(read_only=True) as conn:
+            after_count = int(conn.execute("SELECT COUNT(*) FROM suggested_partida_pattern").fetchone()[0])
+            failed_runs = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM historical_pattern_build_run WHERE error IS NOT NULL"
+                ).fetchone()[0]
+            )
+        assert after_count == before_count
+        assert failed_runs == 1

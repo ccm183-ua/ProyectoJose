@@ -20,6 +20,7 @@ class HistoricalSuggestionService:
         self.classifier = classifier or HistoricalPartidaClassifier()
 
     def suggest_for_project(self, project_data: Dict, user_description: str = "") -> Dict:
+        self._ensure_historical_schema()
         text = " ".join(
             [
                 str(project_data.get("tipo", "") or ""),
@@ -228,4 +229,10 @@ class HistoricalSuggestionService:
             "presupuestos_base": presupuestos_base,
             "partidas_base": partidas_base,
         }
+
+    @staticmethod
+    def _ensure_historical_schema() -> None:
+        """Garantiza que una base existente antigua tenga las tablas históricas."""
+        conn = database.connect(read_only=False)
+        conn.close()
 

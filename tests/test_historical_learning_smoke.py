@@ -265,7 +265,8 @@ def test_historical_learning_smoke_flow(tmp_path, monkeypatch):
             assert patterns_total >= 0
         assert patterns_albanileria_before == 0
 
-    # 7: Marcar manualmente como apto => reclassify_budget_modules + reconstruye patrones
+    # 7: Aunque alguien marque manualmente como incluido un presupuesto tecnicamente no apto,
+    #    el constructor de patrones no debe usarlo como fuente.
     err = set_historical_budget_learning_status(
         excluded_budget_id,
         "INCLUDED",
@@ -294,5 +295,5 @@ def test_historical_learning_smoke_flow(tmp_path, monkeypatch):
             """,
             tuple(),
         )
-        assert patterns_albanileria_after > 0
+        assert patterns_albanileria_after == 0
 

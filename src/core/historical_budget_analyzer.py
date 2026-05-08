@@ -73,6 +73,33 @@ def _safe_json_dumps(data: Dict) -> str:
         return "{}"
 
 
+def _apply_existing_manual_learning_decision(budget_payload: Dict, existing: Optional[Dict]) -> None:
+    """Conserva decisiones manuales cuando el nuevo análisis sigue siendo apto."""
+    if not existing:
+        return
+    if (existing.get("learning_status_source") or "").strip().upper() != "MANUAL":
+        return
+
+    previous_status = (existing.get("learning_status") or "").strip().upper()
+    if previous_status == "EXCLUDED":
+        budget_payload["usable_for_learning"] = False
+        budget_payload["learning_status"] = "EXCLUDED"
+        budget_payload["learning_status_source"] = "MANUAL"
+        budget_payload["learning_decision_reason"] = existing.get("learning_decision_reason") or "Decision manual preservada tras reanalisis."
+        budget_payload["learning_decision_at"] = existing.get("learning_decision_at") or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        return
+
+    if previous_status != "INCLUDED":
+        return
+
+    if budget_payload.get("analysis_status") in (AnalysisStatus.VALID, AnalysisStatus.VALID_WITH_WARNINGS):
+        budget_payload["usable_for_learning"] = True
+        budget_payload["learning_status"] = "INCLUDED"
+        budget_payload["learning_status_source"] = "MANUAL"
+        budget_payload["learning_decision_reason"] = existing.get("learning_decision_reason") or "Decision manual preservada tras reanalisis."
+        budget_payload["learning_decision_at"] = existing.get("learning_decision_at") or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
 class HistoricalBudgetAnalyzer:
     """Analiza Excels históricos, persiste partidas y clasifica módulos."""
 
@@ -262,6 +289,7 @@ class HistoricalBudgetAnalyzer:
                     "partida_score": int(probe_result.get("partida_score") or 0),
                     "error": "",
                 }
+                _apply_existing_manual_learning_decision(budget_payload, existing)
                 budget_id, budget_err = upsert_historical_budget(budget_payload)
                 if budget_err or not budget_id:
                     raise RuntimeError(budget_err or "No se pudo guardar presupuesto histórico")
@@ -364,6 +392,7 @@ class HistoricalBudgetAnalyzer:
             if all_warnings:
                 budget_payload["warning_count"] = len(all_warnings)
                 budget_payload["warnings"] = " | ".join(all_warnings)
+            _apply_existing_manual_learning_decision(budget_payload, existing)
             budget_id, budget_err = upsert_historical_budget(budget_payload)
             if budget_err or not budget_id:
                 raise RuntimeError(budget_err or "No se pudo guardar presupuesto histórico")
@@ -445,6 +474,7 @@ class HistoricalBudgetAnalyzer:
                 "probe_diagnostics_json": probe_diagnostics_json,
                 "error": str(exc),
             }
+            _apply_existing_manual_learning_decision(error_payload, existing)
             budget_id, _ = upsert_historical_budget(error_payload)
             if budget_id:
                 replace_budget_issues(
