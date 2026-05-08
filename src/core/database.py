@@ -6,7 +6,7 @@ Gestión de la base de datos SQLite.
 - Puedes editar el .db por fuera (DB Browser, etc.) y reemplazar el fichero
   cuando quieras; la app abrirá lo que haya en la ruta configurada.
 
-Ruta por defecto: Documents/cubiApp/datos.db
+Ruta por defecto: datos.db en la raíz del proyecto.
 Para usar otra ruta: variable de entorno CUBIAPP_DB_PATH (ruta absoluta al .db).
 """
 

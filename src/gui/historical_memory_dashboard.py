@@ -29,6 +29,7 @@ from src.core.historical_budget_analyzer import HistoricalBudgetAnalyzer
 from src.core.historical_integrity_diagnostics import diagnose_historical_integrity
 from src.core.historical_issue_catalog import historical_issue_label
 from src.core.historical_pattern_builder import HistoricalPatternBuilder
+from src.core.database import get_db_path_as_string, open_db_folder
 from src.core.repositories import (
     append_budget_issue,
     get_historical_budget_issues,
@@ -45,6 +46,7 @@ class HistoricalMemoryDashboard(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Panel de memoria historica")
         self._rows: list[dict] = []
+        self._has_any_budgets = False
         self._analyzer = HistoricalBudgetAnalyzer()
         self._build_ui()
         self._reload()
@@ -60,6 +62,13 @@ class HistoricalMemoryDashboard(QDialog):
             "Vista global de presupuestos escaneados, calidad de datos, uso en memoria y patrones.",
         )
         layout.addWidget(subtitle)
+        self._db_path_label = theme.create_text(
+            self,
+            f"Base de datos: {get_db_path_as_string()}",
+            muted=True,
+        )
+        self._db_path_label.setWordWrap(True)
+        layout.addWidget(self._db_path_label)
 
         self._kpi_grid = QGridLayout()
         self._kpi_grid.setHorizontalSpacing(theme.SPACE_LG)
@@ -175,6 +184,7 @@ class HistoricalMemoryDashboard(QDialog):
         for text, slot in [
             ("Ver detalle", self._show_detail_selected),
             ("Abrir Excel", self._open_excel_selected),
+            ("Abrir carpeta BD", self._open_db_folder),
             ("Incluir en memoria", self._include_selected),
             ("Excluir de memoria", self._exclude_selected),
             ("Reanalizar", self._reanalyze_selected),
@@ -231,6 +241,15 @@ class HistoricalMemoryDashboard(QDialog):
         }
         for key, label in self._kpi_labels.items():
             label.setText(f"{titles[key]}: {int(metrics.get(key, 0))}")
+        total_budgets = int(metrics.get("total_budgets", 0))
+        self._has_any_budgets = total_budgets > 0
+        if total_budgets == 0:
+            self._stats_lbl.setText(
+                "No hay presupuestos históricos en esta base de datos.\n"
+                f"Base de datos activa: {get_db_path_as_string()}\n"
+                "Sugerencia: escanea presupuestos históricos desde 'Herramientas > Analizar presupuestos terminados'.\n"
+                "Si esperabas datos, revisa la variable CUBIAPP_DB_PATH."
+            )
 
     def _populate_table(self):
         self._table.setRowCount(len(self._rows))
@@ -260,7 +279,17 @@ class HistoricalMemoryDashboard(QDialog):
                 if col == 1:
                     item.setForeground(self._memory_color(row))
                 self._table.setItem(i, col, item)
-        self._stats_lbl.setText(f"Mostrando {len(self._rows)} presupuestos")
+        if self._has_any_budgets:
+            self._stats_lbl.setText(f"Mostrando {len(self._rows)} presupuestos")
+
+    def _open_db_folder(self):
+        ok = open_db_folder()
+        if not ok:
+            QMessageBox.warning(
+                self,
+                "Base de datos",
+                "No se pudo abrir la carpeta de la base de datos activa.",
+            )
 
     def _selected_rows_data(self) -> list[dict]:
         rows = sorted({idx.row() for idx in self._table.selectionModel().selectedRows()})
