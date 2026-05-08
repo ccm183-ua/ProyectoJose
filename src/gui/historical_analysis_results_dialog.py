@@ -210,6 +210,15 @@ class HistoricalAnalysisResultsDialog(QDialog):
         }
         return color_map.get(status, theme.qcolor(theme.TEXT_PRIMARY))
 
+    @staticmethod
+    def _severity_label(severity: str) -> str:
+        return {
+            "INFO": "Info",
+            "WARN": "Aviso",
+            "SEVERE": "Grave",
+            "ERROR": "Error",
+        }.get((severity or "").strip().upper(), severity or "-")
+
     def _show_detail_selected(self):
         row_index = self._table.currentRow()
         if row_index < 0:
@@ -258,7 +267,7 @@ class HistoricalAnalysisResultsDialog(QDialog):
         diagnosis_layout.addWidget(diagnosis_label)
         lay.addWidget(diagnosis_box)
 
-        issues_box = QGroupBox("Avisos / Issues", dlg)
+        issues_box = QGroupBox("Avisos del análisis", dlg)
         issues_layout = QVBoxLayout(issues_box)
         issues_table = QTableWidget(issues_box)
         issues_table.setColumnCount(3)
@@ -272,7 +281,7 @@ class HistoricalAnalysisResultsDialog(QDialog):
         if issues:
             issues_table.setRowCount(len(issues))
             for idx, issue in enumerate(issues):
-                issues_table.setItem(idx, 0, QTableWidgetItem(issue.get("severity", "")))
+                issues_table.setItem(idx, 0, QTableWidgetItem(self._severity_label(issue.get("severity", ""))))
                 issues_table.setItem(idx, 1, QTableWidgetItem(issue.get("code", "")))
                 issues_table.setItem(idx, 2, QTableWidgetItem(issue.get("message", "")))
         else:
@@ -302,7 +311,7 @@ class HistoricalAnalysisResultsDialog(QDialog):
             for idx, partida in enumerate(partidas):
                 cantidad = float(partida.get("cantidad", 0.0) or 0.0)
                 precio = float(partida.get("precio_unitario", 0.0) or 0.0)
-                total = cantidad * precio
+                total = float(partida.get("total_linea") or (cantidad * precio))
                 partidas_table.setItem(idx, 0, QTableWidgetItem(partida.get("codigo", "")))
                 partidas_table.setItem(idx, 1, QTableWidgetItem(partida.get("concepto_original", "")))
                 partidas_table.setItem(idx, 2, QTableWidgetItem(partida.get("unidad", "")))

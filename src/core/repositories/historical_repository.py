@@ -469,7 +469,7 @@ def get_historical_budget_partidas(historical_budget_id: int, limit: int = 200) 
     safe_limit = max(1, int(limit or 200))
     with database.get_connection(read_only=True) as conn:
         cur = conn.execute(
-            """SELECT orden, codigo, concepto_original, unidad, cantidad, precio_unitario
+            """SELECT orden, codigo, concepto_original, unidad, cantidad, precio_unitario, total_linea
                FROM historical_partida
                WHERE historical_budget_id=?
                ORDER BY orden ASC
@@ -485,6 +485,7 @@ def get_historical_budget_partidas(historical_budget_id: int, limit: int = 200) 
             "unidad": r[3] or "",
             "cantidad": float(r[4] or 0.0),
             "precio_unitario": float(r[5] or 0.0),
+            "total_linea": float(r[6] or 0.0),
         }
         for r in rows
     ]
