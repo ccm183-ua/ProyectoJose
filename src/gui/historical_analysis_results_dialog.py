@@ -10,6 +10,9 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
+    QFormLayout,
+    QGroupBox,
+    QGridLayout,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -18,7 +21,6 @@ from PySide6.QtWidgets import (
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
-    QTextEdit,
     QVBoxLayout,
 )
 
@@ -73,18 +75,14 @@ class HistoricalAnalysisResultsDialog(QDialog):
 
         filter_row = QHBoxLayout()
         self._status_filter = QComboBox(self)
-        self._status_filter.addItems(
-            [
-                "Todos",
-                AnalysisStatus.VALID,
-                AnalysisStatus.VALID_WITH_WARNINGS,
-                AnalysisStatus.EXCLUDED_INCOMPLETE_DATA,
-                AnalysisStatus.NOT_COMPATIBLE,
-                AnalysisStatus.READ_ERROR,
-                AnalysisStatus.SKIPPED_UNCHANGED,
-                AnalysisStatus.MANUALLY_EXCLUDED,
-            ]
-        )
+        self._status_filter.addItem("Todos", None)
+        self._status_filter.addItem("✅ Válidos", AnalysisStatus.VALID)
+        self._status_filter.addItem("🟡 Revisar", AnalysisStatus.VALID_WITH_WARNINGS)
+        self._status_filter.addItem("🚫 Inválidos", AnalysisStatus.EXCLUDED_INCOMPLETE_DATA)
+        self._status_filter.addItem("📄 No compatibles", AnalysisStatus.NOT_COMPATIBLE)
+        self._status_filter.addItem("❌ Errores", AnalysisStatus.READ_ERROR)
+        self._status_filter.addItem("⏭ Sin cambios", AnalysisStatus.SKIPPED_UNCHANGED)
+        self._status_filter.addItem("🛑 Excluidos manualmente", AnalysisStatus.MANUALLY_EXCLUDED)
         self._status_filter.currentIndexChanged.connect(self._populate_table)
         filter_row.addWidget(self._status_filter)
 
@@ -95,9 +93,20 @@ class HistoricalAnalysisResultsDialog(QDialog):
         layout.addLayout(filter_row)
 
         self._table = QTableWidget(self)
-        self._table.setColumnCount(11)
+        self._table.setColumnCount(10)
         self._table.setHorizontalHeaderLabels(
-            ["Estado", "Archivo", "Nº esperado", "Nº detectado", "Hoja", "Score", "Partidas", "Total", "Warnings", "Aprende", "Acciones"]
+            [
+                "Estado",
+                "Archivo",
+                "Nº esperado",
+                "Nº detectado",
+                "Hoja",
+                "Score",
+                "Partidas",
+                "Total",
+                "Avisos",
+                "Usado para aprender",
+            ]
         )
         self._table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self._table.setColumnWidth(0, 180)
@@ -108,8 +117,7 @@ class HistoricalAnalysisResultsDialog(QDialog):
         self._table.setColumnWidth(6, 80)
         self._table.setColumnWidth(7, 100)
         self._table.setColumnWidth(8, 80)
-        self._table.setColumnWidth(9, 90)
-        self._table.setColumnWidth(10, 110)
+        self._table.setColumnWidth(9, 140)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self._table.verticalHeader().setVisible(False)
@@ -134,11 +142,11 @@ class HistoricalAnalysisResultsDialog(QDialog):
         theme.fit_dialog(self, 1180, 620)
 
     def _populate_table(self):
-        status = self._status_filter.currentText()
+        status = self._status_filter.currentData()
         search = self._search.text().strip().lower()
         filtered = []
         for row in self._rows:
-            if status != "Todos" and row.get("analysis_status") != status:
+            if status and row.get("analysis_status") != status:
                 continue
             path = row.get("ruta_excel", "")
             if search and search not in path.lower() and search not in os.path.basename(path).lower():
@@ -174,23 +182,19 @@ class HistoricalAnalysisResultsDialog(QDialog):
 
             self._table.setItem(i, 9, QTableWidgetItem("Sí" if row.get("usable_for_learning") else "No"))
             self._table.item(i, 0).setData(Qt.ItemDataRole.UserRole, row)
-            btn_detail_row = QPushButton("Ver detalle", self._table)
-            btn_detail_row.setFont(theme.font_sm())
-            btn_detail_row.clicked.connect(lambda _checked=False, data=row: self._show_detail_for_data(data))
-            self._table.setCellWidget(i, 10, btn_detail_row)
 
         self._stats_lbl.setText(f"Mostrando {len(filtered)} de {len(self._rows)} archivos")
 
     @staticmethod
     def _status_label(status: str) -> str:
         return {
-            AnalysisStatus.VALID: "✅ VALID",
-            AnalysisStatus.VALID_WITH_WARNINGS: "🟡 VALID_WITH_WARNINGS",
-            AnalysisStatus.EXCLUDED_INCOMPLETE_DATA: "🚫 EXCLUDED_INCOMPLETE_DATA",
-            AnalysisStatus.NOT_COMPATIBLE: "📄 NOT_COMPATIBLE",
-            AnalysisStatus.SKIPPED_UNCHANGED: "⏭ SKIPPED_UNCHANGED",
-            AnalysisStatus.READ_ERROR: "❌ READ_ERROR",
-            AnalysisStatus.MANUALLY_EXCLUDED: "🛑 MANUALLY_EXCLUDED",
+            AnalysisStatus.VALID: "✅ Válido",
+            AnalysisStatus.VALID_WITH_WARNINGS: "🟡 Revisar",
+            AnalysisStatus.EXCLUDED_INCOMPLETE_DATA: "🚫 Inválido",
+            AnalysisStatus.NOT_COMPATIBLE: "📄 No compatible",
+            AnalysisStatus.SKIPPED_UNCHANGED: "⏭ Sin cambios",
+            AnalysisStatus.READ_ERROR: "❌ Error",
+            AnalysisStatus.MANUALLY_EXCLUDED: "🛑 Excluido",
         }.get(status, status or "-")
 
     @staticmethod
@@ -224,43 +228,98 @@ class HistoricalAnalysisResultsDialog(QDialog):
         issues = get_historical_budget_issues(int(data.get("id") or 0))
         partidas = get_historical_budget_partidas(int(data.get("id") or 0), limit=150)
 
-        detail = QTextEdit(self)
-        detail.setReadOnly(True)
-        lines = [
-            f"Archivo: {data.get('ruta_excel', '')}",
-            f"Estado: {data.get('analysis_status', '')}",
-            f"Motivo: {self._status_explanation(data.get('analysis_status', ''))}",
-            f"Hoja usada: {data.get('selected_sheet', '')}",
-            f"Número esperado: {data.get('expected_numero', '')}",
-            f"Número detectado: {data.get('detected_numero', '')}",
-            f"Score compatibilidad: {int(data.get('compatible_score', 0))}",
-            f"Partidas detectadas: {data.get('num_partidas', 0)}",
-            f"Total detectado: {float(data.get('total', 0.0)):.2f} €",
-            "",
-            "Issues:",
-        ]
-        if issues:
-            lines.extend([f"- {i.get('severity', '')} {i.get('code', '')}: {i.get('message', '')}" for i in issues])
-        else:
-            lines.append("- Sin issues registrados.")
-
-        lines.append("")
-        lines.append("Partidas extraídas:")
-        if partidas:
-            for p in partidas:
-                lines.append(
-                    f"- {p.get('codigo', '')} {p.get('concepto_original', '')} | "
-                    f"{p.get('unidad', '')} | cant {p.get('cantidad', 0):.2f} | precio {p.get('precio_unitario', 0):.2f}"
-                )
-        else:
-            lines.append("- Sin partidas persistidas.")
-
-        detail.setPlainText("\n".join(lines))
-
         dlg = QDialog(self)
         dlg.setWindowTitle("Detalle de archivo analizado")
+        dlg.setMinimumSize(1020, 680)
         lay = QVBoxLayout(dlg)
-        lay.addWidget(detail)
+
+        status_text = self._status_label(data.get("analysis_status", ""))
+        learn_text = "Sí se usa para aprendizaje" if data.get("usable_for_learning") else "No se usa para aprendizaje"
+        header = QLabel(f"{status_text} — {learn_text}", dlg)
+        header.setFont(theme.font_md(weight=theme.W_SEMIBOLD))
+        header.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; background: transparent;")
+        lay.addWidget(header)
+
+        details_box = QGroupBox("Datos generales", dlg)
+        details_form = QFormLayout(details_box)
+        details_form.addRow("Archivo:", QLabel(data.get("ruta_excel", ""), details_box))
+        details_form.addRow("Hoja usada:", QLabel(data.get("selected_sheet", ""), details_box))
+        details_form.addRow("Número esperado:", QLabel(data.get("expected_numero", ""), details_box))
+        details_form.addRow("Número detectado:", QLabel(data.get("detected_numero", ""), details_box))
+        details_form.addRow("Score compatibilidad:", QLabel(str(int(data.get("compatible_score", 0))), details_box))
+        details_form.addRow("Partidas detectadas:", QLabel(str(int(data.get("num_partidas", 0))), details_box))
+        details_form.addRow("Total detectado:", QLabel(f"{float(data.get('total', 0.0)):.2f} €", details_box))
+        lay.addWidget(details_box)
+
+        diagnosis_box = QGroupBox("Diagnóstico", dlg)
+        diagnosis_layout = QVBoxLayout(diagnosis_box)
+        diagnosis_label = QLabel(self._status_explanation(data.get("analysis_status", "")), diagnosis_box)
+        diagnosis_label.setWordWrap(True)
+        diagnosis_layout.addWidget(diagnosis_label)
+        lay.addWidget(diagnosis_box)
+
+        issues_box = QGroupBox("Avisos / Issues", dlg)
+        issues_layout = QVBoxLayout(issues_box)
+        issues_table = QTableWidget(issues_box)
+        issues_table.setColumnCount(3)
+        issues_table.setHorizontalHeaderLabels(["Nivel", "Código", "Descripción"])
+        issues_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        issues_table.setColumnWidth(0, 100)
+        issues_table.setColumnWidth(1, 220)
+        issues_table.verticalHeader().setVisible(False)
+        issues_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        issues_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        if issues:
+            issues_table.setRowCount(len(issues))
+            for idx, issue in enumerate(issues):
+                issues_table.setItem(idx, 0, QTableWidgetItem(issue.get("severity", "")))
+                issues_table.setItem(idx, 1, QTableWidgetItem(issue.get("code", "")))
+                issues_table.setItem(idx, 2, QTableWidgetItem(issue.get("message", "")))
+        else:
+            issues_table.setRowCount(1)
+            issues_table.setItem(0, 0, QTableWidgetItem("-"))
+            issues_table.setItem(0, 1, QTableWidgetItem("-"))
+            issues_table.setItem(0, 2, QTableWidgetItem("Sin avisos registrados."))
+        issues_layout.addWidget(issues_table)
+        lay.addWidget(issues_box)
+
+        partidas_box = QGroupBox("Partidas extraídas", dlg)
+        partidas_layout = QVBoxLayout(partidas_box)
+        partidas_table = QTableWidget(partidas_box)
+        partidas_table.setColumnCount(6)
+        partidas_table.setHorizontalHeaderLabels(["Código", "Concepto", "Unidad", "Cantidad", "Precio", "Total"])
+        partidas_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        partidas_table.setColumnWidth(0, 90)
+        partidas_table.setColumnWidth(2, 90)
+        partidas_table.setColumnWidth(3, 90)
+        partidas_table.setColumnWidth(4, 90)
+        partidas_table.setColumnWidth(5, 100)
+        partidas_table.verticalHeader().setVisible(False)
+        partidas_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        partidas_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        if partidas:
+            partidas_table.setRowCount(len(partidas))
+            for idx, partida in enumerate(partidas):
+                cantidad = float(partida.get("cantidad", 0.0) or 0.0)
+                precio = float(partida.get("precio_unitario", 0.0) or 0.0)
+                total = cantidad * precio
+                partidas_table.setItem(idx, 0, QTableWidgetItem(partida.get("codigo", "")))
+                partidas_table.setItem(idx, 1, QTableWidgetItem(partida.get("concepto_original", "")))
+                partidas_table.setItem(idx, 2, QTableWidgetItem(partida.get("unidad", "")))
+                partidas_table.setItem(idx, 3, QTableWidgetItem(f"{cantidad:.2f}"))
+                partidas_table.setItem(idx, 4, QTableWidgetItem(f"{precio:.2f}"))
+                partidas_table.setItem(idx, 5, QTableWidgetItem(f"{total:.2f}"))
+        else:
+            partidas_table.setRowCount(1)
+            partidas_table.setItem(0, 0, QTableWidgetItem("-"))
+            partidas_table.setItem(0, 1, QTableWidgetItem("Sin partidas persistidas."))
+            partidas_table.setItem(0, 2, QTableWidgetItem("-"))
+            partidas_table.setItem(0, 3, QTableWidgetItem("-"))
+            partidas_table.setItem(0, 4, QTableWidgetItem("-"))
+            partidas_table.setItem(0, 5, QTableWidgetItem("-"))
+        partidas_layout.addWidget(partidas_table)
+        lay.addWidget(partidas_box, 1)
+
         actions = QHBoxLayout()
         btn_include = QPushButton("Marcar como apto manualmente", dlg)
         btn_include.clicked.connect(lambda: self._include_selected(data, dlg))
@@ -283,7 +342,7 @@ class HistoricalAnalysisResultsDialog(QDialog):
         btn_close.clicked.connect(dlg.accept)
         actions.addWidget(btn_close)
         lay.addLayout(actions)
-        theme.fit_dialog(dlg, 900, 540)
+        theme.fit_dialog(dlg, 1020, 680)
         dlg.exec()
 
     @staticmethod
