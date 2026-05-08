@@ -62,15 +62,11 @@ class HistoricalPatternBuilder:
                      AND hp.precio_unitario IS NOT NULL
                      AND hp.precio_unitario > 0
                      AND (
-                         hb.usable_for_learning = 1
+                         hb.learning_status = 'INCLUDED'
                          OR (
-                             hb.analysis_status IS NULL
-                             AND COALESCE(hb.warnings, '') NOT LIKE '%SEVERE:%'
+                             hb.learning_status IS NULL
+                             AND hb.usable_for_learning = 1
                          )
-                     )
-                     AND (
-                         hb.analysis_status IN ('VALID', 'VALID_WITH_WARNINGS')
-                         OR hb.analysis_status IS NULL
                      )
                    ORDER BY hpm.module_id, hp.concepto_normalizado"""
             )

@@ -342,8 +342,8 @@ class HistoricalAnalysisResultsDialog(QDialog):
         lay = QVBoxLayout(dlg)
 
         status_text = self._status_label(data.get("analysis_status", ""))
-        learn_text = "Sí se usa para aprendizaje" if data.get("usable_for_learning") else "No se usa para aprendizaje"
-        header = QLabel(f"{status_text} — {learn_text}", dlg)
+        memoria_text = self._memory_item_for_row(data).text().replace(" *", "")
+        header = QLabel(f"{status_text} — Memoria: {memoria_text}", dlg)
         header.setFont(theme.get_font_medium(13))
         header.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; background: transparent;")
         lay.addWidget(header)
@@ -374,7 +374,7 @@ class HistoricalAnalysisResultsDialog(QDialog):
         details_grid.addWidget(QLabel(f"Total detectado: {float(data.get('total', 0.0)):.2f} €", details_box), 2, 1)
         details_grid.addWidget(
             QLabel(
-                f"Usado para aprendizaje: {'Sí' if data.get('usable_for_learning') else 'No'}",
+                f"Memoria: {memoria_text}",
                 details_box,
             ),
             3,
@@ -485,7 +485,7 @@ class HistoricalAnalysisResultsDialog(QDialog):
     def _status_explanation(status: str) -> str:
         return {
             AnalysisStatus.VALID: "Archivo apto para aprendizaje.",
-            AnalysisStatus.VALID_WITH_WARNINGS: "Apto para aprendizaje, con avisos menores.",
+            AnalysisStatus.VALID_WITH_WARNINGS: "Archivo técnicamente aprovechable, pero pendiente de revisión manual por avisos.",
             AnalysisStatus.EXCLUDED_INCOMPLETE_DATA: "Compatible, pero excluido por calidad económica incompleta.",
             AnalysisStatus.NOT_COMPATIBLE: "No se detectó estructura compatible de presupuesto cubiApp.",
             AnalysisStatus.SKIPPED_UNCHANGED: "Sin cambios desde el último análisis.",
@@ -565,7 +565,23 @@ class HistoricalAnalysisResultsDialog(QDialog):
 
             decision = bool(self._pending_learning_decisions[budget_id])
             current = bool(data.get("usable_for_learning"))
-            if decision == current:
+            current_learning_status = (data.get("learning_status") or "").strip().upper()
+            if not current_learning_status:
+                if data.get("analysis_status") in (
+                    AnalysisStatus.EXCLUDED_INCOMPLETE_DATA,
+                    AnalysisStatus.NOT_COMPATIBLE,
+                    AnalysisStatus.READ_ERROR,
+                ):
+                    current_learning_status = "NOT_ELIGIBLE"
+                elif current:
+                    current_learning_status = "INCLUDED"
+                elif data.get("analysis_status") == AnalysisStatus.VALID_WITH_WARNINGS:
+                    current_learning_status = "PENDING_REVIEW"
+                else:
+                    current_learning_status = "EXCLUDED"
+
+            target_learning_status = "INCLUDED" if decision else "EXCLUDED"
+            if decision == current and current_learning_status == target_learning_status:
                 continue
 
             if decision:

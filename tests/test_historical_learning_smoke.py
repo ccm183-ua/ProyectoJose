@@ -12,7 +12,7 @@ from src.core.historical_pattern_builder import HistoricalPatternBuilder
 from src.core.repositories import (
     get_historical_budget_by_path,
     get_historical_budget_partidas,
-    set_historical_budget_manual_status,
+    set_historical_budget_learning_status,
 )
 from src.core.template_manager import TemplateManager
 
@@ -266,12 +266,17 @@ def test_historical_learning_smoke_flow(tmp_path, monkeypatch):
         assert patterns_albanileria_before == 0
 
     # 7: Marcar manualmente como apto => reclassify_budget_modules + reconstruye patrones
-    err = set_historical_budget_manual_status(
+    err = set_historical_budget_learning_status(
         excluded_budget_id,
-        AnalysisStatus.VALID_WITH_WARNINGS,
+        "INCLUDED",
         True,
+        decision_source="MANUAL",
+        decision_reason="Test include pending budget",
     )
     assert err is None
+    hb_excluded_after = get_historical_budget_by_path(str(excluded_path))
+    assert hb_excluded_after is not None
+    assert hb_excluded_after["analysis_status"] == AnalysisStatus.EXCLUDED_INCOMPLETE_DATA
 
     reclass_result = analyzer.reclassify_budget_modules(excluded_budget_id)
     assert reclass_result.get("ok") is True

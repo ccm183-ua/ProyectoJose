@@ -25,6 +25,9 @@ class TestHistoricalSuggestionService:
                 "fecha_modificacion_excel": datetime.now().isoformat(),
                 "fecha_analisis": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "analisis_ok": True,
+                "analysis_status": "VALID",
+                "usable_for_learning": True,
+                "learning_status": "INCLUDED",
             }
         )
         assert err is None
