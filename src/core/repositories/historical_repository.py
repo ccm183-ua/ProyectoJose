@@ -875,17 +875,25 @@ def list_historical_memory_dashboard_budgets(
         params.append(analysis_status)
 
     learning_status = (filters.get("learning_status") or "").strip()
-    technical_description_filter = (filters.get("technical_description_filter") or "").strip().upper()
-    if technical_description_filter == "WITHOUT":
+    has_technical_description = (filters.get("has_technical_description") or "").strip().upper()
+    legacy_desc_filter = (filters.get("technical_description_filter") or "").strip().upper()
+    technical_description_status = (filters.get("technical_description_status") or "").strip().upper()
+
+    desc_presence = has_technical_description or (
+        legacy_desc_filter if legacy_desc_filter in ("WITH", "WITHOUT") else ""
+    )
+    if desc_presence == "WITHOUT":
         where.append("hbe.id IS NULL")
-    elif technical_description_filter == "WITH":
+    elif desc_presence == "WITH":
         where.append("hbe.id IS NOT NULL")
-    elif technical_description_filter in ("MANUAL", "APPROVED", "PENDING_REVIEW", "REJECTED", "PENDING"):
-        if technical_description_filter == "PENDING":
+
+    status_filter = technical_description_status or legacy_desc_filter
+    if status_filter in ("MANUAL", "APPROVED", "PENDING_REVIEW", "REJECTED", "PENDING"):
+        if status_filter == "PENDING":
             where.append("COALESCE(hbe.status, '') IN ('PENDING_REVIEW', 'PENDING')")
         else:
             where.append("COALESCE(hbe.status, '') = ?")
-            params.append(technical_description_filter)
+            params.append(status_filter)
 
     if learning_status:
         where.append("hb.learning_status=?")

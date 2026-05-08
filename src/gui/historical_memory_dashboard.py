@@ -8,6 +8,8 @@ import subprocess
 import sys
 
 from PySide6.QtCore import Qt
+from PySide6.QtCore import QSettings
+from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -18,11 +20,13 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QMenu,
     QMessageBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
+    QToolButton,
     QVBoxLayout,
 )
 
@@ -61,19 +65,47 @@ class HistoricalMemoryDashboard(QDialog):
         layout.setContentsMargins(theme.SPACE_XL, theme.SPACE_XL, theme.SPACE_XL, theme.SPACE_XL)
         layout.setSpacing(theme.SPACE_SM)
 
-        layout.addWidget(theme.create_title(self, "Memoria historica", "xl"))
+        header = QHBoxLayout()
+        header_left = QVBoxLayout()
+        header_left.addWidget(theme.create_title(self, "Memoria historica", "xl"))
         subtitle = theme.create_text(
             self,
-            "Vista global de presupuestos escaneados, calidad de datos, uso en memoria y patrones.",
+            "Gestión global de presupuestos históricos y su uso en memoria.",
         )
-        layout.addWidget(subtitle)
+        header_left.addWidget(subtitle)
         self._db_path_label = theme.create_text(
             self,
             f"Base de datos: {get_db_path_as_string()}",
             muted=True,
         )
         self._db_path_label.setWordWrap(True)
-        layout.addWidget(self._db_path_label)
+        header_left.addWidget(self._db_path_label)
+        header.addLayout(header_left, 1)
+        header_actions = QHBoxLayout()
+        btn_refresh = QPushButton("Actualizar", self)
+        btn_refresh.clicked.connect(self._reload)
+        header_actions.addWidget(btn_refresh)
+        self._btn_diagnostics = QPushButton("Diagnóstico", self)
+        self._btn_diagnostics.clicked.connect(self._run_diagnostics)
+        self._btn_diagnostics.setToolTip("Comprueba incoherencias en la memoria histórica.")
+        header_actions.addWidget(self._btn_diagnostics)
+        self._btn_maintenance = QToolButton(self)
+        self._btn_maintenance.setText("Mantenimiento")
+        self._btn_maintenance.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        maintenance_menu = QMenu(self._btn_maintenance)
+        self._act_open_db_folder = QAction("Abrir carpeta BD", self)
+        self._act_open_db_folder.triggered.connect(self._open_db_folder)
+        maintenance_menu.addAction(self._act_open_db_folder)
+        self._act_rebuild_patterns = QAction("Reconstruir patrones", self)
+        self._act_rebuild_patterns.triggered.connect(self._rebuild_patterns)
+        self._act_rebuild_patterns.setToolTip(
+            "Recalcula las sugerencias históricas usando los presupuestos incluidos."
+        )
+        maintenance_menu.addAction(self._act_rebuild_patterns)
+        self._btn_maintenance.setMenu(maintenance_menu)
+        header_actions.addWidget(self._btn_maintenance)
+        header.addLayout(header_actions)
+        layout.addLayout(header)
 
         self._kpi_grid = QGridLayout()
         self._kpi_grid.setHorizontalSpacing(theme.SPACE_LG)
@@ -81,29 +113,25 @@ class HistoricalMemoryDashboard(QDialog):
         self._kpi_labels: dict[str, QLabel] = {}
         kpis = [
             ("total_budgets", "Escaneados"),
-            ("valid", "Validos"),
-            ("valid_with_warnings", "Con avisos"),
-            ("invalid", "Invalidos"),
-            ("not_compatible", "No compatibles"),
-            ("read_error", "Errores lectura"),
             ("included", "Incluidos"),
             ("pending_review", "Pendientes"),
-            ("excluded", "Excluidos"),
             ("not_eligible", "No aptos"),
-            ("historical_partidas", "Partidas"),
             ("active_patterns", "Patrones"),
-            ("patterns_with_sources", "Patrones con fuentes"),
             ("integrity_errors", "Errores integridad"),
         ]
-        for idx, (key, title) in enumerate(kpis):
+        for idx, (key, _title) in enumerate(kpis):
             label = QLabel(self)
             label.setFont(theme.font_sm())
             label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; background: transparent;")
             self._kpi_labels[key] = label
-            self._kpi_grid.addWidget(label, idx // 7, idx % 7)
+            self._kpi_grid.addWidget(label, idx // 3, idx % 3)
         layout.addLayout(self._kpi_grid)
 
         filter_row = QHBoxLayout()
+        self._search = QLineEdit(self)
+        self._search.setPlaceholderText("Buscar por archivo, obra, número, cliente o ruta")
+        self._search.textChanged.connect(self._reload)
+        filter_row.addWidget(self._search, 2)
         self._status_filter = QComboBox(self)
         self._status_filter.addItem("Estado técnico: todos", "")
         self._status_filter.addItem("Válido", AnalysisStatus.VALID)
@@ -125,8 +153,6 @@ class HistoricalMemoryDashboard(QDialog):
 
         self._technical_description_filter = QComboBox(self)
         self._technical_description_filter.addItem("Descripción: todas", "")
-        self._technical_description_filter.addItem("Sin descripción", "WITHOUT")
-        self._technical_description_filter.addItem("Con descripción", "WITH")
         self._technical_description_filter.addItem("Manual", "MANUAL")
         self._technical_description_filter.addItem("Aprobada", "APPROVED")
         self._technical_description_filter.addItem("Pendiente", "PENDING_REVIEW")
@@ -134,73 +160,88 @@ class HistoricalMemoryDashboard(QDialog):
         self._technical_description_filter.currentIndexChanged.connect(self._reload)
         filter_row.addWidget(self._technical_description_filter)
 
-        self._search = QLineEdit(self)
-        self._search.setPlaceholderText("Buscar por archivo, obra, numero o cliente")
-        self._search.textChanged.connect(self._reload)
-        filter_row.addWidget(self._search, 1)
-
         self._only_problems = QCheckBox("Solo problemas", self)
         self._only_problems.stateChanged.connect(self._reload)
         filter_row.addWidget(self._only_problems)
-        self._with_warnings = QCheckBox("Con avisos", self)
-        self._with_warnings.stateChanged.connect(self._reload)
-        filter_row.addWidget(self._with_warnings)
-        self._no_modules = QCheckBox("Sin módulos", self)
-        self._no_modules.stateChanged.connect(self._reload)
-        filter_row.addWidget(self._no_modules)
-        self._no_partidas = QCheckBox("Sin partidas", self)
-        self._no_partidas.stateChanged.connect(self._reload)
-        filter_row.addWidget(self._no_partidas)
-        self._no_related_patterns = QCheckBox("Sin patrones", self)
-        self._no_related_patterns.stateChanged.connect(self._reload)
-        filter_row.addWidget(self._no_related_patterns)
-
-        btn_refresh = QPushButton("Actualizar", self)
-        btn_refresh.clicked.connect(self._reload)
-        filter_row.addWidget(btn_refresh)
+        self._btn_toggle_advanced = QPushButton("Filtros avanzados", self)
+        self._btn_toggle_advanced.setCheckable(True)
+        self._btn_toggle_advanced.toggled.connect(self._toggle_advanced_filters)
+        filter_row.addWidget(self._btn_toggle_advanced)
         layout.addLayout(filter_row)
 
+        self._advanced_filters_box = QGroupBox("Filtros avanzados", self)
+        advanced_row = QHBoxLayout(self._advanced_filters_box)
+        self._with_warnings = QCheckBox("Con avisos", self._advanced_filters_box)
+        self._with_warnings.stateChanged.connect(self._reload)
+        advanced_row.addWidget(self._with_warnings)
+        self._no_modules = QCheckBox("Sin módulos", self._advanced_filters_box)
+        self._no_modules.stateChanged.connect(self._reload)
+        advanced_row.addWidget(self._no_modules)
+        self._no_partidas = QCheckBox("Sin partidas", self._advanced_filters_box)
+        self._no_partidas.stateChanged.connect(self._reload)
+        advanced_row.addWidget(self._no_partidas)
+        self._no_related_patterns = QCheckBox("Sin patrones", self._advanced_filters_box)
+        self._no_related_patterns.stateChanged.connect(self._reload)
+        advanced_row.addWidget(self._no_related_patterns)
+        self._without_description = QCheckBox("Sin descripción", self._advanced_filters_box)
+        self._without_description.stateChanged.connect(self._reload)
+        advanced_row.addWidget(self._without_description)
+        self._with_description = QCheckBox("Con descripción", self._advanced_filters_box)
+        self._with_description.stateChanged.connect(self._reload)
+        advanced_row.addWidget(self._with_description)
+        advanced_row.addStretch()
+        self._advanced_filters_box.setVisible(False)
+        layout.addWidget(self._advanced_filters_box)
+
         self._table = QTableWidget(self)
-        self._table.setColumnCount(13)
+        self._table.setColumnCount(16)
         self._table.setHorizontalHeaderLabels(
             [
                 "Archivo / obra",
-                "Nº presupuesto",
-                "Cliente",
-                "Total",
                 "Estado técnico",
                 "Uso en memoria",
                 "Descripción técnica",
-                "Origen descripción",
                 "Avisos",
                 "Partidas",
                 "Módulos",
-                "Patrones relacionados",
+                "Patrones",
+                "Total",
                 "Último análisis",
+                "Nº presupuesto",
+                "Cliente",
+                "Origen descripción",
+                "Ruta Excel",
+                "Hoja",
+                "Score compatibilidad",
             ]
         )
-        self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self._table.horizontalHeader().setSectionResizeMode(10, QHeaderView.ResizeMode.Stretch)
-        for col, width in {
-            1: 110,
-            2: 140,
-            3: 100,
-            4: 125,
-            5: 125,
-            6: 130,
-            7: 120,
-            8: 70,
-            9: 80,
-            11: 100,
-            12: 140,
-        }.items():
-            self._table.setColumnWidth(col, width)
+        self._optional_columns = {10, 11, 12, 13, 14, 15}
+        for col in self._optional_columns:
+            self._table.setColumnHidden(col, True)
+        header_widget = self._table.horizontalHeader()
+        header_widget.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header_widget.setStretchLastSection(False)
+        self._table.setColumnWidth(0, 320)
+        self._table.setColumnWidth(1, 120)
+        self._table.setColumnWidth(2, 120)
+        self._table.setColumnWidth(3, 130)
+        self._table.setColumnWidth(4, 70)
+        self._table.setColumnWidth(5, 80)
+        self._table.setColumnWidth(6, 170)
+        self._table.setColumnWidth(7, 90)
+        self._table.setColumnWidth(8, 100)
+        self._table.setColumnWidth(9, 140)
+        self._table.setSortingEnabled(True)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.verticalHeader().setVisible(False)
         self._table.doubleClicked.connect(self._show_detail_selected)
         self._table.itemSelectionChanged.connect(self._update_action_states)
+        self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._table.customContextMenuRequested.connect(self._show_row_context_menu)
+        header_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        header_widget.customContextMenuRequested.connect(self._show_header_context_menu)
         layout.addWidget(self._table, 1)
 
         actions = QHBoxLayout()
@@ -213,43 +254,60 @@ class HistoricalMemoryDashboard(QDialog):
         self._btn_detail = QPushButton("Ver detalle", self)
         self._btn_detail.clicked.connect(self._show_detail_selected)
         actions.addWidget(self._btn_detail)
-        self._btn_open_excel = QPushButton("Abrir Excel", self)
-        self._btn_open_excel.clicked.connect(self._open_excel_selected)
-        actions.addWidget(self._btn_open_excel)
-        self._btn_open_db = QPushButton("Abrir carpeta BD", self)
-        self._btn_open_db.clicked.connect(self._open_db_folder)
-        actions.addWidget(self._btn_open_db)
-        self._btn_include = QPushButton("Incluir en memoria", self)
-        self._btn_include.clicked.connect(self._include_selected)
-        actions.addWidget(self._btn_include)
-        self._btn_exclude = QPushButton("Excluir de memoria", self)
-        self._btn_exclude.clicked.connect(self._exclude_selected)
-        actions.addWidget(self._btn_exclude)
-        self._btn_reanalyze = QPushButton("Reanalizar", self)
-        self._btn_reanalyze.clicked.connect(self._reanalyze_selected)
-        actions.addWidget(self._btn_reanalyze)
-        self._btn_diagnostics = QPushButton("Diagnóstico", self)
-        self._btn_diagnostics.clicked.connect(self._run_diagnostics)
-        actions.addWidget(self._btn_diagnostics)
-        self._btn_rebuild_patterns = QPushButton("Reconstruir patrones", self)
-        self._btn_rebuild_patterns.clicked.connect(self._rebuild_patterns)
-        actions.addWidget(self._btn_rebuild_patterns)
         self._btn_edit_description = QPushButton("Editar descripción", self)
         self._btn_edit_description.clicked.connect(self._edit_description_selected)
         actions.addWidget(self._btn_edit_description)
+        self._btn_actions = QToolButton(self)
+        self._btn_actions.setText("Acciones ▾")
+        self._btn_actions.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._actions_menu = QMenu(self._btn_actions)
+        self._act_view_detail = QAction("Ver detalle", self)
+        self._act_view_detail.triggered.connect(self._show_detail_selected)
+        self._actions_menu.addAction(self._act_view_detail)
+        self._act_edit_description = QAction("Editar descripción", self)
+        self._act_edit_description.triggered.connect(self._edit_description_selected)
+        self._actions_menu.addAction(self._act_edit_description)
+        self._actions_menu.addSeparator()
+        self._act_open_excel = QAction("Abrir Excel", self)
+        self._act_open_excel.triggered.connect(self._open_excel_selected)
+        self._actions_menu.addAction(self._act_open_excel)
+        self._act_include = QAction("Incluir en memoria", self)
+        self._act_include.setToolTip(
+            "Permite que este presupuesto alimente los patrones históricos."
+        )
+        self._act_include.triggered.connect(self._include_selected)
+        self._actions_menu.addAction(self._act_include)
+        self._act_exclude = QAction("Excluir de memoria", self)
+        self._act_exclude.setToolTip(
+            "Impide que este presupuesto se use para generar patrones."
+        )
+        self._act_exclude.triggered.connect(self._exclude_selected)
+        self._actions_menu.addAction(self._act_exclude)
+        self._act_reanalyze = QAction("Reanalizar", self)
+        self._act_reanalyze.triggered.connect(self._reanalyze_selected)
+        self._actions_menu.addAction(self._act_reanalyze)
+        self._btn_actions.setMenu(self._actions_menu)
+        actions.addWidget(self._btn_actions)
 
         btn_close = QPushButton("Cerrar", self)
         btn_close.clicked.connect(self.accept)
         actions.addWidget(btn_close)
         layout.addLayout(actions)
+        self._restore_column_settings()
         self._update_action_states()
         theme.fit_dialog(self, 1380, 760)
 
     def _filters(self) -> dict:
+        has_description = ""
+        if self._with_description.isChecked() and not self._without_description.isChecked():
+            has_description = "WITH"
+        elif self._without_description.isChecked() and not self._with_description.isChecked():
+            has_description = "WITHOUT"
         return {
             "analysis_status": self._status_filter.currentData() or "",
             "learning_status": self._learning_filter.currentData() or "",
-            "technical_description_filter": self._technical_description_filter.currentData() or "",
+            "technical_description_status": self._technical_description_filter.currentData() or "",
+            "has_technical_description": has_description,
             "search": self._search.text().strip(),
             "only_problems": self._only_problems.isChecked(),
             "with_warnings": self._with_warnings.isChecked(),
@@ -257,6 +315,35 @@ class HistoricalMemoryDashboard(QDialog):
             "no_partidas": self._no_partidas.isChecked(),
             "no_related_patterns": self._no_related_patterns.isChecked(),
         }
+
+    def _toggle_advanced_filters(self, expanded: bool):
+        self._advanced_filters_box.setVisible(expanded)
+
+    def _show_header_context_menu(self, pos):
+        menu = QMenu(self)
+        header = self._table.horizontalHeader()
+        for col in range(self._table.columnCount()):
+            label = self._table.horizontalHeaderItem(col).text()
+            action = QAction(label, self)
+            action.setCheckable(True)
+            action.setChecked(not self._table.isColumnHidden(col))
+            action.toggled.connect(lambda checked, c=col: self._table.setColumnHidden(c, not checked))
+            menu.addAction(action)
+        menu.exec(header.mapToGlobal(pos))
+
+    def _show_row_context_menu(self, pos):
+        row = self._table.rowAt(pos.y())
+        if row >= 0:
+            self._table.selectRow(row)
+        menu = QMenu(self)
+        menu.addAction(self._act_view_detail)
+        menu.addAction(self._act_edit_description)
+        menu.addSeparator()
+        menu.addAction(self._act_open_excel)
+        menu.addAction(self._act_include)
+        menu.addAction(self._act_exclude)
+        menu.addAction(self._act_reanalyze)
+        menu.exec(self._table.viewport().mapToGlobal(pos))
 
     def _reload(self):
         self._refresh_kpis()
@@ -302,35 +389,41 @@ class HistoricalMemoryDashboard(QDialog):
             )
 
     def _populate_table(self):
+        self._table.setSortingEnabled(False)
         self._table.setRowCount(len(self._rows))
         for i, row in enumerate(self._rows):
             values = [
                 self._file_or_project(row),
-                row.get("numero_proyecto", ""),
-                row.get("cliente", ""),
-                f"{float(row.get('total', 0.0)):.2f} EUR",
                 self._status_label(row.get("analysis_status", "")),
                 self._memory_label(row),
                 self._technical_description_status_label(row),
-                self._technical_description_source_label(row),
                 str(int(row.get("warning_count", 0))),
                 str(int(row.get("num_partidas", 0))),
                 ", ".join(row.get("modules", [])),
                 str(int(row.get("related_patterns", 0))),
+                f"{float(row.get('total', 0.0)):.2f} EUR",
                 row.get("fecha_analisis", ""),
+                row.get("numero_proyecto", ""),
+                row.get("cliente", ""),
+                self._technical_description_source_label(row),
+                row.get("ruta_excel", ""),
+                row.get("selected_sheet", ""),
+                str(int(row.get("compatible_score", 0))),
             ]
             for col, value in enumerate(values):
                 item = QTableWidgetItem(value)
-                if col in (3, 8, 9, 11):
+                if col in (4, 5, 7, 8, 15):
                     item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-                if col == 4:
-                    item.setForeground(self._status_color(row.get("analysis_status", "")))
+                if col == 0:
                     item.setData(Qt.ItemDataRole.UserRole, row)
-                if col == 5:
+                if col == 1:
+                    item.setForeground(self._status_color(row.get("analysis_status", "")))
+                if col == 2:
                     item.setForeground(self._memory_color(row))
-                if col == 6:
+                if col == 3:
                     item.setForeground(self._technical_description_status_color(row))
                 self._table.setItem(i, col, item)
+        self._table.setSortingEnabled(True)
         if self._has_any_budgets:
             self._stats_lbl.setText(f"Mostrando {len(self._rows)} presupuestos")
 
@@ -347,7 +440,7 @@ class HistoricalMemoryDashboard(QDialog):
         rows = sorted({idx.row() for idx in self._table.selectionModel().selectedRows()})
         data = []
         for row_idx in rows:
-            item = self._table.item(row_idx, 4)
+            item = self._table.item(row_idx, 0)
             row = item.data(Qt.ItemDataRole.UserRole) if item else None
             if row:
                 data.append(row)
@@ -365,15 +458,16 @@ class HistoricalMemoryDashboard(QDialog):
         has_rows = bool(rows)
         single = len(rows) == 1
         self._btn_detail.setEnabled(single)
+        self._act_view_detail.setEnabled(single)
+        self._btn_edit_description.setEnabled(single and self._can_edit_technical_description(rows[0]) if single else False)
+        self._act_edit_description.setEnabled(single and self._can_edit_technical_description(rows[0]) if single else False)
         can_include = has_rows and all(self._can_be_included_in_memory(row) for row in rows)
-        self._btn_include.setEnabled(can_include)
+        self._act_include.setEnabled(can_include)
         can_exclude = has_rows and any(self._can_be_excluded_in_memory(row) for row in rows)
-        self._btn_exclude.setEnabled(can_exclude)
+        self._act_exclude.setEnabled(can_exclude)
         excel_ok = single and bool(rows[0].get("ruta_excel")) and os.path.exists(rows[0].get("ruta_excel", ""))
-        self._btn_open_excel.setEnabled(excel_ok)
-        self._btn_reanalyze.setEnabled(excel_ok)
-        can_edit_desc = single and self._can_edit_technical_description(rows[0])
-        self._btn_edit_description.setEnabled(can_edit_desc)
+        self._act_open_excel.setEnabled(excel_ok)
+        self._act_reanalyze.setEnabled(excel_ok)
 
     def _show_detail_selected(self):
         data = self._selected_row_data()
@@ -824,6 +918,27 @@ class HistoricalMemoryDashboard(QDialog):
         except (TypeError, ValueError):
             pretty = raw
         QMessageBox.information(self, "Diagnóstico técnico", pretty[:12000])
+
+    def _restore_column_settings(self):
+        settings = QSettings("cubiapp", "historical_memory_dashboard")
+        for col in range(self._table.columnCount()):
+            width = settings.value(f"column_width_{col}", type=int)
+            if isinstance(width, int) and width > 40:
+                self._table.setColumnWidth(col, width)
+            hidden = settings.value(f"column_hidden_{col}", None)
+            if hidden is not None:
+                self._table.setColumnHidden(col, str(hidden).lower() in ("1", "true", "yes"))
+
+    def _save_column_settings(self):
+        settings = QSettings("cubiapp", "historical_memory_dashboard")
+        for col in range(self._table.columnCount()):
+            settings.setValue(f"column_width_{col}", self._table.columnWidth(col))
+            settings.setValue(f"column_hidden_{col}", self._table.isColumnHidden(col))
+        settings.sync()
+
+    def closeEvent(self, event):
+        self._save_column_settings()
+        super().closeEvent(event)
 
     @staticmethod
     def _open_excel(data: dict):
