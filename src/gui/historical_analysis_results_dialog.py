@@ -32,8 +32,7 @@ from src.core.repositories import (
     get_historical_budget_issues,
     get_historical_budget_partidas,
     list_historical_budgets_by_run,
-    replace_budget_issues,
-    set_historical_budget_manual_status,
+    set_historical_budget_learning_status,
 )
 from src.gui import theme
 
@@ -264,28 +263,46 @@ class HistoricalAnalysisResultsDialog(QDialog):
     def _memory_item_for_row(self, row: dict) -> QTableWidgetItem:
         budget_id = int(row.get("id") or 0)
         status = row.get("analysis_status")
+        learning_status = (row.get("learning_status") or "").strip().upper()
         current = bool(row.get("usable_for_learning"))
-        if status == AnalysisStatus.VALID_WITH_WARNINGS and budget_id not in self._pending_learning_decisions:
-            decision = False
-        else:
-            decision = self._pending_learning_decisions.get(budget_id, current)
-        is_pending = budget_id in self._pending_learning_decisions and decision != current
-
-        if status in (AnalysisStatus.EXCLUDED_INCOMPLETE_DATA, AnalysisStatus.NOT_COMPATIBLE, AnalysisStatus.READ_ERROR):
-            label = "No apto"
-            color = theme.qcolor(theme.ERROR)
-        elif decision:
-            label = "Incluido"
-            color = theme.qcolor(theme.SUCCESS)
+        if learning_status == "INCLUDED":
+            base_label = "Incluido"
+            base_color = theme.qcolor(theme.SUCCESS)
+        elif learning_status == "PENDING_REVIEW":
+            base_label = "Pendiente"
+            base_color = theme.qcolor(theme.WARNING)
+        elif learning_status == "EXCLUDED":
+            base_label = "Excluido"
+            base_color = theme.qcolor(theme.TEXT_SECONDARY)
+        elif learning_status == "NOT_ELIGIBLE":
+            base_label = "No apto"
+            base_color = theme.qcolor(theme.ERROR)
+        elif status in (AnalysisStatus.EXCLUDED_INCOMPLETE_DATA, AnalysisStatus.NOT_COMPATIBLE, AnalysisStatus.READ_ERROR):
+            base_label = "No apto"
+            base_color = theme.qcolor(theme.ERROR)
         elif status == AnalysisStatus.VALID_WITH_WARNINGS:
-            label = "Pendiente"
-            color = theme.qcolor(theme.WARNING)
+            base_label = "Pendiente"
+            base_color = theme.qcolor(theme.WARNING)
+        elif current:
+            base_label = "Incluido"
+            base_color = theme.qcolor(theme.SUCCESS)
         else:
-            label = "Excluido"
-            color = theme.qcolor(theme.TEXT_SECONDARY)
+            base_label = "Excluido"
+            base_color = theme.qcolor(theme.TEXT_SECONDARY)
 
-        if is_pending:
-            label = f"{label} *"
+        if budget_id in self._pending_learning_decisions:
+            pending_decision = bool(self._pending_learning_decisions[budget_id])
+            if pending_decision:
+                label = "Incluido"
+                color = theme.qcolor(theme.SUCCESS)
+            else:
+                label = "Excluido"
+                color = theme.qcolor(theme.TEXT_SECONDARY)
+            if pending_decision != current:
+                label = f"{label} *"
+        else:
+            label = base_label
+            color = base_color
 
         item = QTableWidgetItem(label)
         item.setForeground(color)
@@ -552,10 +569,12 @@ class HistoricalAnalysisResultsDialog(QDialog):
                 continue
 
             if decision:
-                err = set_historical_budget_manual_status(
+                err = set_historical_budget_learning_status(
                     budget_id,
-                    AnalysisStatus.VALID_WITH_WARNINGS if status != AnalysisStatus.VALID else AnalysisStatus.VALID,
+                    "INCLUDED",
                     True,
+                    decision_source="MANUAL",
+                    decision_reason="Incluido manualmente desde revision de memoria.",
                 )
                 if err:
                     QMessageBox.warning(self, "Aplicar decisiones", err)
@@ -571,10 +590,12 @@ class HistoricalAnalysisResultsDialog(QDialog):
                 self._analyzer.reclassify_budget_modules(budget_id)
                 has_changes = True
             else:
-                err = set_historical_budget_manual_status(
+                err = set_historical_budget_learning_status(
                     budget_id,
-                    AnalysisStatus.MANUALLY_EXCLUDED,
+                    "EXCLUDED",
                     False,
+                    decision_source="MANUAL",
+                    decision_reason="Excluido manualmente desde revision de memoria.",
                 )
                 if err:
                     QMessageBox.warning(self, "Aplicar decisiones", err)
@@ -605,10 +626,12 @@ class HistoricalAnalysisResultsDialog(QDialog):
         budget_id = int(data.get("id") or 0)
         if budget_id <= 0:
             return
-        err = set_historical_budget_manual_status(
+        err = set_historical_budget_learning_status(
             budget_id,
-            AnalysisStatus.MANUALLY_EXCLUDED,
+            "EXCLUDED",
             False,
+            decision_source="MANUAL",
+            decision_reason="Excluido manualmente por usuario.",
         )
         if err:
             QMessageBox.warning(self, "Excluir", err)
@@ -646,10 +669,12 @@ class HistoricalAnalysisResultsDialog(QDialog):
                 "No se puede marcar como apto: no hay partidas con precio unitario > 0.",
             )
             return
-        err = set_historical_budget_manual_status(
+        err = set_historical_budget_learning_status(
             budget_id,
-            AnalysisStatus.VALID_WITH_WARNINGS,
+            "INCLUDED",
             True,
+            decision_source="MANUAL",
+            decision_reason="Marcado manualmente como apto para aprendizaje.",
         )
         if err:
             QMessageBox.warning(self, "Marcar como apto", err)

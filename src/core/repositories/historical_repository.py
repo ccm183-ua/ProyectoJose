@@ -68,7 +68,8 @@ def get_historical_budget_by_path(ruta_excel: str) -> Optional[Dict]:
                       num_partidas, analysis_run_id, analisis_ok, warning_count, warnings,
                       analysis_status, compatible_score, selected_sheet, selected_sheet_index,
                       expected_numero, detected_numero, numero_matches, usable_for_learning,
-                      header_score, partida_score, error
+                      learning_status, learning_status_source, learning_decision_reason,
+                      learning_decision_at, header_score, partida_score, error
                FROM historical_budget WHERE ruta_excel=?""",
             (ruta,),
         )
@@ -103,9 +104,13 @@ def get_historical_budget_by_path(ruta_excel: str) -> Optional[Dict]:
         "detected_numero": row[24] or "",
         "numero_matches": bool(row[25]),
         "usable_for_learning": bool(row[26]),
-        "header_score": int(row[27] or 0),
-        "partida_score": int(row[28] or 0),
-        "error": row[29] or "",
+        "learning_status": row[27] or "",
+        "learning_status_source": row[28] or "",
+        "learning_decision_reason": row[29] or "",
+        "learning_decision_at": row[30] or "",
+        "header_score": int(row[31] or 0),
+        "partida_score": int(row[32] or 0),
+        "error": row[33] or "",
     }
 
 
@@ -123,9 +128,10 @@ def upsert_historical_budget(data: Dict) -> Tuple[Optional[int], Optional[str]]:
                     fecha_presupuesto, fecha_modificacion_excel, fecha_analisis, num_partidas,
                     analysis_run_id, analisis_ok, warning_count, warnings, analysis_status,
                     compatible_score, selected_sheet, selected_sheet_index, expected_numero,
-                    detected_numero, numero_matches, usable_for_learning, header_score,
-                    partida_score, error)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    detected_numero, numero_matches, usable_for_learning, learning_status,
+                    learning_status_source, learning_decision_reason, learning_decision_at,
+                    header_score, partida_score, error)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(ruta_excel) DO UPDATE SET
                        ruta_carpeta=excluded.ruta_carpeta,
                        numero_proyecto=excluded.numero_proyecto,
@@ -152,6 +158,10 @@ def upsert_historical_budget(data: Dict) -> Tuple[Optional[int], Optional[str]]:
                        detected_numero=excluded.detected_numero,
                        numero_matches=excluded.numero_matches,
                        usable_for_learning=excluded.usable_for_learning,
+                       learning_status=excluded.learning_status,
+                       learning_status_source=excluded.learning_status_source,
+                       learning_decision_reason=excluded.learning_decision_reason,
+                       learning_decision_at=excluded.learning_decision_at,
                        header_score=excluded.header_score,
                        partida_score=excluded.partida_score,
                        error=excluded.error
@@ -183,6 +193,10 @@ def upsert_historical_budget(data: Dict) -> Tuple[Optional[int], Optional[str]]:
                     (data.get("detected_numero") or "").strip() or None,
                     1 if data.get("numero_matches") else 0,
                     1 if data.get("usable_for_learning") else 0,
+                    (data.get("learning_status") or "").strip() or None,
+                    (data.get("learning_status_source") or "").strip() or None,
+                    (data.get("learning_decision_reason") or "").strip() or None,
+                    (data.get("learning_decision_at") or "").strip() or None,
                     int(data.get("header_score", 0)),
                     int(data.get("partida_score", 0)),
                     (data.get("error") or "").strip() or None,
@@ -439,7 +453,9 @@ def list_historical_budgets_by_run(analysis_run_id: int) -> List[Dict]:
         cur = conn.execute(
             """SELECT id, ruta_excel, numero_proyecto, total, num_partidas, warning_count,
                       analysis_status, selected_sheet, expected_numero, detected_numero,
-                      numero_matches, usable_for_learning, compatible_score
+                      numero_matches, usable_for_learning, compatible_score,
+                      learning_status, learning_status_source, learning_decision_reason,
+                      learning_decision_at
                FROM historical_budget
                WHERE analysis_run_id=?
                ORDER BY ruta_excel ASC""",
@@ -461,6 +477,10 @@ def list_historical_budgets_by_run(analysis_run_id: int) -> List[Dict]:
             "numero_matches": bool(r[10]),
             "usable_for_learning": bool(r[11]),
             "compatible_score": int(r[12] or 0),
+            "learning_status": r[13] or "",
+            "learning_status_source": r[14] or "",
+            "learning_decision_reason": r[15] or "",
+            "learning_decision_at": r[16] or "",
         }
         for r in rows
     ]
@@ -528,6 +548,41 @@ def set_historical_budget_manual_status(
                    WHERE id=?""",
                 (
                     (analysis_status or "").strip() or None,
+                    1 if usable_for_learning else 0,
+                    _now_str(),
+                    historical_budget_id,
+                ),
+            )
+            conn.commit()
+            return None
+        except sqlite3.OperationalError as e:
+            conn.rollback()
+            return f"Error de base de datos: {e.args[0] if e.args else 'desconocido'}."
+
+
+def set_historical_budget_learning_status(
+    historical_budget_id: int,
+    learning_status: str,
+    usable_for_learning: bool,
+    decision_source: str = "MANUAL",
+    decision_reason: str = "",
+) -> Optional[str]:
+    with database.get_connection() as conn:
+        try:
+            conn.execute(
+                """UPDATE historical_budget
+                   SET learning_status=?,
+                       learning_status_source=?,
+                       learning_decision_reason=?,
+                       learning_decision_at=?,
+                       usable_for_learning=?,
+                       fecha_analisis=?
+                   WHERE id=?""",
+                (
+                    (learning_status or "").strip() or None,
+                    (decision_source or "").strip() or None,
+                    (decision_reason or "").strip() or None,
+                    _now_str(),
                     1 if usable_for_learning else 0,
                     _now_str(),
                     historical_budget_id,

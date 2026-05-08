@@ -231,6 +231,10 @@ class HistoricalBudgetAnalyzer:
                     "detected_numero": probe_result.get("detected_numero") or "",
                     "numero_matches": bool(probe_result.get("numero_matches")),
                     "usable_for_learning": False,
+                    "learning_status": "NOT_ELIGIBLE",
+                    "learning_status_source": "AUTO",
+                    "learning_decision_reason": "Archivo no compatible con estructura de presupuesto.",
+                    "learning_decision_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     "header_score": int(probe_result.get("header_score") or 0),
                     "partida_score": int(probe_result.get("partida_score") or 0),
                     "error": "",
@@ -295,6 +299,10 @@ class HistoricalBudgetAnalyzer:
                 "detected_numero": detected_numero,
                 "numero_matches": numero_matches,
                 "usable_for_learning": True,
+                "learning_status": "INCLUDED",
+                "learning_status_source": "AUTO",
+                "learning_decision_reason": "Presupuesto valido para aprendizaje.",
+                "learning_decision_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "header_score": int(probe_result.get("header_score") or 0),
                 "partida_score": int(probe_result.get("partida_score") or 0),
                 "error": "",
@@ -310,10 +318,18 @@ class HistoricalBudgetAnalyzer:
             if quality.get("has_severe"):
                 budget_payload["analysis_status"] = AnalysisStatus.EXCLUDED_INCOMPLETE_DATA
                 budget_payload["usable_for_learning"] = False
+                budget_payload["learning_status"] = "NOT_ELIGIBLE"
+                budget_payload["learning_status_source"] = "AUTO"
+                budget_payload["learning_decision_reason"] = "Datos economicos incompletos o invalidos."
+                budget_payload["learning_decision_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             elif quality.get("has_warn"):
                 budget_payload["analysis_status"] = AnalysisStatus.VALID_WITH_WARNINGS
                 # Los presupuestos con avisos quedan pendientes de aprobacion manual.
                 budget_payload["usable_for_learning"] = False
+                budget_payload["learning_status"] = "PENDING_REVIEW"
+                budget_payload["learning_status_source"] = "AUTO"
+                budget_payload["learning_decision_reason"] = "Requiere revision manual por avisos."
+                budget_payload["learning_decision_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
             all_warnings = [f"WARN:{w}" for w in warnings] + [f"SEVERE:{w}" for w in severe_warnings]
             if all_warnings:
@@ -388,6 +404,10 @@ class HistoricalBudgetAnalyzer:
                 "analisis_ok": False,
                 "analysis_status": AnalysisStatus.READ_ERROR,
                 "usable_for_learning": False,
+                "learning_status": "NOT_ELIGIBLE",
+                "learning_status_source": "AUTO",
+                "learning_decision_reason": "Error de lectura durante el analisis.",
+                "learning_decision_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "error": str(exc),
             }
             budget_id, _ = upsert_historical_budget(error_payload)

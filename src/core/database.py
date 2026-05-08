@@ -124,6 +124,7 @@ def init_schema(conn: sqlite3.Connection) -> None:
     _migrate_historical_budget_warnings(conn)
     _migrate_historical_budget_status(conn)
     _migrate_historical_budget_probe_scores(conn)
+    _migrate_historical_budget_learning_status(conn)
     _seed_execution_modules(conn)
 
 
@@ -197,6 +198,21 @@ def _migrate_historical_budget_probe_scores(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE historical_budget ADD COLUMN header_score INTEGER DEFAULT 0")
     if "partida_score" not in columns:
         conn.execute("ALTER TABLE historical_budget ADD COLUMN partida_score INTEGER DEFAULT 0")
+    conn.commit()
+
+
+def _migrate_historical_budget_learning_status(conn: sqlite3.Connection) -> None:
+    """Añade columnas de estado de aprendizaje y trazabilidad de decisión."""
+    cur = conn.execute("PRAGMA table_info(historical_budget)")
+    columns = [row[1] for row in cur.fetchall()]
+    if "learning_status" not in columns:
+        conn.execute("ALTER TABLE historical_budget ADD COLUMN learning_status TEXT")
+    if "learning_status_source" not in columns:
+        conn.execute("ALTER TABLE historical_budget ADD COLUMN learning_status_source TEXT")
+    if "learning_decision_reason" not in columns:
+        conn.execute("ALTER TABLE historical_budget ADD COLUMN learning_decision_reason TEXT")
+    if "learning_decision_at" not in columns:
+        conn.execute("ALTER TABLE historical_budget ADD COLUMN learning_decision_at TEXT")
     conn.commit()
 
 
@@ -350,6 +366,10 @@ CREATE TABLE IF NOT EXISTS historical_budget (
     detected_numero TEXT,
     numero_matches INTEGER DEFAULT 0,
     usable_for_learning INTEGER DEFAULT 0,
+    learning_status TEXT,
+    learning_status_source TEXT,
+    learning_decision_reason TEXT,
+    learning_decision_at TEXT,
     header_score INTEGER DEFAULT 0,
     partida_score INTEGER DEFAULT 0,
     error TEXT
