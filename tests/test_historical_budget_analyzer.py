@@ -4,6 +4,7 @@ Tests del analizador de presupuestos históricos.
 
 import json
 from datetime import datetime
+from pathlib import Path
 
 from src.core.historical_budget_analyzer import HistoricalBudgetAnalyzer
 from src.core import database
@@ -130,3 +131,81 @@ class TestHistoricalBudgetAnalyzer:
         diagnostics = json.loads(stored["probe_diagnostics_json"])
         assert diagnostics["is_compatible"] is True
         assert diagnostics["score"] == 24
+
+    def test_analyzer_safe_json_dumps_handles_non_serializable_probe_values(self, tmp_path, monkeypatch):
+        db_path = tmp_path / "datos_historical_nonserializable_probe.db"
+        monkeypatch.setenv("CUBIAPP_DB_PATH", str(db_path))
+        with database.get_connection() as _conn:
+            pass
+
+        excel_path = tmp_path / "demo_nonserializable_probe.xlsx"
+        excel_path.write_text("placeholder", encoding="utf-8")
+
+        analyzer = HistoricalBudgetAnalyzer()
+        monkeypatch.setattr(
+            analyzer.probe,
+            "probe",
+            lambda *_args, **_kwargs: {
+                "is_compatible": True,
+                "score": 18,
+                "issues": [],
+                "source_path": Path(excel_path),
+            },
+        )
+        monkeypatch.setattr(
+            analyzer.reader,
+            "read",
+            lambda *_args, **_kwargs: {
+                "cabecera": {"numero": "001-26", "obra": "Reparacion bajante", "fecha": "2026-01-01", "cliente": "Test"},
+                "partidas": [
+                    {"numero": "1.1", "concepto": "Desmontaje bajante", "unidad": "ml", "cantidad": 1, "precio": 10, "importe": 10}
+                ],
+                "total": 10.0,
+                "diagnostics": {},
+            },
+        )
+
+        result = analyzer.analyze_budget(str(excel_path), force_reanalyze=True)
+        assert result["status"] == "processed"
+
+        stored = get_historical_budget_by_path(str(excel_path))
+        assert stored is not None
+        diagnostics = json.loads(stored["probe_diagnostics_json"])
+        assert diagnostics["source_path"].endswith("demo_nonserializable_probe.xlsx")
+
+    def test_analyzer_keeps_probe_diagnostics_on_reader_error(self, tmp_path, monkeypatch):
+        db_path = tmp_path / "datos_historical_reader_error_probe_diag.db"
+        monkeypatch.setenv("CUBIAPP_DB_PATH", str(db_path))
+        with database.get_connection() as _conn:
+            pass
+
+        excel_path = tmp_path / "demo_reader_error_probe_diag.xlsx"
+        excel_path.write_text("placeholder", encoding="utf-8")
+
+        analyzer = HistoricalBudgetAnalyzer()
+        monkeypatch.setattr(
+            analyzer.probe,
+            "probe",
+            lambda *_args, **_kwargs: {
+                "is_compatible": True,
+                "score": 20,
+                "issues": [],
+                "selected_sheet": "PTO",
+            },
+        )
+        monkeypatch.setattr(
+            analyzer.reader,
+            "read",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("reader boom")),
+        )
+
+        result = analyzer.analyze_budget(str(excel_path), force_reanalyze=True)
+        assert result["status"] == "error"
+
+        stored = get_historical_budget_by_path(str(excel_path))
+        assert stored is not None
+        assert stored["analysis_status"] == "READ_ERROR"
+        assert stored["probe_diagnostics_json"]
+        diagnostics = json.loads(stored["probe_diagnostics_json"])
+        assert diagnostics["is_compatible"] is True
+        assert diagnostics["selected_sheet"] == "PTO"
