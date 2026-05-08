@@ -17,6 +17,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.core.historical_context import (
+    build_initial_historical_context,
+    is_generic_historical_context,
+    is_useful_historical_context,
+)
 from src.gui import theme
 
 
@@ -38,6 +43,95 @@ _FAILURE_HELP = {
         "Añade materiales, zona, alcance o elementos afectados para intentar cruzar mejor con la memoria.",
     ),
 }
+
+
+class HistoricalSuggestionDescriptionDialog(QDialog):
+    """Pide confirmar contexto antes de buscar sugerencias historicas."""
+
+    def __init__(self, parent, project_data: dict | None = None):
+        super().__init__(parent)
+        self.setWindowTitle("Describir trabajo para buscar en memoria")
+        self._project_data = project_data or {}
+        self._confirmed_context = ""
+        self._search_requested = False
+        self._build_ui()
+
+    def _build_ui(self):
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(theme.SPACE_XL, theme.SPACE_XL, theme.SPACE_XL, theme.SPACE_XL)
+        lay.setSpacing(theme.SPACE_SM)
+
+        title = theme.create_title(self, "Describir trabajo para buscar en memoria", "lg")
+        lay.addWidget(title)
+
+        initial_context = build_initial_historical_context(self._project_data)
+        intro = QLabel(
+            "Describe qué se va a ejecutar, dónde y sobre qué elemento. "
+            "Ejemplo: Reparación de bajante en patio interior con sustitución de PVC y cierre de rozas.",
+            self,
+        )
+        intro.setWordWrap(True)
+        intro.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; background: transparent;")
+        lay.addWidget(intro)
+
+        if initial_context:
+            proposed = QLabel(f"Descripción inicial propuesta:\n{initial_context}", self)
+        else:
+            proposed = QLabel("Descripción inicial propuesta:\n-", self)
+        proposed.setWordWrap(True)
+        proposed.setStyleSheet(f"color: {theme.TEXT_MUTED}; background: transparent;")
+        lay.addWidget(proposed)
+
+        self._generic_warning = QLabel(
+            "La descripción inicial parece demasiado genérica. Añade zona, elemento y trabajo a ejecutar.",
+            self,
+        )
+        self._generic_warning.setWordWrap(True)
+        self._generic_warning.setStyleSheet(f"color: {theme.WARNING}; background: transparent;")
+        self._generic_warning.setVisible(is_generic_historical_context(initial_context))
+        lay.addWidget(self._generic_warning)
+
+        self._context_edit = QTextEdit(self)
+        self._context_edit.setPlaceholderText("Ejemplo: Reparación de bajante en patio interior con sustitución de PVC")
+        self._context_edit.setMinimumHeight(150)
+        self._context_edit.setPlainText(initial_context)
+        lay.addWidget(self._context_edit, 1)
+
+        actions = QHBoxLayout()
+        actions.addStretch()
+        btn_continue = QPushButton("Continuar sin sugerencias", self)
+        btn_continue.clicked.connect(self._on_continue_without)
+        actions.addWidget(btn_continue)
+        btn_search = QPushButton("Buscar en memoria", self)
+        btn_search.setProperty("class", "primary")
+        btn_search.clicked.connect(self._on_search)
+        actions.addWidget(btn_search)
+        lay.addLayout(actions)
+        self.resize(820, 460)
+
+    def _on_search(self):
+        context = self._context_edit.toPlainText().strip()
+        if not is_useful_historical_context(context):
+            QMessageBox.warning(
+                self,
+                "Descripción insuficiente",
+                "La descripción es demasiado breve o genérica. Añade zona, elemento y trabajo a ejecutar.",
+            )
+            return
+        self._confirmed_context = context
+        self._search_requested = True
+        self.accept()
+
+    def _on_continue_without(self):
+        self._confirmed_context = ""
+        self._search_requested = False
+        self.reject()
+
+    def get_confirmed_context(self) -> str:
+        return self._confirmed_context
+
+    def wants_search(self) -> bool:
+        return self._search_requested
 
 
 class HistoricalSuggestionContextDialog(QDialog):

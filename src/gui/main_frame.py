@@ -13,9 +13,13 @@ from PySide6.QtWidgets import (
 )
 
 from src.core import database as db_module
+from src.core.historical_context import request_historical_suggestions_for_context
 from src.core.services import BudgetService, DatabaseService
 from src.gui import theme
-from src.gui.historical_suggestions_dialog import HistoricalSuggestionContextDialog
+from src.gui.historical_suggestions_dialog import (
+    HistoricalSuggestionContextDialog,
+    HistoricalSuggestionDescriptionDialog,
+)
 
 
 class MainFrame(QMainWindow):
@@ -364,7 +368,12 @@ class MainFrame(QMainWindow):
             )
 
     def _offer_partidas(self, excel_path, project_data):
-        historical_result = self._try_historical_suggestions(project_data)
+        confirmed_context = self._request_historical_context(project_data)
+        if confirmed_context is None:
+            self._offer_ai_partidas(excel_path, project_data)
+            return
+
+        historical_result = self._try_historical_suggestions(project_data, confirmed_context)
         if historical_result and self._should_offer_context_retry(historical_result):
             retried = self._retry_historical_with_manual_context(project_data, historical_result)
             if retried is not None:
@@ -463,13 +472,19 @@ class MainFrame(QMainWindow):
             )
         return fresh
 
-    @staticmethod
-    def _try_historical_suggestions(project_data):
-        try:
-            from src.core.historical_suggestion_service import HistoricalSuggestionService
+    def _request_historical_context(self, project_data: dict) -> str | None:
+        dlg = HistoricalSuggestionDescriptionDialog(self, project_data or {})
+        if dlg.exec() != 1 or not dlg.wants_search():
+            return None
+        return dlg.get_confirmed_context()
 
-            service = HistoricalSuggestionService()
-            return service.suggest_for_project(project_data or {})
+    @staticmethod
+    def _try_historical_suggestions(project_data, confirmed_context: str = ""):
+        try:
+            return request_historical_suggestions_for_context(
+                project_data or {},
+                confirmed_context,
+            )
         except Exception:
             return None
 
