@@ -72,6 +72,8 @@ class TestHistoricalSuggestionService:
             "precio_unitario",
         }
         assert expected_keys.issubset(partida.keys())
+        assert "pattern_build_run" in partida
+        assert "pattern_source" in partida
 
     def test_stats_exclude_severe_warning_budgets(self, tmp_path, monkeypatch):
         monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "datos_suggestion_severe.db"))

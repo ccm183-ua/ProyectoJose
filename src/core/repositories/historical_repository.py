@@ -365,7 +365,7 @@ def get_suggestion_patterns_by_modules(module_names: List[str]) -> List[Dict]:
             f"""SELECT spp.id, em.nombre, spp.concepto_normalizado, spp.titulo_sugerido,
                        spp.descripcion_sugerida, spp.unidad_habitual, spp.precio_unitario_medio,
                        spp.precio_unitario_mediana, spp.precio_unitario_min, spp.precio_unitario_max,
-                       spp.frecuencia, spp.confianza
+                       spp.frecuencia, spp.confianza, spp.pattern_build_run, spp.pattern_source
                 FROM suggested_partida_pattern spp
                 JOIN execution_module em ON em.id = spp.module_id
                 WHERE em.nombre IN ({placeholders}) AND spp.activo = 1
@@ -388,6 +388,8 @@ def get_suggestion_patterns_by_modules(module_names: List[str]) -> List[Dict]:
             "precio_unitario_max": r[9],
             "frecuencia": int(r[10] or 0),
             "confianza": float(r[11] or 0),
+            "pattern_build_run": r[12] or "",
+            "pattern_source": r[13] or "",
         }
         for r in rows
     ]

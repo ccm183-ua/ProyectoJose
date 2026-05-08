@@ -126,6 +126,7 @@ def init_schema(conn: sqlite3.Connection) -> None:
     _migrate_historical_budget_probe_scores(conn)
     _migrate_historical_budget_learning_status(conn)
     _migrate_historical_budget_analysis_versioning(conn)
+    _migrate_suggested_pattern_traceability(conn)
     _seed_execution_modules(conn)
 
 
@@ -233,6 +234,17 @@ def _migrate_historical_budget_analysis_versioning(conn: sqlite3.Connection) -> 
         conn.execute("ALTER TABLE historical_budget ADD COLUMN classifier_version TEXT")
     if "probe_diagnostics_json" not in columns:
         conn.execute("ALTER TABLE historical_budget ADD COLUMN probe_diagnostics_json TEXT")
+    conn.commit()
+
+
+def _migrate_suggested_pattern_traceability(conn: sqlite3.Connection) -> None:
+    """Añade trazabilidad de construcción en suggested_partida_pattern."""
+    cur = conn.execute("PRAGMA table_info(suggested_partida_pattern)")
+    columns = [row[1] for row in cur.fetchall()]
+    if "pattern_build_run" not in columns:
+        conn.execute("ALTER TABLE suggested_partida_pattern ADD COLUMN pattern_build_run TEXT")
+    if "pattern_source" not in columns:
+        conn.execute("ALTER TABLE suggested_partida_pattern ADD COLUMN pattern_source TEXT")
     conn.commit()
 
 
@@ -493,6 +505,8 @@ CREATE TABLE IF NOT EXISTS suggested_partida_pattern (
     precio_unitario_max REAL,
     frecuencia INTEGER DEFAULT 0,
     confianza REAL DEFAULT 0,
+    pattern_build_run TEXT,
+    pattern_source TEXT,
     activo INTEGER DEFAULT 1
 );
 

@@ -115,6 +115,8 @@ class HistoricalSuggestionService:
             "precio_min": float(pattern.get("precio_unitario_min") or 0.0),
             "precio_max": float(pattern.get("precio_unitario_max") or 0.0),
             "precio_mediana": float(pattern.get("precio_unitario_mediana") or 0.0),
+            "pattern_build_run": pattern.get("pattern_build_run") or "",
+            "pattern_source": pattern.get("pattern_source") or "",
         }
 
     @staticmethod

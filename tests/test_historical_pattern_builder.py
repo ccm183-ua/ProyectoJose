@@ -55,11 +55,13 @@ class TestHistoricalPatternBuilder:
 
         result = HistoricalPatternBuilder().rebuild_patterns()
         assert result["patterns_inserted"] >= 1
+        assert result["pattern_build_run"].startswith("pattern_build_")
+        assert result["pattern_source"] == HistoricalPatternBuilder.PATTERN_SOURCE
 
         with database.get_connection(read_only=True) as conn:
             cur = conn.execute(
                 """SELECT precio_unitario_medio, precio_unitario_mediana, precio_unitario_min,
-                          precio_unitario_max, frecuencia, confianza
+                          precio_unitario_max, frecuencia, confianza, pattern_build_run, pattern_source
                    FROM suggested_partida_pattern
                    WHERE module_id = ? AND concepto_normalizado = ?""",
                 (module_id, "desmontaje bajante existente"),
@@ -73,6 +75,8 @@ class TestHistoricalPatternBuilder:
         assert row[3] == 30.0
         assert row[4] == 3
         assert row[5] == 0.3
+        assert row[6].startswith("pattern_build_")
+        assert row[7] == HistoricalPatternBuilder.PATTERN_SOURCE
 
     def test_rebuild_patterns_uses_included_and_ignores_pending_review(self, tmp_path, monkeypatch):
         monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "datos_pattern_filter_test.db"))
@@ -143,10 +147,12 @@ class TestHistoricalPatternBuilder:
 
         result = HistoricalPatternBuilder().rebuild_patterns()
         assert result["patterns_inserted"] >= 1
+        assert result["pattern_build_run"].startswith("pattern_build_")
+        assert result["pattern_source"] == HistoricalPatternBuilder.PATTERN_SOURCE
 
         with database.get_connection(read_only=True) as conn:
             cur = conn.execute(
-                """SELECT precio_unitario_medio, frecuencia
+                """SELECT precio_unitario_medio, frecuencia, pattern_build_run, pattern_source
                    FROM suggested_partida_pattern
                    WHERE module_id=? AND concepto_normalizado=?""",
                 (module_id, "desmontaje bajante existente"),
@@ -157,3 +163,5 @@ class TestHistoricalPatternBuilder:
         # Debe usar solo el presupuesto INCLUDED (10.0), ignorando PENDING_REVIEW (100.0)
         assert row[0] == 10.0
         assert row[1] == 1
+        assert row[2].startswith("pattern_build_")
+        assert row[3] == HistoricalPatternBuilder.PATTERN_SOURCE
