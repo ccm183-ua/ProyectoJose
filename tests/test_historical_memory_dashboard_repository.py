@@ -144,3 +144,89 @@ def test_memory_dashboard_filters_only_problems_and_learning_status(tmp_path, mo
     pending_rows = list_historical_memory_dashboard_budgets({"learning_status": "PENDING_REVIEW"})
     assert len(pending_rows) == 1
     assert pending_rows[0]["id"] == pending_id
+
+
+def test_memory_dashboard_combined_filters_and_empty_relations(tmp_path, monkeypatch):
+    monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "memory_dashboard_combined.db"))
+    with database.get_connection() as _conn:
+        pass
+
+    included_id = _budget(tmp_path, "incluido.xlsx")
+    warning_id = _budget(
+        tmp_path,
+        "warning_sin_modulos.xlsx",
+        analysis_status="VALID_WITH_WARNINGS",
+        learning_status="PENDING_REVIEW",
+        usable_for_learning=False,
+        warning_count=2,
+        num_partidas=0,
+    )
+
+    module_id, err = get_or_create_execution_module("estructura")
+    assert err is None
+    partida_id, partida_err = insert_historical_partida(
+        included_id,
+        {
+            "orden": 1,
+            "codigo": "01",
+            "concepto_original": "Refuerzo estructural",
+            "concepto_normalizado": "refuerzo estructural",
+            "unidad": "ud",
+            "cantidad": 1,
+            "precio_unitario": 200.0,
+            "total_linea": 200.0,
+        },
+    )
+    assert partida_err is None
+    assert assign_partida_module(partida_id, module_id, 0.9, "rules") is None
+
+    with database.get_connection() as conn:
+        pattern_id = conn.execute(
+            """INSERT INTO suggested_partida_pattern
+               (module_id, concepto_normalizado, titulo_sugerido, unidad_habitual,
+                precio_unitario_medio, precio_unitario_mediana, precio_unitario_min,
+                precio_unitario_max, frecuencia, confianza, pattern_build_run,
+                pattern_source, activo)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)""",
+            (
+                module_id,
+                "refuerzo estructural",
+                "Refuerzo estructural",
+                "ud",
+                200.0,
+                200.0,
+                200.0,
+                200.0,
+                3,
+                0.85,
+                "run_test_2",
+                "historical",
+            ),
+        ).lastrowid
+        conn.execute(
+            """INSERT INTO suggested_partida_pattern_source
+               (pattern_id, historical_partida_id, historical_budget_id,
+                precio_unitario, total_linea, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (pattern_id, partida_id, included_id, 200.0, 200.0, datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        )
+        conn.commit()
+
+    combined = list_historical_memory_dashboard_budgets(
+        {
+            "analysis_status": "VALID_WITH_WARNINGS",
+            "learning_status": "PENDING_REVIEW",
+            "with_warnings": True,
+            "no_modules": True,
+            "no_partidas": True,
+            "no_related_patterns": True,
+        }
+    )
+    assert len(combined) == 1
+    assert combined[0]["id"] == warning_id
+    assert combined[0]["module_count"] == 0
+    assert combined[0]["persisted_partidas"] == 0
+    assert combined[0]["related_patterns"] == 0
+
+    no_patterns_rows = list_historical_memory_dashboard_budgets({"no_related_patterns": True})
+    assert {row["id"] for row in no_patterns_rows} == {warning_id}

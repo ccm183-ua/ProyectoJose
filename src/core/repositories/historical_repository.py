@@ -741,6 +741,7 @@ def list_historical_memory_dashboard_budgets(
     filters = filters or {}
     safe_limit = max(1, min(int(limit or 1000), 5000))
     where = []
+    having = []
     params: List[object] = []
 
     analysis_status = (filters.get("analysis_status") or "").strip()
@@ -772,8 +773,17 @@ def list_historical_memory_dashboard_budgets(
                 OR hb.learning_status IS NULL
                 OR hb.learning_status='')"""
         )
+    if filters.get("with_warnings"):
+        where.append("COALESCE(hb.warning_count, 0) > 0")
 
     where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+    if filters.get("no_modules"):
+        having.append("COUNT(DISTINCT em.id)=0")
+    if filters.get("no_partidas"):
+        having.append("(COUNT(DISTINCT hp.id)=0 OR COALESCE(hb.num_partidas,0)=0)")
+    if filters.get("no_related_patterns"):
+        having.append("COUNT(DISTINCT spp.id)=0")
+    having_sql = f"HAVING {' AND '.join(having)}" if having else ""
     params.append(safe_limit)
     with database.get_connection(read_only=True) as conn:
         cur = conn.execute(
@@ -792,7 +802,10 @@ def list_historical_memory_dashboard_budgets(
                     hb.fecha_analisis,
                     hb.selected_sheet,
                     hb.compatible_score,
+                    hb.probe_diagnostics_json,
                     COALESCE(GROUP_CONCAT(DISTINCT em.nombre), '') AS modules,
+                    COUNT(DISTINCT em.id) AS module_count,
+                    COUNT(DISTINCT hp.id) AS persisted_partidas,
                     COUNT(DISTINCT spp.id) AS related_patterns
                FROM historical_budget hb
                LEFT JOIN historical_partida hp ON hp.historical_budget_id = hb.id
@@ -802,6 +815,7 @@ def list_historical_memory_dashboard_budgets(
                LEFT JOIN suggested_partida_pattern spp ON spp.id = spps.pattern_id AND spp.activo = 1
                {where_sql}
                GROUP BY hb.id
+               {having_sql}
                ORDER BY hb.fecha_analisis DESC, hb.ruta_excel ASC
                LIMIT ?""",
             tuple(params),
@@ -823,8 +837,11 @@ def list_historical_memory_dashboard_budgets(
             "fecha_analisis": r[11] or "",
             "selected_sheet": r[12] or "",
             "compatible_score": int(r[13] or 0),
-            "modules": [m for m in (r[14] or "").split(",") if m],
-            "related_patterns": int(r[15] or 0),
+            "probe_diagnostics_json": r[14] or "",
+            "modules": [m for m in (r[15] or "").split(",") if m],
+            "module_count": int(r[16] or 0),
+            "persisted_partidas": int(r[17] or 0),
+            "related_patterns": int(r[18] or 0),
         }
         for r in rows
     ]

@@ -2,6 +2,7 @@
 Panel global de memoria historica.
 """
 
+import json
 import os
 import subprocess
 import sys
@@ -100,12 +101,12 @@ class HistoricalMemoryDashboard(QDialog):
 
         filter_row = QHBoxLayout()
         self._status_filter = QComboBox(self)
-        self._status_filter.addItem("Estado tecnico: todos", "")
-        self._status_filter.addItem("Valido", AnalysisStatus.VALID)
-        self._status_filter.addItem("Valido con avisos", AnalysisStatus.VALID_WITH_WARNINGS)
-        self._status_filter.addItem("Invalido", AnalysisStatus.EXCLUDED_INCOMPLETE_DATA)
+        self._status_filter.addItem("Estado técnico: todos", "")
+        self._status_filter.addItem("Válido", AnalysisStatus.VALID)
+        self._status_filter.addItem("Revisar", AnalysisStatus.VALID_WITH_WARNINGS)
+        self._status_filter.addItem("Inválido", AnalysisStatus.EXCLUDED_INCOMPLETE_DATA)
         self._status_filter.addItem("No compatible", AnalysisStatus.NOT_COMPATIBLE)
-        self._status_filter.addItem("Error lectura", AnalysisStatus.READ_ERROR)
+        self._status_filter.addItem("Error de lectura", AnalysisStatus.READ_ERROR)
         self._status_filter.currentIndexChanged.connect(self._reload)
         filter_row.addWidget(self._status_filter)
 
@@ -126,6 +127,18 @@ class HistoricalMemoryDashboard(QDialog):
         self._only_problems = QCheckBox("Solo problemas", self)
         self._only_problems.stateChanged.connect(self._reload)
         filter_row.addWidget(self._only_problems)
+        self._with_warnings = QCheckBox("Con avisos", self)
+        self._with_warnings.stateChanged.connect(self._reload)
+        filter_row.addWidget(self._with_warnings)
+        self._no_modules = QCheckBox("Sin módulos", self)
+        self._no_modules.stateChanged.connect(self._reload)
+        filter_row.addWidget(self._no_modules)
+        self._no_partidas = QCheckBox("Sin partidas", self)
+        self._no_partidas.stateChanged.connect(self._reload)
+        filter_row.addWidget(self._no_partidas)
+        self._no_related_patterns = QCheckBox("Sin patrones", self)
+        self._no_related_patterns.stateChanged.connect(self._reload)
+        filter_row.addWidget(self._no_related_patterns)
 
         btn_refresh = QPushButton("Actualizar", self)
         btn_refresh.clicked.connect(self._reload)
@@ -133,38 +146,34 @@ class HistoricalMemoryDashboard(QDialog):
         layout.addLayout(filter_row)
 
         self._table = QTableWidget(self)
-        self._table.setColumnCount(13)
+        self._table.setColumnCount(11)
         self._table.setHorizontalHeaderLabels(
             [
-                "Estado tecnico",
-                "Memoria",
                 "Archivo / obra",
-                "Numero",
+                "Nº presupuesto",
                 "Cliente",
                 "Total",
+                "Estado técnico",
+                "Uso en memoria",
                 "Avisos",
                 "Partidas",
-                "Modulos",
-                "Patrones",
-                "Hoja",
-                "Score",
-                "Ultimo analisis",
+                "Módulos",
+                "Patrones relacionados",
+                "Último análisis",
             ]
         )
-        self._table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self._table.horizontalHeader().setSectionResizeMode(8, QHeaderView.ResizeMode.Stretch)
         for col, width in {
-            0: 145,
-            1: 130,
-            3: 95,
-            4: 140,
-            5: 100,
+            1: 110,
+            2: 140,
+            3: 100,
+            4: 125,
+            5: 125,
             6: 70,
             7: 80,
             9: 80,
-            10: 120,
-            11: 70,
-            12: 140,
+            10: 140,
         }.items():
             self._table.setColumnWidth(col, width)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -172,6 +181,7 @@ class HistoricalMemoryDashboard(QDialog):
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.verticalHeader().setVisible(False)
         self._table.doubleClicked.connect(self._show_detail_selected)
+        self._table.itemSelectionChanged.connect(self._update_action_states)
         layout.addWidget(self._table, 1)
 
         actions = QHBoxLayout()
@@ -181,24 +191,36 @@ class HistoricalMemoryDashboard(QDialog):
         actions.addWidget(self._stats_lbl)
         actions.addStretch()
 
-        for text, slot in [
-            ("Ver detalle", self._show_detail_selected),
-            ("Abrir Excel", self._open_excel_selected),
-            ("Abrir carpeta BD", self._open_db_folder),
-            ("Incluir en memoria", self._include_selected),
-            ("Excluir de memoria", self._exclude_selected),
-            ("Reanalizar", self._reanalyze_selected),
-            ("Diagnostico", self._run_diagnostics),
-            ("Reconstruir patrones", self._rebuild_patterns),
-        ]:
-            btn = QPushButton(text, self)
-            btn.clicked.connect(slot)
-            actions.addWidget(btn)
+        self._btn_detail = QPushButton("Ver detalle", self)
+        self._btn_detail.clicked.connect(self._show_detail_selected)
+        actions.addWidget(self._btn_detail)
+        self._btn_open_excel = QPushButton("Abrir Excel", self)
+        self._btn_open_excel.clicked.connect(self._open_excel_selected)
+        actions.addWidget(self._btn_open_excel)
+        self._btn_open_db = QPushButton("Abrir carpeta BD", self)
+        self._btn_open_db.clicked.connect(self._open_db_folder)
+        actions.addWidget(self._btn_open_db)
+        self._btn_include = QPushButton("Incluir en memoria", self)
+        self._btn_include.clicked.connect(self._include_selected)
+        actions.addWidget(self._btn_include)
+        self._btn_exclude = QPushButton("Excluir de memoria", self)
+        self._btn_exclude.clicked.connect(self._exclude_selected)
+        actions.addWidget(self._btn_exclude)
+        self._btn_reanalyze = QPushButton("Reanalizar", self)
+        self._btn_reanalyze.clicked.connect(self._reanalyze_selected)
+        actions.addWidget(self._btn_reanalyze)
+        self._btn_diagnostics = QPushButton("Diagnóstico", self)
+        self._btn_diagnostics.clicked.connect(self._run_diagnostics)
+        actions.addWidget(self._btn_diagnostics)
+        self._btn_rebuild_patterns = QPushButton("Reconstruir patrones", self)
+        self._btn_rebuild_patterns.clicked.connect(self._rebuild_patterns)
+        actions.addWidget(self._btn_rebuild_patterns)
 
         btn_close = QPushButton("Cerrar", self)
         btn_close.clicked.connect(self.accept)
         actions.addWidget(btn_close)
         layout.addLayout(actions)
+        self._update_action_states()
         theme.fit_dialog(self, 1380, 760)
 
     def _filters(self) -> dict:
@@ -207,12 +229,17 @@ class HistoricalMemoryDashboard(QDialog):
             "learning_status": self._learning_filter.currentData() or "",
             "search": self._search.text().strip(),
             "only_problems": self._only_problems.isChecked(),
+            "with_warnings": self._with_warnings.isChecked(),
+            "no_modules": self._no_modules.isChecked(),
+            "no_partidas": self._no_partidas.isChecked(),
+            "no_related_patterns": self._no_related_patterns.isChecked(),
         }
 
     def _reload(self):
         self._refresh_kpis()
         self._rows = list_historical_memory_dashboard_budgets(self._filters())
         self._populate_table()
+        self._update_action_states()
 
     def _refresh_kpis(self):
         metrics = get_historical_memory_dashboard_metrics()
@@ -255,28 +282,26 @@ class HistoricalMemoryDashboard(QDialog):
         self._table.setRowCount(len(self._rows))
         for i, row in enumerate(self._rows):
             values = [
-                self._status_label(row.get("analysis_status", "")),
-                self._memory_label(row),
                 self._file_or_project(row),
                 row.get("numero_proyecto", ""),
                 row.get("cliente", ""),
                 f"{float(row.get('total', 0.0)):.2f} EUR",
+                self._status_label(row.get("analysis_status", "")),
+                self._memory_label(row),
                 str(int(row.get("warning_count", 0))),
                 str(int(row.get("num_partidas", 0))),
                 ", ".join(row.get("modules", [])),
                 str(int(row.get("related_patterns", 0))),
-                row.get("selected_sheet", ""),
-                str(int(row.get("compatible_score", 0))),
                 row.get("fecha_analisis", ""),
             ]
             for col, value in enumerate(values):
                 item = QTableWidgetItem(value)
-                if col in (5, 6, 7, 9, 11):
+                if col in (3, 6, 7, 9):
                     item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-                if col == 0:
+                if col == 4:
                     item.setForeground(self._status_color(row.get("analysis_status", "")))
                     item.setData(Qt.ItemDataRole.UserRole, row)
-                if col == 1:
+                if col == 5:
                     item.setForeground(self._memory_color(row))
                 self._table.setItem(i, col, item)
         if self._has_any_budgets:
@@ -295,7 +320,7 @@ class HistoricalMemoryDashboard(QDialog):
         rows = sorted({idx.row() for idx in self._table.selectionModel().selectedRows()})
         data = []
         for row_idx in rows:
-            item = self._table.item(row_idx, 0)
+            item = self._table.item(row_idx, 4)
             row = item.data(Qt.ItemDataRole.UserRole) if item else None
             if row:
                 data.append(row)
@@ -308,6 +333,19 @@ class HistoricalMemoryDashboard(QDialog):
             return None
         return rows[0]
 
+    def _update_action_states(self):
+        rows = self._selected_rows_data()
+        has_rows = bool(rows)
+        single = len(rows) == 1
+        self._btn_detail.setEnabled(single)
+        can_include = has_rows and all(self._can_be_included_in_memory(row) for row in rows)
+        self._btn_include.setEnabled(can_include)
+        can_exclude = has_rows and any(self._can_be_excluded_in_memory(row) for row in rows)
+        self._btn_exclude.setEnabled(can_exclude)
+        excel_ok = single and bool(rows[0].get("ruta_excel")) and os.path.exists(rows[0].get("ruta_excel", ""))
+        self._btn_open_excel.setEnabled(excel_ok)
+        self._btn_reanalyze.setEnabled(excel_ok)
+
     def _show_detail_selected(self):
         data = self._selected_row_data()
         if not data:
@@ -315,6 +353,7 @@ class HistoricalMemoryDashboard(QDialog):
         budget_id = int(data.get("id") or 0)
         issues = get_historical_budget_issues(budget_id)
         partidas = get_historical_budget_partidas(budget_id, limit=250)
+        probe_summary = self._probe_summary(data.get("probe_diagnostics_json", ""))
 
         dlg = QDialog(self)
         dlg.setWindowTitle("Detalle de memoria historica")
@@ -325,16 +364,18 @@ class HistoricalMemoryDashboard(QDialog):
         box = QGroupBox("Datos generales", dlg)
         grid = QGridLayout(box)
         fields = [
-            ("Estado tecnico", self._status_label(data.get("analysis_status", ""))),
-            ("Memoria", self._memory_label(data)),
-            ("Numero", data.get("numero_proyecto", "")),
+            ("Estado técnico", self._status_label(data.get("analysis_status", ""))),
+            ("Uso en memoria", self._memory_label(data)),
+            ("Nº presupuesto", data.get("numero_proyecto", "")),
             ("Cliente", data.get("cliente", "")),
             ("Total", f"{float(data.get('total', 0.0)):.2f} EUR"),
             ("Partidas", str(int(data.get("num_partidas", 0)))),
-            ("Modulos", ", ".join(data.get("modules", [])) or "-"),
+            ("Módulos", ", ".join(data.get("modules", [])) or "-"),
             ("Patrones relacionados", str(int(data.get("related_patterns", 0)))),
             ("Hoja", data.get("selected_sheet", "") or "-"),
-            ("Ultimo analisis", data.get("fecha_analisis", "") or "-"),
+            ("Score compatibilidad", str(int(data.get("compatible_score", 0)))),
+            ("Resumen diagnóstico técnico", probe_summary),
+            ("Último análisis", data.get("fecha_analisis", "") or "-"),
         ]
         for idx, (name, value) in enumerate(fields):
             grid.addWidget(QLabel(name, box), idx // 2, (idx % 2) * 2)
@@ -343,7 +384,7 @@ class HistoricalMemoryDashboard(QDialog):
             grid.addWidget(value_lbl, idx // 2, (idx % 2) * 2 + 1)
         lay.addWidget(box)
 
-        issues_box = QGroupBox("Avisos e incidencias", dlg)
+        issues_box = QGroupBox("Avisos del análisis", dlg)
         issues_lay = QVBoxLayout(issues_box)
         issues_table = QTableWidget(issues_box)
         issues_table.setColumnCount(3)
@@ -351,13 +392,13 @@ class HistoricalMemoryDashboard(QDialog):
         issues_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         issues_table.setRowCount(len(issues))
         for i, issue in enumerate(issues):
-            issues_table.setItem(i, 0, QTableWidgetItem(issue.get("severity", "")))
+            issues_table.setItem(i, 0, QTableWidgetItem(self._severity_label(issue.get("severity", ""))))
             issues_table.setItem(i, 1, QTableWidgetItem(historical_issue_label(issue.get("code", ""))))
             issues_table.setItem(i, 2, QTableWidgetItem(issue.get("code", "")))
         issues_lay.addWidget(issues_table)
         lay.addWidget(issues_box)
 
-        partidas_box = QGroupBox("Partidas extraidas", dlg)
+        partidas_box = QGroupBox("Partidas extraídas", dlg)
         partidas_lay = QVBoxLayout(partidas_box)
         partidas_table = QTableWidget(partidas_box)
         partidas_table.setColumnCount(6)
@@ -375,6 +416,9 @@ class HistoricalMemoryDashboard(QDialog):
         lay.addWidget(partidas_box, 1)
 
         buttons = QHBoxLayout()
+        btn_probe = QPushButton("Ver diagnóstico técnico", dlg)
+        btn_probe.clicked.connect(lambda: self._show_probe_diagnostics(data))
+        buttons.addWidget(btn_probe)
         buttons.addStretch()
         close = QPushButton("Cerrar", dlg)
         close.clicked.connect(dlg.accept)
@@ -418,10 +462,14 @@ class HistoricalMemoryDashboard(QDialog):
             self._rebuild_patterns(silent=True)
             self._reload()
             QMessageBox.information(self, "Incluir en memoria", f"Presupuestos incluidos: {changed}")
+        else:
+            QMessageBox.information(self, "Incluir en memoria", "No hay presupuestos seleccionados aptos para incluir.")
 
     def _exclude_selected(self):
         changed = 0
         for data in self._selected_rows_data():
+            if not self._can_be_excluded_in_memory(data):
+                continue
             budget_id = int(data.get("id") or 0)
             err = set_historical_budget_learning_status(
                 budget_id,
@@ -446,13 +494,16 @@ class HistoricalMemoryDashboard(QDialog):
             self._rebuild_patterns(silent=True)
             self._reload()
             QMessageBox.information(self, "Excluir de memoria", f"Presupuestos excluidos: {changed}")
+        else:
+            QMessageBox.information(self, "Excluir de memoria", "No hay presupuestos seleccionados válidos para excluir.")
 
     def _reanalyze_selected(self):
         data = self._selected_row_data()
         if not data:
             return
         excel_path = data.get("ruta_excel", "")
-        if not excel_path:
+        if not excel_path or not os.path.exists(excel_path):
+            QMessageBox.warning(self, "Reanalizar", "No se encuentra el fichero Excel en la ruta registrada.")
             return
         result = self._analyzer.analyze_budget(excel_path, force_reanalyze=True)
         if result.get("status") == "error":
@@ -465,18 +516,30 @@ class HistoricalMemoryDashboard(QDialog):
     def _run_diagnostics(self):
         report = diagnose_historical_integrity()
         findings = report.get("findings", [])
-        errors = [f for f in findings if f.get("severity") == "ERROR"]
-        warnings = [f for f in findings if f.get("severity") == "WARN"]
-        preview = "\n".join(
-            f"- {f.get('check')}: {f.get('message')}"
-            for f in findings[:12]
-        )
-        if not preview:
-            preview = "No se han detectado incidencias."
+        by_severity = {"ERROR": 0, "WARN": 0, "INFO": 0}
+        for finding in findings:
+            sev = (finding.get("severity") or "INFO").upper()
+            by_severity[sev] = by_severity.get(sev, 0) + 1
+        if not findings:
+            preview = "No se han detectado problemas de integridad."
+        else:
+            lines = []
+            for finding in findings[:20]:
+                sev = (finding.get("severity") or "INFO").upper()
+                check = finding.get("check") or "-"
+                message = finding.get("message") or "-"
+                row_id = finding.get("row_id")
+                entity = f" | entidad: {row_id}" if row_id is not None else ""
+                lines.append(f"- [{sev}] {check}: {message}{entity}")
+            preview = "\n".join(lines)
         QMessageBox.information(
             self,
-            "Diagnostico de integridad",
-            f"Errores: {len(errors)}\nAvisos: {len(warnings)}\n\n{preview}",
+            "Diagnóstico de integridad",
+            (
+                f"Errores: {by_severity.get('ERROR', 0)}\n"
+                f"Avisos: {by_severity.get('WARN', 0)}\n"
+                f"Info: {by_severity.get('INFO', 0)}\n\n{preview}"
+            ),
         )
         self._refresh_kpis()
 
@@ -515,15 +578,20 @@ class HistoricalMemoryDashboard(QDialog):
         )
 
     @staticmethod
+    def _can_be_excluded_in_memory(data: dict) -> bool:
+        status = (data.get("learning_status") or "").strip().upper()
+        return status in ("INCLUDED", "PENDING_REVIEW")
+
+    @staticmethod
     def _status_label(status: str) -> str:
         return {
-            AnalysisStatus.VALID: "Valido",
-            AnalysisStatus.VALID_WITH_WARNINGS: "Valido con avisos",
-            AnalysisStatus.EXCLUDED_INCOMPLETE_DATA: "Invalido",
+            AnalysisStatus.VALID: "Válido",
+            AnalysisStatus.VALID_WITH_WARNINGS: "Revisar",
+            AnalysisStatus.EXCLUDED_INCOMPLETE_DATA: "Inválido",
             AnalysisStatus.NOT_COMPATIBLE: "No compatible",
-            AnalysisStatus.READ_ERROR: "Error lectura",
+            AnalysisStatus.READ_ERROR: "Error de lectura",
             AnalysisStatus.SKIPPED_UNCHANGED: "Sin cambios",
-            AnalysisStatus.MANUALLY_EXCLUDED: "Excluido legacy",
+            AnalysisStatus.MANUALLY_EXCLUDED: "Excluido",
         }.get(status, status or "-")
 
     @staticmethod
@@ -546,7 +614,7 @@ class HistoricalMemoryDashboard(QDialog):
         if status == "INCLUDED" or data.get("usable_for_learning"):
             return "Incluido"
         if status == "PENDING_REVIEW":
-            return "Pendiente revision"
+            return "Pendiente"
         if status == "EXCLUDED":
             return "Excluido"
         if status == "NOT_ELIGIBLE":
@@ -563,6 +631,44 @@ class HistoricalMemoryDashboard(QDialog):
         if status in ("EXCLUDED", "NOT_ELIGIBLE"):
             return theme.qcolor(theme.ERROR)
         return theme.qcolor(theme.TEXT_SECONDARY)
+
+    @staticmethod
+    def _severity_label(severity: str) -> str:
+        return {
+            "INFO": "Info",
+            "WARN": "Aviso",
+            "SEVERE": "Grave",
+            "ERROR": "Error",
+        }.get((severity or "").strip().upper(), severity or "-")
+
+    @staticmethod
+    def _probe_summary(probe_diagnostics_json: str) -> str:
+        raw = (probe_diagnostics_json or "").strip()
+        if not raw:
+            return "Sin diagnóstico técnico guardado."
+        try:
+            data = json.loads(raw)
+        except (TypeError, ValueError):
+            return "Diagnóstico técnico no legible."
+        selected = data.get("selected_candidate") or {}
+        candidates = data.get("candidates") or []
+        score = int(selected.get("score") or data.get("score") or 0)
+        sheet = selected.get("sheet_name") or data.get("selected_sheet") or "-"
+        partidas = selected.get("partidas_detected") or data.get("partidas_detected")
+        if partidas is None:
+            partidas = data.get("num_partidas")
+        return f"Candidatos: {len(candidates)} | Hoja: {sheet} | Score: {score} | Partidas detectadas: {int(partidas or 0)}"
+
+    def _show_probe_diagnostics(self, data: dict):
+        raw = (data.get("probe_diagnostics_json") or "").strip()
+        if not raw:
+            QMessageBox.information(self, "Diagnóstico técnico", "No hay diagnóstico técnico guardado.")
+            return
+        try:
+            pretty = json.dumps(json.loads(raw), indent=2, ensure_ascii=False)
+        except (TypeError, ValueError):
+            pretty = raw
+        QMessageBox.information(self, "Diagnóstico técnico", pretty[:12000])
 
     @staticmethod
     def _open_excel(data: dict):
