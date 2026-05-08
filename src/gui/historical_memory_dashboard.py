@@ -50,6 +50,16 @@ from src.core.repositories import (
 from src.gui import theme
 
 
+class NumericTableWidgetItem(QTableWidgetItem):
+    def __lt__(self, other):
+        if isinstance(other, QTableWidgetItem):
+            left = self.data(Qt.ItemDataRole.UserRole)
+            right = other.data(Qt.ItemDataRole.UserRole)
+            if isinstance(left, (int, float)) and isinstance(right, (int, float)):
+                return float(left) < float(right)
+        return super().__lt__(other)
+
+
 class HistoricalMemoryDashboard(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -167,6 +177,13 @@ class HistoricalMemoryDashboard(QDialog):
         self._btn_toggle_advanced.setCheckable(True)
         self._btn_toggle_advanced.toggled.connect(self._toggle_advanced_filters)
         filter_row.addWidget(self._btn_toggle_advanced)
+        btn_clear_filters = QPushButton("Limpiar filtros", self)
+        btn_clear_filters.clicked.connect(self._clear_filters)
+        filter_row.addWidget(btn_clear_filters)
+        self._btn_columns = QToolButton(self)
+        self._btn_columns.setText("Columnas ▾")
+        self._btn_columns.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        filter_row.addWidget(self._btn_columns)
         layout.addLayout(filter_row)
 
         self._advanced_filters_box = QGroupBox("Filtros avanzados", self)
@@ -183,12 +200,12 @@ class HistoricalMemoryDashboard(QDialog):
         self._no_related_patterns = QCheckBox("Sin patrones", self._advanced_filters_box)
         self._no_related_patterns.stateChanged.connect(self._reload)
         advanced_row.addWidget(self._no_related_patterns)
-        self._without_description = QCheckBox("Sin descripción", self._advanced_filters_box)
-        self._without_description.stateChanged.connect(self._reload)
-        advanced_row.addWidget(self._without_description)
-        self._with_description = QCheckBox("Con descripción", self._advanced_filters_box)
-        self._with_description.stateChanged.connect(self._reload)
-        advanced_row.addWidget(self._with_description)
+        self._has_description_filter = QComboBox(self._advanced_filters_box)
+        self._has_description_filter.addItem("Descripción: todas", "")
+        self._has_description_filter.addItem("Con descripción", "WITH")
+        self._has_description_filter.addItem("Sin descripción", "WITHOUT")
+        self._has_description_filter.currentIndexChanged.connect(self._reload)
+        advanced_row.addWidget(self._has_description_filter)
         advanced_row.addStretch()
         self._advanced_filters_box.setVisible(False)
         layout.addWidget(self._advanced_filters_box)
@@ -242,6 +259,7 @@ class HistoricalMemoryDashboard(QDialog):
         self._table.customContextMenuRequested.connect(self._show_row_context_menu)
         header_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         header_widget.customContextMenuRequested.connect(self._show_header_context_menu)
+        self._btn_columns.setMenu(self._build_columns_menu())
         layout.addWidget(self._table, 1)
 
         actions = QHBoxLayout()
@@ -298,16 +316,11 @@ class HistoricalMemoryDashboard(QDialog):
         theme.fit_dialog(self, 1380, 760)
 
     def _filters(self) -> dict:
-        has_description = ""
-        if self._with_description.isChecked() and not self._without_description.isChecked():
-            has_description = "WITH"
-        elif self._without_description.isChecked() and not self._with_description.isChecked():
-            has_description = "WITHOUT"
         return {
             "analysis_status": self._status_filter.currentData() or "",
             "learning_status": self._learning_filter.currentData() or "",
             "technical_description_status": self._technical_description_filter.currentData() or "",
-            "has_technical_description": has_description,
+            "has_technical_description": self._has_description_filter.currentData() or "",
             "search": self._search.text().strip(),
             "only_problems": self._only_problems.isChecked(),
             "with_warnings": self._with_warnings.isChecked(),
@@ -320,8 +333,12 @@ class HistoricalMemoryDashboard(QDialog):
         self._advanced_filters_box.setVisible(expanded)
 
     def _show_header_context_menu(self, pos):
-        menu = QMenu(self)
+        menu = self._build_columns_menu()
         header = self._table.horizontalHeader()
+        menu.exec(header.mapToGlobal(pos))
+
+    def _build_columns_menu(self) -> QMenu:
+        menu = QMenu(self)
         for col in range(self._table.columnCount()):
             label = self._table.horizontalHeaderItem(col).text()
             action = QAction(label, self)
@@ -329,7 +346,7 @@ class HistoricalMemoryDashboard(QDialog):
             action.setChecked(not self._table.isColumnHidden(col))
             action.toggled.connect(lambda checked, c=col: self._table.setColumnHidden(c, not checked))
             menu.addAction(action)
-        menu.exec(header.mapToGlobal(pos))
+        return menu
 
     def _show_row_context_menu(self, pos):
         row = self._table.rowAt(pos.y())
@@ -411,7 +428,10 @@ class HistoricalMemoryDashboard(QDialog):
                 str(int(row.get("compatible_score", 0))),
             ]
             for col, value in enumerate(values):
-                item = QTableWidgetItem(value)
+                if col in (4, 5, 7, 8, 15):
+                    item = NumericTableWidgetItem(value)
+                else:
+                    item = QTableWidgetItem(value)
                 if col in (4, 5, 7, 8, 15):
                     item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 if col == 0:
@@ -422,6 +442,16 @@ class HistoricalMemoryDashboard(QDialog):
                     item.setForeground(self._memory_color(row))
                 if col == 3:
                     item.setForeground(self._technical_description_status_color(row))
+                if col == 4:
+                    item.setData(Qt.ItemDataRole.UserRole, float(row.get("warning_count", 0) or 0))
+                if col == 5:
+                    item.setData(Qt.ItemDataRole.UserRole, float(row.get("num_partidas", 0) or 0))
+                if col == 7:
+                    item.setData(Qt.ItemDataRole.UserRole, float(row.get("related_patterns", 0) or 0))
+                if col == 8:
+                    item.setData(Qt.ItemDataRole.UserRole, float(row.get("total", 0.0) or 0.0))
+                if col == 15:
+                    item.setData(Qt.ItemDataRole.UserRole, float(row.get("compatible_score", 0) or 0))
                 self._table.setItem(i, col, item)
         self._table.setSortingEnabled(True)
         if self._has_any_budgets:
@@ -936,9 +966,26 @@ class HistoricalMemoryDashboard(QDialog):
             settings.setValue(f"column_hidden_{col}", self._table.isColumnHidden(col))
         settings.sync()
 
+    def done(self, r: int):
+        self._save_column_settings()
+        super().done(r)
+
     def closeEvent(self, event):
         self._save_column_settings()
         super().closeEvent(event)
+
+    def _clear_filters(self):
+        self._search.clear()
+        self._status_filter.setCurrentIndex(0)
+        self._learning_filter.setCurrentIndex(0)
+        self._technical_description_filter.setCurrentIndex(0)
+        self._only_problems.setChecked(False)
+        self._with_warnings.setChecked(False)
+        self._no_modules.setChecked(False)
+        self._no_partidas.setChecked(False)
+        self._no_related_patterns.setChecked(False)
+        self._has_description_filter.setCurrentIndex(0)
+        self._reload()
 
     @staticmethod
     def _open_excel(data: dict):
