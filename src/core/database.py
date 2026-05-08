@@ -541,6 +541,7 @@ CREATE INDEX IF NOT EXISTS idx_suggested_partida_pattern_concepto ON suggested_p
 CREATE INDEX IF NOT EXISTS idx_pattern_source_pattern ON suggested_partida_pattern_source(pattern_id);
 CREATE INDEX IF NOT EXISTS idx_pattern_source_partida ON suggested_partida_pattern_source(historical_partida_id);
 CREATE INDEX IF NOT EXISTS idx_pattern_source_budget ON suggested_partida_pattern_source(historical_budget_id);
+CREATE INDEX IF NOT EXISTS idx_pattern_source_pattern_partida ON suggested_partida_pattern_source(pattern_id, historical_partida_id);
 """
 
 

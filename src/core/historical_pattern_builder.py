@@ -31,6 +31,8 @@ class HistoricalPatternBuilder:
                 (build_run, started_at, self.BUILDER_VERSION),
             )
             try:
+                # Borrado explícito para no depender de ON DELETE CASCADE.
+                conn.execute("DELETE FROM suggested_partida_pattern_source")
                 conn.execute("DELETE FROM suggested_partida_pattern")
                 for group in groups:
                     prices = group["prices"]
