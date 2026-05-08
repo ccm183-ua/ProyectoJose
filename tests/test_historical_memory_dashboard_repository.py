@@ -3,11 +3,14 @@ from datetime import datetime
 
 from src.core import database
 from src.core.repositories import (
+    get_budget_enrichment,
     assign_partida_module,
+    delete_budget_enrichment,
     get_historical_memory_dashboard_metrics,
     get_or_create_execution_module,
     insert_historical_partida,
     list_historical_memory_dashboard_budgets,
+    upsert_budget_enrichment,
     upsert_historical_budget,
 )
 
@@ -230,3 +233,72 @@ def test_memory_dashboard_combined_filters_and_empty_relations(tmp_path, monkeyp
 
     no_patterns_rows = list_historical_memory_dashboard_budgets({"no_related_patterns": True})
     assert {row["id"] for row in no_patterns_rows} == {warning_id}
+
+
+def test_budget_enrichment_manual_create_update_and_get(tmp_path, monkeypatch):
+    monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "memory_dashboard_enrichment.db"))
+    with database.get_connection() as _conn:
+        pass
+    budget_id = _budget(tmp_path, "manual_desc.xlsx")
+
+    err = upsert_budget_enrichment(
+        historical_budget_id=budget_id,
+        enrichment_type="TECHNICAL_DESCRIPTION",
+        status="MANUAL",
+        source="MANUAL",
+        content="Reparación de fisuras y sellado de fachada.",
+    )
+    assert err is None
+    row = get_budget_enrichment(budget_id, "TECHNICAL_DESCRIPTION")
+    assert row is not None
+    assert row["status"] == "MANUAL"
+    assert row["source"] == "MANUAL"
+    assert row["content"].startswith("Reparación de fisuras")
+
+    err2 = upsert_budget_enrichment(
+        historical_budget_id=budget_id,
+        enrichment_type="TECHNICAL_DESCRIPTION",
+        status="APPROVED",
+        source="MANUAL",
+        content="Descripción revisada y aprobada por usuario.",
+    )
+    assert err2 is None
+    updated = get_budget_enrichment(budget_id, "TECHNICAL_DESCRIPTION")
+    assert updated is not None
+    assert updated["status"] == "APPROVED"
+    assert updated["content"].startswith("Descripción revisada")
+
+    with database.get_connection(read_only=True) as conn:
+        count = conn.execute(
+            """SELECT COUNT(*)
+               FROM historical_budget_enrichment
+               WHERE historical_budget_id=? AND enrichment_type='TECHNICAL_DESCRIPTION'""",
+            (budget_id,),
+        ).fetchone()[0]
+    assert int(count or 0) == 1
+
+
+def test_dashboard_rows_include_technical_description_fields(tmp_path, monkeypatch):
+    monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "memory_dashboard_enrichment_rows.db"))
+    with database.get_connection() as _conn:
+        pass
+    budget_id = _budget(tmp_path, "rows_desc.xlsx")
+    err = upsert_budget_enrichment(
+        historical_budget_id=budget_id,
+        enrichment_type="TECHNICAL_DESCRIPTION",
+        status="MANUAL",
+        source="MANUAL",
+        content="Saneado de hormigón y reposición de recubrimientos en elementos estructurales.",
+    )
+    assert err is None
+
+    rows = list_historical_memory_dashboard_budgets({"search": "rows_desc"})
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["technical_description_status"] == "MANUAL"
+    assert row["technical_description_source"] == "MANUAL"
+    assert "Saneado de hormigón" in row["technical_description_preview"]
+    assert row["technical_description_updated_at"]
+
+    assert delete_budget_enrichment(budget_id, "TECHNICAL_DESCRIPTION") is None
+    assert get_budget_enrichment(budget_id, "TECHNICAL_DESCRIPTION") is None

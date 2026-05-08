@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
+    QTextEdit,
     QVBoxLayout,
 )
 
@@ -33,11 +34,13 @@ from src.core.historical_pattern_builder import HistoricalPatternBuilder
 from src.core.database import get_db_path_as_string, open_db_folder
 from src.core.repositories import (
     append_budget_issue,
+    get_budget_enrichment,
     get_historical_budget_issues,
     get_historical_budget_partidas,
     get_historical_memory_dashboard_metrics,
     list_historical_memory_dashboard_budgets,
     set_historical_budget_learning_status,
+    upsert_budget_enrichment,
 )
 from src.gui import theme
 
@@ -146,7 +149,7 @@ class HistoricalMemoryDashboard(QDialog):
         layout.addLayout(filter_row)
 
         self._table = QTableWidget(self)
-        self._table.setColumnCount(11)
+        self._table.setColumnCount(13)
         self._table.setHorizontalHeaderLabels(
             [
                 "Archivo / obra",
@@ -155,6 +158,8 @@ class HistoricalMemoryDashboard(QDialog):
                 "Total",
                 "Estado técnico",
                 "Uso en memoria",
+                "Descripción técnica",
+                "Origen descripción",
                 "Avisos",
                 "Partidas",
                 "Módulos",
@@ -163,17 +168,19 @@ class HistoricalMemoryDashboard(QDialog):
             ]
         )
         self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self._table.horizontalHeader().setSectionResizeMode(8, QHeaderView.ResizeMode.Stretch)
+        self._table.horizontalHeader().setSectionResizeMode(10, QHeaderView.ResizeMode.Stretch)
         for col, width in {
             1: 110,
             2: 140,
             3: 100,
             4: 125,
             5: 125,
-            6: 70,
-            7: 80,
+            6: 130,
+            7: 120,
+            8: 70,
             9: 80,
-            10: 140,
+            11: 100,
+            12: 140,
         }.items():
             self._table.setColumnWidth(col, width)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -215,6 +222,9 @@ class HistoricalMemoryDashboard(QDialog):
         self._btn_rebuild_patterns = QPushButton("Reconstruir patrones", self)
         self._btn_rebuild_patterns.clicked.connect(self._rebuild_patterns)
         actions.addWidget(self._btn_rebuild_patterns)
+        self._btn_edit_description = QPushButton("Editar descripción", self)
+        self._btn_edit_description.clicked.connect(self._edit_description_selected)
+        actions.addWidget(self._btn_edit_description)
 
         btn_close = QPushButton("Cerrar", self)
         btn_close.clicked.connect(self.accept)
@@ -288,6 +298,8 @@ class HistoricalMemoryDashboard(QDialog):
                 f"{float(row.get('total', 0.0)):.2f} EUR",
                 self._status_label(row.get("analysis_status", "")),
                 self._memory_label(row),
+                self._technical_description_status_label(row),
+                self._technical_description_source_label(row),
                 str(int(row.get("warning_count", 0))),
                 str(int(row.get("num_partidas", 0))),
                 ", ".join(row.get("modules", [])),
@@ -296,13 +308,15 @@ class HistoricalMemoryDashboard(QDialog):
             ]
             for col, value in enumerate(values):
                 item = QTableWidgetItem(value)
-                if col in (3, 6, 7, 9):
+                if col in (3, 8, 9, 11):
                     item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 if col == 4:
                     item.setForeground(self._status_color(row.get("analysis_status", "")))
                     item.setData(Qt.ItemDataRole.UserRole, row)
                 if col == 5:
                     item.setForeground(self._memory_color(row))
+                if col == 6:
+                    item.setForeground(self._technical_description_status_color(row))
                 self._table.setItem(i, col, item)
         if self._has_any_budgets:
             self._stats_lbl.setText(f"Mostrando {len(self._rows)} presupuestos")
@@ -345,6 +359,8 @@ class HistoricalMemoryDashboard(QDialog):
         excel_ok = single and bool(rows[0].get("ruta_excel")) and os.path.exists(rows[0].get("ruta_excel", ""))
         self._btn_open_excel.setEnabled(excel_ok)
         self._btn_reanalyze.setEnabled(excel_ok)
+        can_edit_desc = single and self._can_edit_technical_description(rows[0])
+        self._btn_edit_description.setEnabled(can_edit_desc)
 
     def _show_detail_selected(self):
         data = self._selected_row_data()
@@ -354,6 +370,7 @@ class HistoricalMemoryDashboard(QDialog):
         issues = get_historical_budget_issues(budget_id)
         partidas = get_historical_budget_partidas(budget_id, limit=250)
         probe_summary = self._probe_summary(data.get("probe_diagnostics_json", ""))
+        enrichment = get_budget_enrichment(budget_id, "TECHNICAL_DESCRIPTION") or {}
 
         dlg = QDialog(self)
         dlg.setWindowTitle("Detalle de memoria historica")
@@ -383,6 +400,36 @@ class HistoricalMemoryDashboard(QDialog):
             value_lbl.setWordWrap(True)
             grid.addWidget(value_lbl, idx // 2, (idx % 2) * 2 + 1)
         lay.addWidget(box)
+
+        desc_box = QGroupBox("Descripción técnica", dlg)
+        desc_layout = QVBoxLayout(desc_box)
+        desc_fields = QGridLayout()
+        desc_fields.addWidget(QLabel("Estado", desc_box), 0, 0)
+        desc_fields.addWidget(
+            QLabel(self._technical_description_status_label(data), desc_box),
+            0,
+            1,
+        )
+        desc_fields.addWidget(QLabel("Origen", desc_box), 1, 0)
+        desc_fields.addWidget(
+            QLabel(self._technical_description_source_label(data), desc_box),
+            1,
+            1,
+        )
+        desc_fields.addWidget(QLabel("Última actualización", desc_box), 2, 0)
+        desc_fields.addWidget(
+            QLabel(data.get("technical_description_updated_at", "") or "-", desc_box),
+            2,
+            1,
+        )
+        desc_layout.addLayout(desc_fields)
+        content = (enrichment.get("content") or "").strip()
+        desc_text = QTextEdit(desc_box)
+        desc_text.setReadOnly(True)
+        desc_text.setPlainText(content or "Sin descripción técnica registrada.")
+        desc_text.setMinimumHeight(120)
+        desc_layout.addWidget(desc_text)
+        lay.addWidget(desc_box)
 
         issues_box = QGroupBox("Avisos del análisis", dlg)
         issues_lay = QVBoxLayout(issues_box)
@@ -431,6 +478,67 @@ class HistoricalMemoryDashboard(QDialog):
         data = self._selected_row_data()
         if data:
             self._open_excel(data)
+
+    def _edit_description_selected(self):
+        data = self._selected_row_data()
+        if not data:
+            return
+        if not self._can_edit_technical_description(data):
+            QMessageBox.information(
+                self,
+                "Editar descripción técnica",
+                "Este presupuesto no es técnicamente apto para descripción de memoria.",
+            )
+            return
+        budget_id = int(data.get("id") or 0)
+        current = get_budget_enrichment(budget_id, "TECHNICAL_DESCRIPTION") or {}
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Editar descripción técnica")
+        lay = QVBoxLayout(dlg)
+        lay.addWidget(
+            theme.create_text(
+                dlg,
+                "Describe de forma breve qué trabajo se ejecuta en este presupuesto.",
+            )
+        )
+        editor = QTextEdit(dlg)
+        editor.setPlainText((current.get("content") or "").strip())
+        editor.setMinimumHeight(160)
+        lay.addWidget(editor)
+        btns = QHBoxLayout()
+        btns.addStretch()
+        btn_cancel = QPushButton("Cancelar", dlg)
+        btn_save = QPushButton("Guardar", dlg)
+        btns.addWidget(btn_cancel)
+        btns.addWidget(btn_save)
+        lay.addLayout(btns)
+        btn_cancel.clicked.connect(dlg.reject)
+
+        def _save():
+            text = editor.toPlainText().strip()
+            if not text:
+                QMessageBox.warning(
+                    dlg,
+                    "Editar descripción técnica",
+                    "La descripción técnica no puede estar vacía.",
+                )
+                return
+            err = upsert_budget_enrichment(
+                historical_budget_id=budget_id,
+                enrichment_type="TECHNICAL_DESCRIPTION",
+                status="MANUAL",
+                source="MANUAL",
+                content=text,
+            )
+            if err:
+                QMessageBox.warning(dlg, "Editar descripción técnica", err)
+                return
+            dlg.accept()
+
+        btn_save.clicked.connect(_save)
+        theme.fit_dialog(dlg, 760, 340)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._reload()
 
     def _include_selected(self):
         changed = 0
@@ -583,6 +691,13 @@ class HistoricalMemoryDashboard(QDialog):
         return status in ("INCLUDED", "PENDING_REVIEW")
 
     @staticmethod
+    def _can_edit_technical_description(data: dict) -> bool:
+        return data.get("analysis_status") in (
+            AnalysisStatus.VALID,
+            AnalysisStatus.VALID_WITH_WARNINGS,
+        )
+
+    @staticmethod
     def _status_label(status: str) -> str:
         return {
             AnalysisStatus.VALID: "Válido",
@@ -631,6 +746,41 @@ class HistoricalMemoryDashboard(QDialog):
         if status in ("EXCLUDED", "NOT_ELIGIBLE"):
             return theme.qcolor(theme.ERROR)
         return theme.qcolor(theme.TEXT_SECONDARY)
+
+    @staticmethod
+    def _technical_description_status_label(data: dict) -> str:
+        status = (data.get("technical_description_status") or "").strip().upper()
+        if not status:
+            return "Sin descripción"
+        return {
+            "MANUAL": "Manual",
+            "APPROVED": "Aprobada",
+            "PENDING": "Pendiente",
+            "REJECTED": "Rechazada",
+        }.get(status, status.title())
+
+    @staticmethod
+    def _technical_description_source_label(data: dict) -> str:
+        source = (data.get("technical_description_source") or "").strip().upper()
+        if not source:
+            return "-"
+        return {
+            "MANUAL": "Manual",
+            "AI": "IA",
+        }.get(source, source.title())
+
+    @staticmethod
+    def _technical_description_status_color(data: dict):
+        status = (data.get("technical_description_status") or "").strip().upper()
+        if status == "APPROVED":
+            return theme.qcolor(theme.SUCCESS)
+        if status == "PENDING":
+            return theme.qcolor(theme.WARNING)
+        if status == "REJECTED":
+            return theme.qcolor(theme.ERROR)
+        if status == "MANUAL":
+            return theme.qcolor(theme.TEXT_SECONDARY)
+        return theme.qcolor(theme.TEXT_MUTED)
 
     @staticmethod
     def _severity_label(severity: str) -> str:

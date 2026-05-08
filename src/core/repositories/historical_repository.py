@@ -556,6 +556,117 @@ def get_historical_budget_partidas(historical_budget_id: int, limit: int = 200) 
     ]
 
 
+def get_budget_enrichment(historical_budget_id: int, enrichment_type: str) -> Optional[Dict]:
+    with database.get_connection(read_only=True) as conn:
+        row = conn.execute(
+            """SELECT id, historical_budget_id, enrichment_type, status, source, model,
+                      prompt_version, input_hash, content, confidence, warnings,
+                      metadata_json, reviewed_at, created_at, updated_at
+               FROM historical_budget_enrichment
+               WHERE historical_budget_id=? AND enrichment_type=?""",
+            (historical_budget_id, (enrichment_type or "").strip()),
+        ).fetchone()
+    if not row:
+        return None
+    return {
+        "id": int(row[0]),
+        "historical_budget_id": int(row[1]),
+        "enrichment_type": row[2] or "",
+        "status": row[3] or "",
+        "source": row[4] or "",
+        "model": row[5] or "",
+        "prompt_version": row[6] or "",
+        "input_hash": row[7] or "",
+        "content": row[8] or "",
+        "confidence": row[9],
+        "warnings": row[10] or "",
+        "metadata_json": row[11] or "",
+        "reviewed_at": row[12] or "",
+        "created_at": row[13] or "",
+        "updated_at": row[14] or "",
+    }
+
+
+def upsert_budget_enrichment(
+    historical_budget_id: int,
+    enrichment_type: str,
+    status: str,
+    source: str,
+    content: str,
+    model: str = "",
+    prompt_version: str = "",
+    input_hash: str = "",
+    confidence: Optional[float] = None,
+    warnings: str = "",
+    metadata_json: str = "",
+    reviewed_at: str = "",
+) -> Optional[str]:
+    content_clean = (content or "").strip()
+    if not content_clean:
+        return "El contenido del enriquecimiento no puede estar vacío."
+    with database.get_connection() as conn:
+        try:
+            now = _now_str()
+            conn.execute(
+                """INSERT INTO historical_budget_enrichment
+                   (historical_budget_id, enrichment_type, status, source, model,
+                    prompt_version, input_hash, content, confidence, warnings,
+                    metadata_json, reviewed_at, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(historical_budget_id, enrichment_type) DO UPDATE SET
+                       status=excluded.status,
+                       source=excluded.source,
+                       model=excluded.model,
+                       prompt_version=excluded.prompt_version,
+                       input_hash=excluded.input_hash,
+                       content=excluded.content,
+                       confidence=excluded.confidence,
+                       warnings=excluded.warnings,
+                       metadata_json=excluded.metadata_json,
+                       reviewed_at=excluded.reviewed_at,
+                       updated_at=excluded.updated_at
+                """,
+                (
+                    historical_budget_id,
+                    (enrichment_type or "").strip(),
+                    (status or "").strip(),
+                    (source or "").strip(),
+                    (model or "").strip() or None,
+                    (prompt_version or "").strip() or None,
+                    (input_hash or "").strip() or None,
+                    content_clean,
+                    confidence,
+                    (warnings or "").strip() or None,
+                    (metadata_json or "").strip() or None,
+                    (reviewed_at or "").strip() or None,
+                    now,
+                    now,
+                ),
+            )
+            conn.commit()
+            return None
+        except sqlite3.IntegrityError as e:
+            conn.rollback()
+            return _mensaje_integridad(e)
+        except sqlite3.OperationalError as e:
+            conn.rollback()
+            return f"Error de base de datos: {e.args[0] if e.args else 'desconocido'}."
+
+
+def delete_budget_enrichment(historical_budget_id: int, enrichment_type: str) -> Optional[str]:
+    with database.get_connection() as conn:
+        try:
+            conn.execute(
+                "DELETE FROM historical_budget_enrichment WHERE historical_budget_id=? AND enrichment_type=?",
+                (historical_budget_id, (enrichment_type or "").strip()),
+            )
+            conn.commit()
+            return None
+        except sqlite3.OperationalError as e:
+            conn.rollback()
+            return f"Error de base de datos: {e.args[0] if e.args else 'desconocido'}."
+
+
 def set_historical_budget_manual_status(
     historical_budget_id: int,
     analysis_status: str,
@@ -803,11 +914,18 @@ def list_historical_memory_dashboard_budgets(
                     hb.selected_sheet,
                     hb.compatible_score,
                     hb.probe_diagnostics_json,
+                    COALESCE(hbe.status, '') AS technical_description_status,
+                    COALESCE(hbe.source, '') AS technical_description_source,
+                    COALESCE(SUBSTR(TRIM(hbe.content), 1, 180), '') AS technical_description_preview,
+                    COALESCE(hbe.updated_at, hbe.created_at, '') AS technical_description_updated_at,
                     COALESCE(GROUP_CONCAT(DISTINCT em.nombre), '') AS modules,
                     COUNT(DISTINCT em.id) AS module_count,
                     COUNT(DISTINCT hp.id) AS persisted_partidas,
                     COUNT(DISTINCT spp.id) AS related_patterns
                FROM historical_budget hb
+               LEFT JOIN historical_budget_enrichment hbe
+                      ON hbe.historical_budget_id = hb.id
+                     AND hbe.enrichment_type = 'TECHNICAL_DESCRIPTION'
                LEFT JOIN historical_partida hp ON hp.historical_budget_id = hb.id
                LEFT JOIN historical_partida_module hpm ON hpm.partida_id = hp.id
                LEFT JOIN execution_module em ON em.id = hpm.module_id
@@ -838,10 +956,14 @@ def list_historical_memory_dashboard_budgets(
             "selected_sheet": r[12] or "",
             "compatible_score": int(r[13] or 0),
             "probe_diagnostics_json": r[14] or "",
-            "modules": [m for m in (r[15] or "").split(",") if m],
-            "module_count": int(r[16] or 0),
-            "persisted_partidas": int(r[17] or 0),
-            "related_patterns": int(r[18] or 0),
+            "technical_description_status": r[15] or "",
+            "technical_description_source": r[16] or "",
+            "technical_description_preview": r[17] or "",
+            "technical_description_updated_at": r[18] or "",
+            "modules": [m for m in (r[19] or "").split(",") if m],
+            "module_count": int(r[20] or 0),
+            "persisted_partidas": int(r[21] or 0),
+            "related_patterns": int(r[22] or 0),
         }
         for r in rows
     ]

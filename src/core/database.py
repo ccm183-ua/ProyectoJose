@@ -127,6 +127,7 @@ def init_schema(conn: sqlite3.Connection) -> None:
     _migrate_historical_budget_learning_status(conn)
     _migrate_historical_budget_analysis_versioning(conn)
     _migrate_suggested_pattern_traceability(conn)
+    _migrate_historical_budget_enrichment(conn)
     _seed_execution_modules(conn)
 
 
@@ -247,6 +248,35 @@ def _migrate_suggested_pattern_traceability(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE suggested_partida_pattern ADD COLUMN pattern_build_run TEXT")
     if "pattern_source" not in columns:
         conn.execute("ALTER TABLE suggested_partida_pattern ADD COLUMN pattern_source TEXT")
+    conn.commit()
+
+
+def _migrate_historical_budget_enrichment(conn: sqlite3.Connection) -> None:
+    """Crea tabla e índices de enriquecimiento histórico si no existen."""
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS historical_budget_enrichment (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            historical_budget_id INTEGER NOT NULL REFERENCES historical_budget(id) ON DELETE CASCADE,
+            enrichment_type TEXT NOT NULL,
+            status TEXT NOT NULL,
+            source TEXT NOT NULL,
+            model TEXT,
+            prompt_version TEXT,
+            input_hash TEXT,
+            content TEXT NOT NULL,
+            confidence REAL,
+            warnings TEXT,
+            metadata_json TEXT,
+            reviewed_at TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT,
+            UNIQUE(historical_budget_id, enrichment_type)
+        );
+        CREATE INDEX IF NOT EXISTS idx_hbe_budget_type
+            ON historical_budget_enrichment(historical_budget_id, enrichment_type);
+        """
+    )
     conn.commit()
 
 
@@ -534,6 +564,26 @@ CREATE TABLE IF NOT EXISTS suggested_partida_pattern_source (
     created_at TEXT NOT NULL
 );
 
+-- Enriquecimiento de presupuestos históricos (descripción técnica, etc.)
+CREATE TABLE IF NOT EXISTS historical_budget_enrichment (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    historical_budget_id INTEGER NOT NULL REFERENCES historical_budget(id) ON DELETE CASCADE,
+    enrichment_type TEXT NOT NULL,
+    status TEXT NOT NULL,
+    source TEXT NOT NULL,
+    model TEXT,
+    prompt_version TEXT,
+    input_hash TEXT,
+    content TEXT NOT NULL,
+    confidence REAL,
+    warnings TEXT,
+    metadata_json TEXT,
+    reviewed_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT,
+    UNIQUE(historical_budget_id, enrichment_type)
+);
+
 CREATE INDEX IF NOT EXISTS idx_historical_budget_ruta ON historical_budget(ruta_excel);
 CREATE INDEX IF NOT EXISTS idx_historical_budget_mtime ON historical_budget(fecha_modificacion_excel);
 CREATE INDEX IF NOT EXISTS idx_historical_partida_budget ON historical_partida(historical_budget_id);
@@ -544,6 +594,7 @@ CREATE INDEX IF NOT EXISTS idx_pattern_source_pattern ON suggested_partida_patte
 CREATE INDEX IF NOT EXISTS idx_pattern_source_partida ON suggested_partida_pattern_source(historical_partida_id);
 CREATE INDEX IF NOT EXISTS idx_pattern_source_budget ON suggested_partida_pattern_source(historical_budget_id);
 CREATE INDEX IF NOT EXISTS idx_pattern_source_pattern_partida ON suggested_partida_pattern_source(pattern_id, historical_partida_id);
+CREATE INDEX IF NOT EXISTS idx_hbe_budget_type ON historical_budget_enrichment(historical_budget_id, enrichment_type);
 """
 
 
