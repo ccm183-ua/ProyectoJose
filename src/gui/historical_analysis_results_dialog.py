@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 from src.core.historical_analysis_status import AnalysisStatus
 from src.core.historical_budget_analyzer import HistoricalBudgetAnalyzer
 from src.core.repositories import (
+    append_budget_issue,
     get_historical_learning_metrics,
     get_historical_budget_issues,
     get_historical_budget_partidas,
@@ -264,20 +265,23 @@ class HistoricalAnalysisResultsDialog(QDialog):
         budget_id = int(row.get("id") or 0)
         status = row.get("analysis_status")
         current = bool(row.get("usable_for_learning"))
-        decision = self._pending_learning_decisions.get(budget_id, current)
+        if status == AnalysisStatus.VALID_WITH_WARNINGS and budget_id not in self._pending_learning_decisions:
+            decision = False
+        else:
+            decision = self._pending_learning_decisions.get(budget_id, current)
         is_pending = budget_id in self._pending_learning_decisions and decision != current
 
         if status in (AnalysisStatus.EXCLUDED_INCOMPLETE_DATA, AnalysisStatus.NOT_COMPATIBLE, AnalysisStatus.READ_ERROR):
-            label = "● No apto"
-            color = theme.qcolor(theme.TEXT_SECONDARY if status == AnalysisStatus.NOT_COMPATIBLE else theme.ERROR)
+            label = "No apto"
+            color = theme.qcolor(theme.ERROR)
         elif decision:
-            label = "● Incluido"
+            label = "Incluido"
             color = theme.qcolor(theme.SUCCESS)
         elif status == AnalysisStatus.VALID_WITH_WARNINGS:
-            label = "● Pendiente"
+            label = "Pendiente"
             color = theme.qcolor(theme.WARNING)
         else:
-            label = "● Excluido"
+            label = "Excluido"
             color = theme.qcolor(theme.TEXT_SECONDARY)
 
         if is_pending:
@@ -556,15 +560,13 @@ class HistoricalAnalysisResultsDialog(QDialog):
                 if err:
                     QMessageBox.warning(self, "Aplicar decisiones", err)
                     continue
-                replace_budget_issues(
+                append_budget_issue(
                     budget_id,
-                    [
-                        {
-                            "severity": "WARN",
-                            "code": "MANUALLY_INCLUDED",
-                            "message": "Marcado manualmente como apto para aprendizaje.",
-                        }
-                    ],
+                    {
+                        "severity": "WARN",
+                        "code": "MANUALLY_INCLUDED",
+                        "message": "Marcado manualmente como apto para aprendizaje.",
+                    },
                 )
                 self._analyzer.reclassify_budget_modules(budget_id)
                 has_changes = True
@@ -577,15 +579,13 @@ class HistoricalAnalysisResultsDialog(QDialog):
                 if err:
                     QMessageBox.warning(self, "Aplicar decisiones", err)
                     continue
-                replace_budget_issues(
+                append_budget_issue(
                     budget_id,
-                    [
-                        {
-                            "severity": "WARN",
-                            "code": "MANUALLY_EXCLUDED",
-                            "message": "Excluido manualmente por usuario.",
-                        }
-                    ],
+                    {
+                        "severity": "WARN",
+                        "code": "MANUALLY_EXCLUDED",
+                        "message": "Excluido manualmente por usuario.",
+                    },
                 )
                 has_changes = True
 
@@ -613,15 +613,13 @@ class HistoricalAnalysisResultsDialog(QDialog):
         if err:
             QMessageBox.warning(self, "Excluir", err)
             return
-        replace_budget_issues(
+        append_budget_issue(
             budget_id,
-            [
-                {
-                    "severity": "WARN",
-                    "code": "MANUALLY_EXCLUDED",
-                    "message": "Excluido manualmente por usuario.",
-                }
-            ],
+            {
+                "severity": "WARN",
+                "code": "MANUALLY_EXCLUDED",
+                "message": "Excluido manualmente por usuario.",
+            },
         )
         self._rebuild_patterns()
         QMessageBox.information(self, "Excluir", "Archivo excluido del aprendizaje.")
@@ -656,15 +654,13 @@ class HistoricalAnalysisResultsDialog(QDialog):
         if err:
             QMessageBox.warning(self, "Marcar como apto", err)
             return
-        replace_budget_issues(
+        append_budget_issue(
             budget_id,
-            [
-                {
-                    "severity": "WARN",
-                    "code": "MANUALLY_INCLUDED",
-                    "message": "Marcado manualmente como apto para aprendizaje.",
-                }
-            ],
+            {
+                "severity": "WARN",
+                "code": "MANUALLY_INCLUDED",
+                "message": "Marcado manualmente como apto para aprendizaje.",
+            },
         )
         reclass_result = self._analyzer.reclassify_budget_modules(budget_id)
         if not reclass_result.get("ok"):

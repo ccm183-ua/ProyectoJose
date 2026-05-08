@@ -312,7 +312,8 @@ class HistoricalBudgetAnalyzer:
                 budget_payload["usable_for_learning"] = False
             elif quality.get("has_warn"):
                 budget_payload["analysis_status"] = AnalysisStatus.VALID_WITH_WARNINGS
-                budget_payload["usable_for_learning"] = True
+                # Los presupuestos con avisos quedan pendientes de aprobacion manual.
+                budget_payload["usable_for_learning"] = False
 
             all_warnings = [f"WARN:{w}" for w in warnings] + [f"SEVERE:{w}" for w in severe_warnings]
             if all_warnings:

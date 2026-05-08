@@ -412,6 +412,28 @@ def replace_budget_issues(historical_budget_id: int, issues: List[Dict]) -> Opti
             return f"Error de base de datos: {e.args[0] if e.args else 'desconocido'}."
 
 
+def append_budget_issue(historical_budget_id: int, issue: Dict) -> Optional[str]:
+    with database.get_connection() as conn:
+        try:
+            conn.execute(
+                """INSERT INTO historical_budget_issue
+                   (historical_budget_id, severity, code, message, created_at)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (
+                    historical_budget_id,
+                    (issue.get("severity") or "WARN"),
+                    (issue.get("code") or "UNSPECIFIED"),
+                    (issue.get("message") or "").strip(),
+                    _now_str(),
+                ),
+            )
+            conn.commit()
+            return None
+        except sqlite3.OperationalError as e:
+            conn.rollback()
+            return f"Error de base de datos: {e.args[0] if e.args else 'desconocido'}."
+
+
 def list_historical_budgets_by_run(analysis_run_id: int) -> List[Dict]:
     with database.get_connection(read_only=True) as conn:
         cur = conn.execute(
