@@ -592,6 +592,22 @@ def set_historical_budget_learning_status(
 ) -> Optional[str]:
     with database.get_connection() as conn:
         try:
+            target_status = (learning_status or "").strip().upper()
+            wants_learning = target_status == "INCLUDED" or bool(usable_for_learning)
+            if wants_learning:
+                cur = conn.execute(
+                    "SELECT analysis_status FROM historical_budget WHERE id=?",
+                    (historical_budget_id,),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return "No se encontro el presupuesto historico indicado."
+                analysis_status = (row[0] or "").strip().upper()
+                if analysis_status not in ("VALID", "VALID_WITH_WARNINGS"):
+                    return (
+                        "No se puede incluir en memoria: el estado tecnico del "
+                        f"presupuesto es {analysis_status or 'desconocido'}."
+                    )
             conn.execute(
                 """UPDATE historical_budget
                    SET learning_status=?,

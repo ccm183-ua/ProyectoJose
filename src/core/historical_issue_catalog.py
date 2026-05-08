@@ -6,6 +6,7 @@ KNOWN_HISTORICAL_ISSUE_CODES = {
     "SEVERE_NO_PARTIDAS": "No se han detectado partidas validas en el presupuesto.",
     "SEVERE_TOTAL_ZERO": "El presupuesto tiene total 0 o no se ha detectado correctamente.",
     "SEVERE_MANY_ZERO_PRICES": "Mas del 50% de las partidas tienen precio unitario <= 0.",
+    "NO_EXPECTED_NUMERO": "No se pudo confirmar el numero de presupuesto esperado.",
     "WARN_NO_EXPECTED_NUMERO": "No se pudo confirmar el numero de presupuesto esperado.",
     "WARN_NUMERO_MISMATCH": "El numero detectado no coincide con el numero esperado.",
     "WARN_LOW_PARTIDA_COUNT": "Se detectaron pocas partidas; conviene revisar.",

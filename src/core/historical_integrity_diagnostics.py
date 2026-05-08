@@ -8,6 +8,7 @@ from typing import Dict, List
 
 from src.core import database
 from src.core.historical_issue_catalog import KNOWN_HISTORICAL_ISSUE_CODES
+from src.core.historical_partida_classifier import MODULE_RULES
 
 
 REQUIRED_HISTORICAL_TABLES = {
@@ -71,7 +72,13 @@ def diagnose_historical_integrity(limit_per_check: int = 100) -> Dict:
         for table_name in sorted(REQUIRED_HISTORICAL_TABLES):
             result["counts"][table_name] = _count(conn, table_name)
 
-        checks = _budget_checks() + _partida_checks() + _pattern_checks() + _issue_checks()
+        checks = (
+            _budget_checks()
+            + _partida_checks()
+            + _pattern_checks()
+            + _issue_checks()
+            + _classifier_checks(conn)
+        )
         for check in checks:
             rows = conn.execute(check["sql"], check.get("params", ())).fetchmany(limit_per_check)
             for row in rows:
@@ -524,4 +531,31 @@ def _issue_checks() -> List[Dict]:
             """,
             "params": known,
         },
+    ]
+
+
+def _classifier_checks(conn: sqlite3.Connection) -> List[Dict]:
+    module_names = tuple(sorted((name or "").strip().lower() for name in MODULE_RULES if name))
+    if not module_names:
+        return []
+    placeholders = ",".join("?" for _ in module_names)
+    seeded_rows = conn.execute(
+        f"SELECT nombre FROM execution_module WHERE LOWER(nombre) IN ({placeholders})",
+        module_names,
+    ).fetchall()
+    seeded = {(row["nombre"] or "").strip().lower() for row in seeded_rows}
+    missing = [name for name in module_names if name not in seeded]
+    if not missing:
+        return []
+    values_sql = " UNION ALL ".join("SELECT ? AS module_name" for _ in missing)
+    return [
+        {
+            "category": "classifier",
+            "check": "classifier_module_not_seeded",
+            "severity": "WARN",
+            "table": "execution_module",
+            "message": "Modulo usado por el clasificador que no existe en execution_module.",
+            "sql": values_sql,
+            "params": tuple(missing),
+        }
     ]

@@ -4,6 +4,7 @@ from datetime import datetime
 from src.core import database
 from src.core.historical_integrity_diagnostics import diagnose_historical_integrity
 from src.core.historical_issue_catalog import historical_issue_label, is_known_historical_issue_code
+from src.core.historical_partida_classifier import MODULE_RULES
 from src.core.repositories import (
     assign_partida_module,
     get_or_create_execution_module,
@@ -40,7 +41,7 @@ def test_diagnostics_empty_initialized_schema_is_clean(tmp_path, monkeypatch):
 
     assert report["schema_ok"] is True
     assert report["missing_tables"] == []
-    assert report["findings"] == []
+    assert all(finding["check"] == "classifier_module_not_seeded" for finding in report["findings"])
     assert report["counts"]["historical_budget"] == 0
 
 
@@ -142,5 +143,66 @@ def test_diagnostics_detect_contaminated_memory_and_unknown_issue(tmp_path, monk
 
 def test_historical_issue_catalog_known_and_unknown_labels():
     assert is_known_historical_issue_code("READ_ERROR") is True
+    assert is_known_historical_issue_code("NO_EXPECTED_NUMERO") is True
     assert is_known_historical_issue_code("does_not_exist") is False
     assert historical_issue_label("does_not_exist") == "Aviso del analisis historico."
+
+
+def test_diagnostics_detect_classifier_modules_not_seeded(tmp_path, monkeypatch):
+    monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "classifier_missing.db"))
+    with database.get_connection() as conn:
+        for module_name in MODULE_RULES:
+            conn.execute("DELETE FROM execution_module WHERE nombre=?", (module_name,))
+        conn.commit()
+
+    report = diagnose_historical_integrity()
+    findings = [
+        finding
+        for finding in report["findings"]
+        if finding["check"] == "classifier_module_not_seeded"
+    ]
+
+    assert findings
+    missing_modules = {finding["data"]["module_name"] for finding in findings}
+    assert set(MODULE_RULES).issubset(missing_modules)
+
+
+def test_diagnostics_accept_legacy_no_expected_numero_issue_code(tmp_path, monkeypatch):
+    monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "legacy_issue_code.db"))
+    budget_id, err = upsert_historical_budget(
+        {
+            "ruta_excel": str(tmp_path / "legacy_issue.xlsx"),
+            "ruta_carpeta": str(tmp_path),
+            "nombre_proyecto": "legacy_issue.xlsx",
+            "fecha_modificacion_excel": datetime.now().isoformat(),
+            "fecha_analisis": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "analisis_ok": True,
+            "analysis_status": "VALID_WITH_WARNINGS",
+            "usable_for_learning": False,
+            "learning_status": "PENDING_REVIEW",
+        }
+    )
+    assert err is None
+    with database.get_connection() as conn:
+        conn.execute(
+            """INSERT INTO historical_budget_issue
+               (historical_budget_id, severity, code, message, created_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            (
+                budget_id,
+                "WARN",
+                "NO_EXPECTED_NUMERO",
+                "Legacy sin numero esperado",
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            ),
+        )
+        conn.commit()
+
+    report = diagnose_historical_integrity()
+    unknown_issue_findings = [
+        finding
+        for finding in report["findings"]
+        if finding["check"] == "unknown_issue_code"
+    ]
+
+    assert unknown_issue_findings == []

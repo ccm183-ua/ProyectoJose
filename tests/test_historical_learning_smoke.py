@@ -274,10 +274,13 @@ def test_historical_learning_smoke_flow(tmp_path, monkeypatch):
         decision_source="MANUAL",
         decision_reason="Test include pending budget",
     )
-    assert err is None
+    assert err is not None
+    assert "No se puede incluir en memoria" in err
     hb_excluded_after = get_historical_budget_by_path(str(excluded_path))
     assert hb_excluded_after is not None
     assert hb_excluded_after["analysis_status"] == AnalysisStatus.EXCLUDED_INCOMPLETE_DATA
+    assert hb_excluded_after["learning_status"] == "NOT_ELIGIBLE"
+    assert hb_excluded_after["usable_for_learning"] is False
 
     reclass_result = analyzer.reclassify_budget_modules(excluded_budget_id)
     assert reclass_result.get("ok") is True
