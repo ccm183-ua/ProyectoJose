@@ -125,6 +125,7 @@ def init_schema(conn: sqlite3.Connection) -> None:
     _migrate_historical_budget_status(conn)
     _migrate_historical_budget_probe_scores(conn)
     _migrate_historical_budget_learning_status(conn)
+    _migrate_historical_budget_analysis_versioning(conn)
     _seed_execution_modules(conn)
 
 
@@ -213,6 +214,25 @@ def _migrate_historical_budget_learning_status(conn: sqlite3.Connection) -> None
         conn.execute("ALTER TABLE historical_budget ADD COLUMN learning_decision_reason TEXT")
     if "learning_decision_at" not in columns:
         conn.execute("ALTER TABLE historical_budget ADD COLUMN learning_decision_at TEXT")
+    conn.commit()
+
+
+def _migrate_historical_budget_analysis_versioning(conn: sqlite3.Connection) -> None:
+    """Añade columnas de versionado técnico de análisis y diagnósticos del probe."""
+    cur = conn.execute("PRAGMA table_info(historical_budget)")
+    columns = [row[1] for row in cur.fetchall()]
+    if "analyzer_version" not in columns:
+        conn.execute("ALTER TABLE historical_budget ADD COLUMN analyzer_version TEXT")
+    if "probe_version" not in columns:
+        conn.execute("ALTER TABLE historical_budget ADD COLUMN probe_version TEXT")
+    if "reader_version" not in columns:
+        conn.execute("ALTER TABLE historical_budget ADD COLUMN reader_version TEXT")
+    if "quality_rules_version" not in columns:
+        conn.execute("ALTER TABLE historical_budget ADD COLUMN quality_rules_version TEXT")
+    if "classifier_version" not in columns:
+        conn.execute("ALTER TABLE historical_budget ADD COLUMN classifier_version TEXT")
+    if "probe_diagnostics_json" not in columns:
+        conn.execute("ALTER TABLE historical_budget ADD COLUMN probe_diagnostics_json TEXT")
     conn.commit()
 
 
@@ -370,6 +390,12 @@ CREATE TABLE IF NOT EXISTS historical_budget (
     learning_status_source TEXT,
     learning_decision_reason TEXT,
     learning_decision_at TEXT,
+    analyzer_version TEXT,
+    probe_version TEXT,
+    reader_version TEXT,
+    quality_rules_version TEXT,
+    classifier_version TEXT,
+    probe_diagnostics_json TEXT,
     header_score INTEGER DEFAULT 0,
     partida_score INTEGER DEFAULT 0,
     error TEXT

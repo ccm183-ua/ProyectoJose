@@ -69,7 +69,9 @@ def get_historical_budget_by_path(ruta_excel: str) -> Optional[Dict]:
                       analysis_status, compatible_score, selected_sheet, selected_sheet_index,
                       expected_numero, detected_numero, numero_matches, usable_for_learning,
                       learning_status, learning_status_source, learning_decision_reason,
-                      learning_decision_at, header_score, partida_score, error
+                      learning_decision_at, analyzer_version, probe_version, reader_version,
+                      quality_rules_version, classifier_version, probe_diagnostics_json,
+                      header_score, partida_score, error
                FROM historical_budget WHERE ruta_excel=?""",
             (ruta,),
         )
@@ -108,9 +110,15 @@ def get_historical_budget_by_path(ruta_excel: str) -> Optional[Dict]:
         "learning_status_source": row[28] or "",
         "learning_decision_reason": row[29] or "",
         "learning_decision_at": row[30] or "",
-        "header_score": int(row[31] or 0),
-        "partida_score": int(row[32] or 0),
-        "error": row[33] or "",
+        "analyzer_version": row[31] or "",
+        "probe_version": row[32] or "",
+        "reader_version": row[33] or "",
+        "quality_rules_version": row[34] or "",
+        "classifier_version": row[35] or "",
+        "probe_diagnostics_json": row[36] or "",
+        "header_score": int(row[37] or 0),
+        "partida_score": int(row[38] or 0),
+        "error": row[39] or "",
     }
 
 
@@ -130,8 +138,9 @@ def upsert_historical_budget(data: Dict) -> Tuple[Optional[int], Optional[str]]:
                     compatible_score, selected_sheet, selected_sheet_index, expected_numero,
                     detected_numero, numero_matches, usable_for_learning, learning_status,
                     learning_status_source, learning_decision_reason, learning_decision_at,
-                    header_score, partida_score, error)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    analyzer_version, probe_version, reader_version, quality_rules_version,
+                    classifier_version, probe_diagnostics_json, header_score, partida_score, error)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(ruta_excel) DO UPDATE SET
                        ruta_carpeta=excluded.ruta_carpeta,
                        numero_proyecto=excluded.numero_proyecto,
@@ -162,6 +171,12 @@ def upsert_historical_budget(data: Dict) -> Tuple[Optional[int], Optional[str]]:
                        learning_status_source=excluded.learning_status_source,
                        learning_decision_reason=excluded.learning_decision_reason,
                        learning_decision_at=excluded.learning_decision_at,
+                       analyzer_version=excluded.analyzer_version,
+                       probe_version=excluded.probe_version,
+                       reader_version=excluded.reader_version,
+                       quality_rules_version=excluded.quality_rules_version,
+                       classifier_version=excluded.classifier_version,
+                       probe_diagnostics_json=excluded.probe_diagnostics_json,
                        header_score=excluded.header_score,
                        partida_score=excluded.partida_score,
                        error=excluded.error
@@ -197,6 +212,12 @@ def upsert_historical_budget(data: Dict) -> Tuple[Optional[int], Optional[str]]:
                     (data.get("learning_status_source") or "").strip() or None,
                     (data.get("learning_decision_reason") or "").strip() or None,
                     (data.get("learning_decision_at") or "").strip() or None,
+                    (data.get("analyzer_version") or "").strip() or None,
+                    (data.get("probe_version") or "").strip() or None,
+                    (data.get("reader_version") or "").strip() or None,
+                    (data.get("quality_rules_version") or "").strip() or None,
+                    (data.get("classifier_version") or "").strip() or None,
+                    (data.get("probe_diagnostics_json") or "").strip() or None,
                     int(data.get("header_score", 0)),
                     int(data.get("partida_score", 0)),
                     (data.get("error") or "").strip() or None,

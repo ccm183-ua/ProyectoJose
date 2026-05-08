@@ -4,6 +4,7 @@ Analizador de presupuestos históricos para inteligencia offline.
 
 import os
 import re
+import json
 from datetime import datetime
 from typing import Dict, List, Optional
 
@@ -66,6 +67,12 @@ def _resolve_expected_numero(excel_path: str, existing: Optional[Dict]) -> str:
 
 class HistoricalBudgetAnalyzer:
     """Analiza Excels históricos, persiste partidas y clasifica módulos."""
+
+    ANALYZER_VERSION = "historical_budget_analyzer_v2"
+    PROBE_VERSION = "budget_file_probe_v2"
+    READER_VERSION = "budget_reader_v1"
+    QUALITY_RULES_VERSION = "budget_quality_v1"
+    CLASSIFIER_VERSION = "historical_partida_classifier_v1"
 
     def __init__(
         self,
@@ -200,6 +207,7 @@ class HistoricalBudgetAnalyzer:
         try:
             expected_numero = _resolve_expected_numero(excel_path, existing)
             probe_result = self.probe.probe(excel_path, expected_numero=expected_numero)
+            probe_diagnostics_json = json.dumps(probe_result, ensure_ascii=False, sort_keys=True)
             if not probe_result.get("is_compatible"):
                 budget_payload = {
                     "ruta_excel": excel_path,
@@ -235,6 +243,12 @@ class HistoricalBudgetAnalyzer:
                     "learning_status_source": "AUTO",
                     "learning_decision_reason": "Archivo no compatible con estructura de presupuesto.",
                     "learning_decision_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "analyzer_version": self.ANALYZER_VERSION,
+                    "probe_version": self.PROBE_VERSION,
+                    "reader_version": self.READER_VERSION,
+                    "quality_rules_version": self.QUALITY_RULES_VERSION,
+                    "classifier_version": self.CLASSIFIER_VERSION,
+                    "probe_diagnostics_json": probe_diagnostics_json,
                     "header_score": int(probe_result.get("header_score") or 0),
                     "partida_score": int(probe_result.get("partida_score") or 0),
                     "error": "",
@@ -303,6 +317,12 @@ class HistoricalBudgetAnalyzer:
                 "learning_status_source": "AUTO",
                 "learning_decision_reason": "Presupuesto valido para aprendizaje.",
                 "learning_decision_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "analyzer_version": self.ANALYZER_VERSION,
+                "probe_version": self.PROBE_VERSION,
+                "reader_version": self.READER_VERSION,
+                "quality_rules_version": self.QUALITY_RULES_VERSION,
+                "classifier_version": self.CLASSIFIER_VERSION,
+                "probe_diagnostics_json": probe_diagnostics_json,
                 "header_score": int(probe_result.get("header_score") or 0),
                 "partida_score": int(probe_result.get("partida_score") or 0),
                 "error": "",
@@ -408,6 +428,12 @@ class HistoricalBudgetAnalyzer:
                 "learning_status_source": "AUTO",
                 "learning_decision_reason": "Error de lectura durante el analisis.",
                 "learning_decision_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "analyzer_version": self.ANALYZER_VERSION,
+                "probe_version": self.PROBE_VERSION,
+                "reader_version": self.READER_VERSION,
+                "quality_rules_version": self.QUALITY_RULES_VERSION,
+                "classifier_version": self.CLASSIFIER_VERSION,
+                "probe_diagnostics_json": "",
                 "error": str(exc),
             }
             budget_id, _ = upsert_historical_budget(error_payload)
