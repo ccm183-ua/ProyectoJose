@@ -31,6 +31,7 @@ class MainFrame(QMainWindow):
         self._db_svc = DatabaseService()
         self._db_frame = None
         self._dashboard_frame = None
+        self._historical_memory_dashboard = None
         self._build_ui()
         self._center()
 
@@ -132,6 +133,8 @@ class MainFrame(QMainWindow):
         m_tools = menubar.addMenu("&Herramientas")
         act_hist = m_tools.addAction("Analizar presupuestos terminados...")
         act_hist.triggered.connect(self._open_historical_analysis)
+        act_memory = m_tools.addAction("Panel de memoria historica...")
+        act_memory.triggered.connect(self._open_historical_memory_dashboard)
 
         m_ayuda = menubar.addMenu("&Ayuda")
         act_about = m_ayuda.addAction("Acerca de...")
@@ -181,6 +184,29 @@ class MainFrame(QMainWindow):
             self._dashboard_frame.raise_()
         except Exception as ex:
             QMessageBox.critical(self, "Error", f"Error al abrir el dashboard: {ex}")
+
+    def _open_historical_memory_dashboard(self):
+        try:
+            from src.gui.historical_memory_dashboard import HistoricalMemoryDashboard
+
+            if self._historical_memory_dashboard is not None:
+                try:
+                    if self._historical_memory_dashboard.isVisible():
+                        self._historical_memory_dashboard._reload()
+                        self._historical_memory_dashboard.raise_()
+                        self._historical_memory_dashboard.activateWindow()
+                        return
+                except RuntimeError:
+                    self._historical_memory_dashboard = None
+
+            self._historical_memory_dashboard = HistoricalMemoryDashboard(self)
+            self._historical_memory_dashboard.destroyed.connect(
+                lambda: setattr(self, "_historical_memory_dashboard", None)
+            )
+            self._historical_memory_dashboard.show()
+            self._historical_memory_dashboard.raise_()
+        except Exception as ex:
+            QMessageBox.critical(self, "Error", f"Error al abrir la memoria historica: {ex}")
 
     def _open_db_folder(self):
         try:

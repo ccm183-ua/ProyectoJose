@@ -684,6 +684,152 @@ def get_historical_learning_metrics(analysis_run_id: Optional[int] = None) -> Di
     }
 
 
+def get_historical_memory_dashboard_metrics() -> Dict:
+    """Devuelve KPIs globales de memoria historica para el panel de control."""
+    with database.get_connection(read_only=True) as conn:
+        budget_row = conn.execute(
+            """SELECT
+                   COUNT(*),
+                   SUM(CASE WHEN analysis_status='VALID' THEN 1 ELSE 0 END),
+                   SUM(CASE WHEN analysis_status='VALID_WITH_WARNINGS' THEN 1 ELSE 0 END),
+                   SUM(CASE WHEN analysis_status='EXCLUDED_INCOMPLETE_DATA' THEN 1 ELSE 0 END),
+                   SUM(CASE WHEN analysis_status='NOT_COMPATIBLE' THEN 1 ELSE 0 END),
+                   SUM(CASE WHEN analysis_status='READ_ERROR' THEN 1 ELSE 0 END),
+                   SUM(CASE WHEN learning_status='INCLUDED' THEN 1 ELSE 0 END),
+                   SUM(CASE WHEN learning_status='PENDING_REVIEW' THEN 1 ELSE 0 END),
+                   SUM(CASE WHEN learning_status='EXCLUDED' THEN 1 ELSE 0 END),
+                   SUM(CASE WHEN learning_status='NOT_ELIGIBLE' THEN 1 ELSE 0 END),
+                   SUM(CASE WHEN COALESCE(warning_count, 0) > 0 THEN 1 ELSE 0 END)
+               FROM historical_budget"""
+        ).fetchone() or [0] * 11
+        partidas = conn.execute("SELECT COUNT(*) FROM historical_partida").fetchone()
+        patterns = conn.execute(
+            """SELECT
+                   COUNT(*),
+                   SUM(CASE WHEN src.sources_count > 0 THEN 1 ELSE 0 END)
+               FROM suggested_partida_pattern p
+               LEFT JOIN (
+                   SELECT pattern_id, COUNT(*) AS sources_count
+                     FROM suggested_partida_pattern_source
+                    GROUP BY pattern_id
+               ) src ON src.pattern_id = p.id
+               WHERE p.activo=1"""
+        ).fetchone() or [0, 0]
+    return {
+        "total_budgets": int(budget_row[0] or 0),
+        "valid": int(budget_row[1] or 0),
+        "valid_with_warnings": int(budget_row[2] or 0),
+        "invalid": int(budget_row[3] or 0),
+        "not_compatible": int(budget_row[4] or 0),
+        "read_error": int(budget_row[5] or 0),
+        "included": int(budget_row[6] or 0),
+        "pending_review": int(budget_row[7] or 0),
+        "excluded": int(budget_row[8] or 0),
+        "not_eligible": int(budget_row[9] or 0),
+        "with_warnings": int(budget_row[10] or 0),
+        "historical_partidas": int((partidas or [0])[0] or 0),
+        "active_patterns": int(patterns[0] or 0),
+        "patterns_with_sources": int(patterns[1] or 0),
+    }
+
+
+def list_historical_memory_dashboard_budgets(
+    filters: Optional[Dict] = None,
+    limit: int = 1000,
+) -> List[Dict]:
+    """Lista presupuestos historicos con datos agregados para el panel global."""
+    filters = filters or {}
+    safe_limit = max(1, min(int(limit or 1000), 5000))
+    where = []
+    params: List[object] = []
+
+    analysis_status = (filters.get("analysis_status") or "").strip()
+    if analysis_status:
+        where.append("hb.analysis_status=?")
+        params.append(analysis_status)
+
+    learning_status = (filters.get("learning_status") or "").strip()
+    if learning_status:
+        where.append("hb.learning_status=?")
+        params.append(learning_status)
+
+    search = (filters.get("search") or "").strip().lower()
+    if search:
+        where.append(
+            """(LOWER(COALESCE(hb.ruta_excel, '')) LIKE ?
+                OR LOWER(COALESCE(hb.nombre_proyecto, '')) LIKE ?
+                OR LOWER(COALESCE(hb.numero_proyecto, '')) LIKE ?
+                OR LOWER(COALESCE(hb.cliente, '')) LIKE ?)"""
+        )
+        like = f"%{search}%"
+        params.extend([like, like, like, like])
+
+    if filters.get("only_problems"):
+        where.append(
+            """(hb.analysis_status IN ('VALID_WITH_WARNINGS', 'EXCLUDED_INCOMPLETE_DATA', 'NOT_COMPATIBLE', 'READ_ERROR')
+                OR hb.learning_status IN ('PENDING_REVIEW', 'NOT_ELIGIBLE')
+                OR COALESCE(hb.warning_count, 0) > 0
+                OR hb.learning_status IS NULL
+                OR hb.learning_status='')"""
+        )
+
+    where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+    params.append(safe_limit)
+    with database.get_connection(read_only=True) as conn:
+        cur = conn.execute(
+            f"""SELECT
+                    hb.id,
+                    hb.ruta_excel,
+                    hb.numero_proyecto,
+                    hb.nombre_proyecto,
+                    hb.cliente,
+                    hb.total,
+                    hb.analysis_status,
+                    hb.learning_status,
+                    hb.usable_for_learning,
+                    hb.warning_count,
+                    hb.num_partidas,
+                    hb.fecha_analisis,
+                    hb.selected_sheet,
+                    hb.compatible_score,
+                    COALESCE(GROUP_CONCAT(DISTINCT em.nombre), '') AS modules,
+                    COUNT(DISTINCT spp.id) AS related_patterns
+               FROM historical_budget hb
+               LEFT JOIN historical_partida hp ON hp.historical_budget_id = hb.id
+               LEFT JOIN historical_partida_module hpm ON hpm.partida_id = hp.id
+               LEFT JOIN execution_module em ON em.id = hpm.module_id
+               LEFT JOIN suggested_partida_pattern_source spps ON spps.historical_budget_id = hb.id
+               LEFT JOIN suggested_partida_pattern spp ON spp.id = spps.pattern_id AND spp.activo = 1
+               {where_sql}
+               GROUP BY hb.id
+               ORDER BY hb.fecha_analisis DESC, hb.ruta_excel ASC
+               LIMIT ?""",
+            tuple(params),
+        )
+        rows = cur.fetchall()
+    return [
+        {
+            "id": int(r[0]),
+            "ruta_excel": r[1] or "",
+            "numero_proyecto": r[2] or "",
+            "nombre_proyecto": r[3] or "",
+            "cliente": r[4] or "",
+            "total": float(r[5] or 0.0),
+            "analysis_status": r[6] or "",
+            "learning_status": r[7] or "",
+            "usable_for_learning": bool(r[8]),
+            "warning_count": int(r[9] or 0),
+            "num_partidas": int(r[10] or 0),
+            "fecha_analisis": r[11] or "",
+            "selected_sheet": r[12] or "",
+            "compatible_score": int(r[13] or 0),
+            "modules": [m for m in (r[14] or "").split(",") if m],
+            "related_patterns": int(r[15] or 0),
+        }
+        for r in rows
+    ]
+
+
 def get_historical_partidas_for_classification(historical_budget_id: int) -> List[Dict]:
     with database.get_connection(read_only=True) as conn:
         cur = conn.execute(
