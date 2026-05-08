@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 
 from src.core.historical_analysis_status import AnalysisStatus
 from src.core.historical_budget_analyzer import HistoricalBudgetAnalyzer
+from src.core.historical_issue_catalog import historical_issue_label
 from src.core.repositories import (
     append_budget_issue,
     get_historical_learning_metrics,
@@ -242,23 +243,7 @@ class HistoricalAnalysisResultsDialog(QDialog):
 
     @staticmethod
     def _issue_code_label(code: str) -> str:
-        key = (code or "").strip().upper()
-        return {
-            "SEVERE_MANY_ZERO_PRICES": "Más del 50% de las partidas tienen precio unitario igual o menor que 0.",
-            "SEVERE_TOTAL_ZERO": "El presupuesto tiene total 0 o no se ha detectado correctamente.",
-            "SEVERE_NO_PARTIDAS": "No se han detectado partidas válidas en el presupuesto.",
-            "NO_PARTIDA_STRUCTURE": "El archivo no tiene una estructura de partidas compatible.",
-            "NO_BUDGET_HEADER": "No se ha detectado la cabecera esperada del presupuesto.",
-            "NO_EXPECTED_NUMERO": "No se pudo confirmar el número de presupuesto esperado.",
-            "WARN_NO_EXPECTED_NUMERO": "No se pudo confirmar el número de presupuesto esperado.",
-            "WARN_NUMERO_MISMATCH": "El número detectado no coincide con el número esperado.",
-            "WARN_LOW_PARTIDA_COUNT": "Se detectaron pocas partidas; conviene revisar.",
-            "READ_ERROR": "Error técnico durante la lectura del Excel.",
-            "MANUALLY_EXCLUDED": "Archivo excluido manualmente del aprendizaje.",
-            "MANUALLY_INCLUDED": "Archivo marcado manualmente como apto para aprendizaje.",
-            "NO_WORKSHEETS": "No se encontraron hojas de cálculo legibles en el archivo.",
-            "NO_PROBE_RESULT": "No se pudo evaluar la compatibilidad del archivo.",
-        }.get(key, "Aviso del análisis histórico.")
+        return historical_issue_label(code)
 
     def _memory_item_for_row(self, row: dict) -> QTableWidgetItem:
         budget_id = int(row.get("id") or 0)
@@ -513,17 +498,11 @@ class HistoricalAnalysisResultsDialog(QDialog):
     def _include_selected_memory(self):
         changed = 0
         for data in self._selected_rows_data():
-            status = data.get("analysis_status")
-            if status not in (AnalysisStatus.VALID, AnalysisStatus.VALID_WITH_WARNINGS, AnalysisStatus.MANUALLY_EXCLUDED):
+            if not self._can_be_included_in_memory(data):
                 continue
             budget_id = int(data.get("id") or 0)
             if budget_id <= 0:
                 continue
-            if status == AnalysisStatus.MANUALLY_EXCLUDED:
-                partidas = get_historical_budget_partidas(budget_id, limit=500)
-                has_positive_price = any(float(p.get("precio_unitario", 0.0) or 0.0) > 0 for p in partidas)
-                if not partidas or not has_positive_price:
-                    continue
             self._pending_learning_decisions[budget_id] = True
             changed += 1
         if changed:
@@ -556,7 +535,6 @@ class HistoricalAnalysisResultsDialog(QDialog):
             if status not in (
                 AnalysisStatus.VALID,
                 AnalysisStatus.VALID_WITH_WARNINGS,
-                AnalysisStatus.MANUALLY_EXCLUDED,
             ):
                 continue
             budget_id = int(data.get("id") or 0)
@@ -669,6 +647,13 @@ class HistoricalAnalysisResultsDialog(QDialog):
         budget_id = int(data.get("id") or 0)
         if budget_id <= 0:
             return
+        if not self._can_be_included_in_memory(data):
+            QMessageBox.warning(
+                self,
+                "Marcar como apto",
+                "Solo se pueden incluir en memoria archivos tecnicamente validos o validos con avisos.",
+            )
+            return
         partidas = get_historical_budget_partidas(budget_id, limit=500)
         if not partidas:
             QMessageBox.warning(
@@ -731,6 +716,13 @@ class HistoricalAnalysisResultsDialog(QDialog):
         QMessageBox.information(self, "Reanalizar", "Archivo reanalizado correctamente.")
         parent_dialog.accept()
         self._reload_rows()
+
+    @staticmethod
+    def _can_be_included_in_memory(data: dict) -> bool:
+        return data.get("analysis_status") in (
+            AnalysisStatus.VALID,
+            AnalysisStatus.VALID_WITH_WARNINGS,
+        )
 
     @staticmethod
     def _open_excel(data: dict):
