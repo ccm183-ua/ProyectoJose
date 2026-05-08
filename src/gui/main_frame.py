@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 from src.core import database as db_module
 from src.core.services import BudgetService, DatabaseService
 from src.gui import theme
+from src.gui.historical_suggestions_dialog import HistoricalSuggestionContextDialog
 
 
 class MainFrame(QMainWindow):
@@ -364,25 +365,23 @@ class MainFrame(QMainWindow):
 
     def _offer_partidas(self, excel_path, project_data):
         historical_result = self._try_historical_suggestions(project_data)
-        if historical_result and historical_result.get("message") and not historical_result.get("partidas"):
-            analyzed_text = (historical_result.get("input_text") or "").strip()
-            if not analyzed_text:
-                analyzed_text = "(vacío)"
-            details = (
-                f"{historical_result.get('message', 'No hay sugerencias históricas disponibles.')}\n\n"
-                f"Texto analizado:\n{analyzed_text}\n\n"
-                "Consejo: añade una descripción más específica del trabajo.\n"
-                "Ejemplo válido: \"Impermeabilización de cubierta con reparación de filtraciones y sumideros\"."
-            )
-            QMessageBox.information(
-                self,
-                "Sugerencias históricas",
-                details,
-            )
+        if historical_result and self._should_offer_context_retry(historical_result):
+            retried = self._retry_historical_with_manual_context(project_data, historical_result)
+            if retried is not None:
+                historical_result = retried
+            elif historical_result and historical_result.get("message") and not historical_result.get("partidas"):
+                QMessageBox.information(
+                    self,
+                    "Sugerencias históricas",
+                    (
+                        f"{historical_result.get('message', 'No hay sugerencias históricas disponibles.')}\n\n"
+                        "Continuaremos con el flujo normal (IA opcional)."
+                    ),
+                )
         if historical_result and historical_result.get("partidas"):
             from src.gui.historical_suggestions_dialog import HistoricalSuggestionsDialog
 
-            dlg = HistoricalSuggestionsDialog(self, historical_result)
+            dlg = HistoricalSuggestionsDialog(self, historical_result, project_data=project_data)
             if dlg.exec() == 1:
                 selected = dlg.get_selected_partidas()
                 if selected:
@@ -433,6 +432,36 @@ class MainFrame(QMainWindow):
             return
 
         self._offer_ai_partidas(excel_path, project_data)
+
+    @staticmethod
+    def _should_offer_context_retry(suggestion_result: dict) -> bool:
+        if not suggestion_result or suggestion_result.get("partidas"):
+            return False
+        reason = (suggestion_result.get("failure_reason") or "").strip().upper()
+        return reason in {"NO_MODULES", "TOO_GENERIC", "NO_PATTERNS", "FILTERED_OUT"}
+
+    def _retry_historical_with_manual_context(self, project_data: dict, suggestion_result: dict):
+        from src.core.historical_suggestion_service import HistoricalSuggestionService
+
+        ctx_dlg = HistoricalSuggestionContextDialog(self, suggestion_result)
+        if ctx_dlg.exec() != 1 or not ctx_dlg.wants_search_again():
+            return None
+
+        manual_context = ctx_dlg.get_manual_context()
+        fresh = HistoricalSuggestionService().suggest_for_project(
+            project_data or {},
+            user_description=manual_context,
+        )
+        if not fresh.get("partidas"):
+            QMessageBox.information(
+                self,
+                "Sugerencias históricas",
+                (
+                    f"{fresh.get('message', 'No se han encontrado sugerencias suficientes.')}\n\n"
+                    "Puedes continuar con IA o sin sugerencias históricas."
+                ),
+            )
+        return fresh
 
     @staticmethod
     def _try_historical_suggestions(project_data):
