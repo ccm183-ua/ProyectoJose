@@ -606,6 +606,20 @@ def upsert_budget_enrichment(
         return "El contenido del enriquecimiento no puede estar vacío."
     with database.get_connection() as conn:
         try:
+            enrichment_type_clean = (enrichment_type or "").strip().upper()
+            if enrichment_type_clean == "TECHNICAL_DESCRIPTION":
+                row = conn.execute(
+                    "SELECT analysis_status FROM historical_budget WHERE id=?",
+                    (historical_budget_id,),
+                ).fetchone()
+                if not row:
+                    return "No se encontró el presupuesto histórico indicado."
+                analysis_status = (row[0] or "").strip().upper()
+                if analysis_status not in ("VALID", "VALID_WITH_WARNINGS"):
+                    return (
+                        "No se puede guardar descripción técnica: estado técnico no apto "
+                        f"({analysis_status or 'desconocido'})."
+                    )
             now = _now_str()
             conn.execute(
                 """INSERT INTO historical_budget_enrichment
@@ -628,7 +642,7 @@ def upsert_budget_enrichment(
                 """,
                 (
                     historical_budget_id,
-                    (enrichment_type or "").strip(),
+                    enrichment_type_clean or None,
                     (status or "").strip(),
                     (source or "").strip(),
                     (model or "").strip() or None,
@@ -861,6 +875,18 @@ def list_historical_memory_dashboard_budgets(
         params.append(analysis_status)
 
     learning_status = (filters.get("learning_status") or "").strip()
+    technical_description_filter = (filters.get("technical_description_filter") or "").strip().upper()
+    if technical_description_filter == "WITHOUT":
+        where.append("hbe.id IS NULL")
+    elif technical_description_filter == "WITH":
+        where.append("hbe.id IS NOT NULL")
+    elif technical_description_filter in ("MANUAL", "APPROVED", "PENDING_REVIEW", "REJECTED", "PENDING"):
+        if technical_description_filter == "PENDING":
+            where.append("COALESCE(hbe.status, '') IN ('PENDING_REVIEW', 'PENDING')")
+        else:
+            where.append("COALESCE(hbe.status, '') = ?")
+            params.append(technical_description_filter)
+
     if learning_status:
         where.append("hb.learning_status=?")
         params.append(learning_status)

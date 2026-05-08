@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 
 from src.core.historical_analysis_status import AnalysisStatus
 from src.core.historical_budget_analyzer import HistoricalBudgetAnalyzer
+from src.core.historical_enrichment import technical_description_status_label
 from src.core.historical_integrity_diagnostics import diagnose_historical_integrity
 from src.core.historical_issue_catalog import historical_issue_label
 from src.core.historical_pattern_builder import HistoricalPatternBuilder
@@ -121,6 +122,17 @@ class HistoricalMemoryDashboard(QDialog):
         self._learning_filter.addItem("No aptos", "NOT_ELIGIBLE")
         self._learning_filter.currentIndexChanged.connect(self._reload)
         filter_row.addWidget(self._learning_filter)
+
+        self._technical_description_filter = QComboBox(self)
+        self._technical_description_filter.addItem("Descripción: todas", "")
+        self._technical_description_filter.addItem("Sin descripción", "WITHOUT")
+        self._technical_description_filter.addItem("Con descripción", "WITH")
+        self._technical_description_filter.addItem("Manual", "MANUAL")
+        self._technical_description_filter.addItem("Aprobada", "APPROVED")
+        self._technical_description_filter.addItem("Pendiente", "PENDING_REVIEW")
+        self._technical_description_filter.addItem("Rechazada", "REJECTED")
+        self._technical_description_filter.currentIndexChanged.connect(self._reload)
+        filter_row.addWidget(self._technical_description_filter)
 
         self._search = QLineEdit(self)
         self._search.setPlaceholderText("Buscar por archivo, obra, numero o cliente")
@@ -237,6 +249,7 @@ class HistoricalMemoryDashboard(QDialog):
         return {
             "analysis_status": self._status_filter.currentData() or "",
             "learning_status": self._learning_filter.currentData() or "",
+            "technical_description_filter": self._technical_description_filter.currentData() or "",
             "search": self._search.text().strip(),
             "only_problems": self._only_problems.isChecked(),
             "with_warnings": self._with_warnings.isChecked(),
@@ -749,15 +762,7 @@ class HistoricalMemoryDashboard(QDialog):
 
     @staticmethod
     def _technical_description_status_label(data: dict) -> str:
-        status = (data.get("technical_description_status") or "").strip().upper()
-        if not status:
-            return "Sin descripción"
-        return {
-            "MANUAL": "Manual",
-            "APPROVED": "Aprobada",
-            "PENDING": "Pendiente",
-            "REJECTED": "Rechazada",
-        }.get(status, status.title())
+        return technical_description_status_label(data.get("technical_description_status", ""))
 
     @staticmethod
     def _technical_description_source_label(data: dict) -> str:
@@ -774,7 +779,7 @@ class HistoricalMemoryDashboard(QDialog):
         status = (data.get("technical_description_status") or "").strip().upper()
         if status == "APPROVED":
             return theme.qcolor(theme.SUCCESS)
-        if status == "PENDING":
+        if status in ("PENDING_REVIEW", "PENDING"):
             return theme.qcolor(theme.WARNING)
         if status == "REJECTED":
             return theme.qcolor(theme.ERROR)

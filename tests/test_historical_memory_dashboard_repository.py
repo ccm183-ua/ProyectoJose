@@ -13,6 +13,7 @@ from src.core.repositories import (
     upsert_budget_enrichment,
     upsert_historical_budget,
 )
+from src.core.historical_enrichment import technical_description_status_label
 
 
 def _budget(tmp_path, name: str, **overrides):
@@ -302,3 +303,55 @@ def test_dashboard_rows_include_technical_description_fields(tmp_path, monkeypat
 
     assert delete_budget_enrichment(budget_id, "TECHNICAL_DESCRIPTION") is None
     assert get_budget_enrichment(budget_id, "TECHNICAL_DESCRIPTION") is None
+
+
+def test_technical_description_rejected_for_non_eligible_analysis_status(tmp_path, monkeypatch):
+    monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "memory_dashboard_enrichment_not_eligible.db"))
+    with database.get_connection() as _conn:
+        pass
+    budget_id = _budget(
+        tmp_path,
+        "not_compatible_desc.xlsx",
+        analysis_status="NOT_COMPATIBLE",
+        learning_status="NOT_ELIGIBLE",
+        usable_for_learning=False,
+    )
+    err = upsert_budget_enrichment(
+        historical_budget_id=budget_id,
+        enrichment_type="TECHNICAL_DESCRIPTION",
+        status="MANUAL",
+        source="MANUAL",
+        content="No debería persistirse.",
+    )
+    assert err is not None
+    assert "estado técnico no apto" in err
+
+
+def test_dashboard_filters_by_technical_description_status(tmp_path, monkeypatch):
+    monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "memory_dashboard_enrichment_filters.db"))
+    with database.get_connection() as _conn:
+        pass
+    without_desc_id = _budget(tmp_path, "without_desc.xlsx")
+    with_desc_id = _budget(tmp_path, "with_desc.xlsx")
+    err = upsert_budget_enrichment(
+        historical_budget_id=with_desc_id,
+        enrichment_type="TECHNICAL_DESCRIPTION",
+        status="MANUAL",
+        source="MANUAL",
+        content="Descripción manual de prueba.",
+    )
+    assert err is None
+
+    rows_without = list_historical_memory_dashboard_budgets({"technical_description_filter": "WITHOUT"})
+    assert {row["id"] for row in rows_without} == {without_desc_id}
+
+    rows_with = list_historical_memory_dashboard_budgets({"technical_description_filter": "WITH"})
+    assert {row["id"] for row in rows_with} == {with_desc_id}
+
+    rows_manual = list_historical_memory_dashboard_budgets({"technical_description_filter": "MANUAL"})
+    assert {row["id"] for row in rows_manual} == {with_desc_id}
+
+
+def test_technical_description_label_accepts_pending_review():
+    label = technical_description_status_label("PENDING_REVIEW")
+    assert label == "Pendiente"
