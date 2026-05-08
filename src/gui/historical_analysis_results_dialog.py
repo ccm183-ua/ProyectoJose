@@ -10,7 +10,6 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
-    QFormLayout,
     QGroupBox,
     QGridLayout,
     QHBoxLayout,
@@ -120,6 +119,7 @@ class HistoricalAnalysisResultsDialog(QDialog):
         self._table.setColumnWidth(9, 140)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.verticalHeader().setVisible(False)
         self._table.doubleClicked.connect(self._show_detail_selected)
         layout.addWidget(self._table, 1)
@@ -219,6 +219,36 @@ class HistoricalAnalysisResultsDialog(QDialog):
             "ERROR": "Error",
         }.get((severity or "").strip().upper(), severity or "-")
 
+    @staticmethod
+    def _issue_code_label(code: str) -> str:
+        key = (code or "").strip().upper()
+        return {
+            "SEVERE_MANY_ZERO_PRICES": "Mas del 50% de las partidas tienen precio unitario igual o menor que 0.",
+            "SEVERE_TOTAL_ZERO": "El presupuesto tiene total 0 o no se ha detectado correctamente.",
+            "SEVERE_NO_PARTIDAS": "No se han detectado partidas validas en el presupuesto.",
+            "NO_PARTIDA_STRUCTURE": "El archivo no tiene una estructura de partidas compatible.",
+            "NO_BUDGET_HEADER": "No se ha detectado la cabecera esperada del presupuesto.",
+            "NO_EXPECTED_NUMERO": "No se pudo confirmar el numero de presupuesto esperado.",
+            "WARN_NO_EXPECTED_NUMERO": "No se pudo confirmar el numero de presupuesto esperado.",
+            "WARN_NUMERO_MISMATCH": "El numero detectado no coincide con el numero esperado.",
+            "WARN_LOW_PARTIDA_COUNT": "Se detectaron pocas partidas; conviene revisar.",
+            "READ_ERROR": "Error tecnico durante la lectura del Excel.",
+            "MANUALLY_EXCLUDED": "Archivo excluido manualmente del aprendizaje.",
+            "MANUALLY_INCLUDED": "Archivo marcado manualmente como apto para aprendizaje.",
+            "NO_WORKSHEETS": "No se encontraron hojas de calculo legibles en el archivo.",
+            "NO_PROBE_RESULT": "No se pudo evaluar la compatibilidad del archivo.",
+        }.get(key, "Aviso del analisis historico.")
+
+    @staticmethod
+    def _set_dynamic_table_height(table: QTableWidget, row_count: int, min_rows: int, max_rows: int) -> None:
+        visible_rows = min(max(int(row_count or 0), min_rows), max_rows)
+        row_height = table.verticalHeader().defaultSectionSize()
+        header_height = table.horizontalHeader().height()
+        extra = table.frameWidth() * 2 + 8
+        table_height = header_height + (visible_rows * row_height) + extra
+        table.setMinimumHeight(table_height)
+        table.setMaximumHeight(table_height)
+
     def _show_detail_selected(self):
         row_index = self._table.currentRow()
         if row_index < 0:
@@ -245,19 +275,44 @@ class HistoricalAnalysisResultsDialog(QDialog):
         status_text = self._status_label(data.get("analysis_status", ""))
         learn_text = "Sí se usa para aprendizaje" if data.get("usable_for_learning") else "No se usa para aprendizaje"
         header = QLabel(f"{status_text} — {learn_text}", dlg)
-        header.setFont(theme.font_md(weight=theme.W_SEMIBOLD))
+        header.setFont(theme.get_font_medium(13))
         header.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; background: transparent;")
         lay.addWidget(header)
 
         details_box = QGroupBox("Datos generales", dlg)
-        details_form = QFormLayout(details_box)
-        details_form.addRow("Archivo:", QLabel(data.get("ruta_excel", ""), details_box))
-        details_form.addRow("Hoja usada:", QLabel(data.get("selected_sheet", ""), details_box))
-        details_form.addRow("Número esperado:", QLabel(data.get("expected_numero", ""), details_box))
-        details_form.addRow("Número detectado:", QLabel(data.get("detected_numero", ""), details_box))
-        details_form.addRow("Score compatibilidad:", QLabel(str(int(data.get("compatible_score", 0))), details_box))
-        details_form.addRow("Partidas detectadas:", QLabel(str(int(data.get("num_partidas", 0))), details_box))
-        details_form.addRow("Total detectado:", QLabel(f"{float(data.get('total', 0.0)):.2f} €", details_box))
+        details_grid = QGridLayout(details_box)
+        details_grid.setHorizontalSpacing(theme.SPACE_XL)
+        details_grid.setVerticalSpacing(theme.SPACE_XS)
+
+        file_name = os.path.basename(data.get("ruta_excel", "")) or "-"
+        file_path = data.get("ruta_excel", "") or "-"
+        file_name_lbl = QLabel(file_name, details_box)
+        file_name_lbl.setFont(theme.get_font_medium(12))
+        file_name_lbl.setWordWrap(True)
+        file_path_lbl = QLabel(file_path, details_box)
+        file_path_lbl.setWordWrap(True)
+        file_path_lbl.setStyleSheet(f"color: {theme.TEXT_MUTED}; background: transparent;")
+
+        details_grid.addWidget(QLabel("Archivo", details_box), 0, 0)
+        details_grid.addWidget(file_name_lbl, 1, 0)
+        details_grid.addWidget(file_path_lbl, 2, 0)
+        details_grid.addWidget(QLabel(f"Hoja usada: {data.get('selected_sheet', '')}", details_box), 3, 0)
+        details_grid.addWidget(QLabel(f"Número esperado: {data.get('expected_numero', '')}", details_box), 4, 0)
+        details_grid.addWidget(QLabel(f"Número detectado: {data.get('detected_numero', '')}", details_box), 5, 0)
+
+        details_grid.addWidget(QLabel(f"Score compatibilidad: {int(data.get('compatible_score', 0))}", details_box), 0, 1)
+        details_grid.addWidget(QLabel(f"Partidas detectadas: {int(data.get('num_partidas', 0))}", details_box), 1, 1)
+        details_grid.addWidget(QLabel(f"Total detectado: {float(data.get('total', 0.0)):.2f} €", details_box), 2, 1)
+        details_grid.addWidget(
+            QLabel(
+                f"Usado para aprendizaje: {'Sí' if data.get('usable_for_learning') else 'No'}",
+                details_box,
+            ),
+            3,
+            1,
+        )
+        details_grid.setColumnStretch(0, 1)
+        details_grid.setColumnStretch(1, 1)
         lay.addWidget(details_box)
 
         diagnosis_box = QGroupBox("Diagnóstico", dlg)
@@ -271,24 +326,26 @@ class HistoricalAnalysisResultsDialog(QDialog):
         issues_layout = QVBoxLayout(issues_box)
         issues_table = QTableWidget(issues_box)
         issues_table.setColumnCount(3)
-        issues_table.setHorizontalHeaderLabels(["Nivel", "Código", "Descripción"])
-        issues_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        issues_table.setHorizontalHeaderLabels(["Nivel", "Motivo", "Código técnico"])
+        issues_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         issues_table.setColumnWidth(0, 100)
-        issues_table.setColumnWidth(1, 220)
+        issues_table.setColumnWidth(2, 210)
         issues_table.verticalHeader().setVisible(False)
         issues_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
         issues_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         if issues:
             issues_table.setRowCount(len(issues))
             for idx, issue in enumerate(issues):
+                code = issue.get("code", "")
                 issues_table.setItem(idx, 0, QTableWidgetItem(self._severity_label(issue.get("severity", ""))))
-                issues_table.setItem(idx, 1, QTableWidgetItem(issue.get("code", "")))
-                issues_table.setItem(idx, 2, QTableWidgetItem(issue.get("message", "")))
+                issues_table.setItem(idx, 1, QTableWidgetItem(self._issue_code_label(code)))
+                issues_table.setItem(idx, 2, QTableWidgetItem(code))
         else:
             issues_table.setRowCount(1)
             issues_table.setItem(0, 0, QTableWidgetItem("-"))
-            issues_table.setItem(0, 1, QTableWidgetItem("-"))
-            issues_table.setItem(0, 2, QTableWidgetItem("Sin avisos registrados."))
+            issues_table.setItem(0, 1, QTableWidgetItem("Sin avisos registrados."))
+            issues_table.setItem(0, 2, QTableWidgetItem("-"))
+        self._set_dynamic_table_height(issues_table, issues_table.rowCount(), min_rows=1, max_rows=6)
         issues_layout.addWidget(issues_table)
         lay.addWidget(issues_box)
 
@@ -326,6 +383,7 @@ class HistoricalAnalysisResultsDialog(QDialog):
             partidas_table.setItem(0, 3, QTableWidgetItem("-"))
             partidas_table.setItem(0, 4, QTableWidgetItem("-"))
             partidas_table.setItem(0, 5, QTableWidgetItem("-"))
+        self._set_dynamic_table_height(partidas_table, partidas_table.rowCount(), min_rows=3, max_rows=10)
         partidas_layout.addWidget(partidas_table)
         lay.addWidget(partidas_box, 1)
 
