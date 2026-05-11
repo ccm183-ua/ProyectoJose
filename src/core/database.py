@@ -212,11 +212,13 @@ def init_schema(conn: sqlite3.Connection) -> None:
     Ejecuta migraciones para añadir columnas nuevas a tablas existentes.
     """
     conn.executescript(_SCHEMA_SQL)
+    conn.executescript(_HISTORICAL_SCHEMA_SQL)
     conn.commit()
     _migrate_administracion_nombre(conn)
     _migrate_comunidad_cif(conn)
     _migrate_presupuesto_v2(conn)
     _ensure_presupuesto_v2_indexes(conn)
+    _ensure_app_database_identity(conn)
 
 
 # ---------------------------------------------------------------------------
@@ -355,6 +357,215 @@ CREATE INDEX IF NOT EXISTS idx_presupuesto_partida_presupuesto
 CREATE INDEX IF NOT EXISTS idx_presupuesto_partida_numero
     ON presupuesto_partida(numero);
 """
+
+# Memoria histórica, patrones y diagnósticos (repositorio historical_repository y paneles asociados).
+_HISTORICAL_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS app_database_identity (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    database_uuid TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS historical_analysis_run (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    fecha_inicio TEXT,
+    carpeta_origen TEXT,
+    estado TEXT,
+    fecha_fin TEXT,
+    total_archivos INTEGER,
+    archivos_procesados INTEGER,
+    archivos_omitidos INTEGER,
+    archivos_error INTEGER,
+    error TEXT
+);
+
+CREATE TABLE IF NOT EXISTS historical_pattern_build_run (
+    id TEXT PRIMARY KEY,
+    started_at TEXT,
+    builder_version TEXT,
+    finished_at TEXT,
+    source_budget_count INTEGER,
+    source_partida_count INTEGER,
+    patterns_inserted INTEGER,
+    error TEXT
+);
+
+CREATE TABLE IF NOT EXISTS execution_module (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nombre TEXT NOT NULL UNIQUE,
+    categoria TEXT,
+    activo INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS historical_budget (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ruta_excel TEXT NOT NULL UNIQUE,
+    ruta_carpeta TEXT,
+    numero_proyecto TEXT,
+    nombre_proyecto TEXT,
+    cliente TEXT,
+    localidad TEXT,
+    tipo_obra_original TEXT,
+    tipo_obra_normalizado TEXT,
+    estado TEXT,
+    total REAL,
+    fecha_presupuesto TEXT,
+    fecha_modificacion_excel TEXT NOT NULL,
+    fecha_analisis TEXT,
+    num_partidas INTEGER NOT NULL DEFAULT 0,
+    analysis_run_id INTEGER REFERENCES historical_analysis_run(id) ON DELETE SET NULL,
+    analisis_ok INTEGER NOT NULL DEFAULT 0,
+    warning_count INTEGER NOT NULL DEFAULT 0,
+    warnings TEXT,
+    analysis_status TEXT,
+    compatible_score INTEGER NOT NULL DEFAULT 0,
+    selected_sheet TEXT,
+    selected_sheet_index INTEGER,
+    expected_numero TEXT,
+    detected_numero TEXT,
+    numero_matches INTEGER NOT NULL DEFAULT 0,
+    usable_for_learning INTEGER NOT NULL DEFAULT 0,
+    learning_status TEXT,
+    learning_status_source TEXT,
+    learning_decision_reason TEXT,
+    learning_decision_at TEXT,
+    analyzer_version TEXT,
+    probe_version TEXT,
+    reader_version TEXT,
+    quality_rules_version TEXT,
+    classifier_version TEXT,
+    probe_diagnostics_json TEXT,
+    header_score INTEGER NOT NULL DEFAULT 0,
+    partida_score INTEGER NOT NULL DEFAULT 0,
+    error TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_historical_budget_run ON historical_budget(analysis_run_id);
+CREATE INDEX IF NOT EXISTS idx_historical_budget_status ON historical_budget(analysis_status);
+CREATE INDEX IF NOT EXISTS idx_historical_budget_learning ON historical_budget(learning_status);
+
+CREATE TABLE IF NOT EXISTS historical_partida (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    historical_budget_id INTEGER NOT NULL REFERENCES historical_budget(id) ON DELETE CASCADE,
+    orden INTEGER NOT NULL,
+    codigo TEXT,
+    titulo TEXT,
+    descripcion TEXT,
+    concepto_original TEXT,
+    concepto_normalizado TEXT,
+    unidad TEXT,
+    cantidad REAL,
+    precio_unitario REAL,
+    total_linea REAL,
+    capitulo TEXT,
+    created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_historical_partida_budget ON historical_partida(historical_budget_id, orden);
+
+CREATE TABLE IF NOT EXISTS historical_partida_module (
+    partida_id INTEGER NOT NULL REFERENCES historical_partida(id) ON DELETE CASCADE,
+    module_id INTEGER NOT NULL REFERENCES execution_module(id) ON DELETE CASCADE,
+    confidence REAL,
+    source TEXT,
+    PRIMARY KEY (partida_id, module_id)
+);
+
+CREATE TABLE IF NOT EXISTS budget_module_summary (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    historical_budget_id INTEGER NOT NULL REFERENCES historical_budget(id) ON DELETE CASCADE,
+    module_id INTEGER NOT NULL REFERENCES execution_module(id) ON DELETE CASCADE,
+    num_partidas INTEGER,
+    total_importe REAL,
+    porcentaje_presupuesto REAL,
+    UNIQUE (historical_budget_id, module_id)
+);
+
+CREATE TABLE IF NOT EXISTS historical_budget_issue (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    historical_budget_id INTEGER NOT NULL REFERENCES historical_budget(id) ON DELETE CASCADE,
+    severity TEXT,
+    code TEXT,
+    message TEXT,
+    created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_historical_budget_issue_budget ON historical_budget_issue(historical_budget_id);
+
+CREATE TABLE IF NOT EXISTS historical_budget_enrichment (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    historical_budget_id INTEGER NOT NULL REFERENCES historical_budget(id) ON DELETE CASCADE,
+    enrichment_type TEXT NOT NULL,
+    status TEXT,
+    source TEXT,
+    model TEXT,
+    prompt_version TEXT,
+    input_hash TEXT,
+    content TEXT,
+    confidence REAL,
+    warnings TEXT,
+    metadata_json TEXT,
+    reviewed_at TEXT,
+    created_at TEXT,
+    updated_at TEXT,
+    UNIQUE (historical_budget_id, enrichment_type)
+);
+
+CREATE TABLE IF NOT EXISTS suggested_partida_pattern (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    module_id INTEGER NOT NULL REFERENCES execution_module(id) ON DELETE CASCADE,
+    concepto_normalizado TEXT NOT NULL,
+    titulo_sugerido TEXT,
+    descripcion_sugerida TEXT,
+    unidad_habitual TEXT,
+    precio_unitario_medio REAL,
+    precio_unitario_mediana REAL,
+    precio_unitario_min REAL,
+    precio_unitario_max REAL,
+    frecuencia INTEGER,
+    confianza REAL,
+    pattern_build_run TEXT,
+    pattern_source TEXT,
+    activo INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS suggested_partida_pattern_source (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pattern_id INTEGER NOT NULL REFERENCES suggested_partida_pattern(id) ON DELETE CASCADE,
+    historical_partida_id INTEGER NOT NULL REFERENCES historical_partida(id) ON DELETE CASCADE,
+    historical_budget_id INTEGER NOT NULL REFERENCES historical_budget(id) ON DELETE CASCADE,
+    precio_unitario REAL,
+    total_linea REAL,
+    created_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS historical_memory_event (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_type TEXT NOT NULL,
+    message TEXT,
+    metadata_json TEXT,
+    created_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS suggestion_template (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nombre TEXT NOT NULL,
+    tipo_obra_normalizado TEXT,
+    descripcion TEXT,
+    min_confidence REAL,
+    num_presupuestos_base INTEGER NOT NULL DEFAULT 0,
+    fecha_actualizacion TEXT,
+    activo INTEGER NOT NULL DEFAULT 1
+);
+"""
+
+
+def _ensure_app_database_identity(conn: sqlite3.Connection) -> None:
+    """Una fila fija (id=1) con UUID para distinguir ficheros .db en diagnósticos."""
+    cur = conn.execute("SELECT COUNT(*) FROM app_database_identity WHERE id=1")
+    n = int((cur.fetchone() or [0])[0] or 0)
+    if n == 0:
+        conn.execute(
+            "INSERT INTO app_database_identity (id, database_uuid) VALUES (1, ?)",
+            (str(uuid.uuid4()),),
+        )
+        conn.commit()
 
 
 def get_db_path_as_string() -> str:

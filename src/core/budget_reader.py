@@ -162,8 +162,8 @@ class BudgetReader:
             if not sheets:
                 return None
 
-            for sheet_xml in sheets:
-                rows = self._extract_rows(sheet_xml)
+            for sheet in sheets:
+                rows = self._extract_rows(sheet["sheet_xml"])
                 header = self._extract_header(rows, shared_strings)
                 norm_sheet = normalize_project_num(header.get("numero", ""))
                 if norm_sheet == norm_expected:
@@ -205,9 +205,18 @@ class BudgetReader:
         return None
 
     @staticmethod
-    def _read_all_sheets(file_bytes: bytes) -> List[str]:
-        """Lee todas las hojas de datos disponibles (sheet1, sheet2, sheetN)."""
-        sheets: List[str] = []
+    def _workbook_tab_names_in_order(z: zipfile.ZipFile) -> List[str]:
+        """Nombres de pestaña según ``xl/workbook.xml`` (orden visual)."""
+        try:
+            wb = z.read("xl/workbook.xml").decode("utf-8", errors="replace")
+        except KeyError:
+            return []
+        return re.findall(r'<sheet[^>]+name="([^"]+)"', wb)
+
+    @staticmethod
+    def _read_all_sheets(file_bytes: bytes) -> List[Dict]:
+        """Lee todas las hojas: lista de dicts con ``sheet_index``, ``sheet_name``, ``sheet_xml``."""
+        sheets: List[Dict] = []
         try:
             with zipfile.ZipFile(io.BytesIO(file_bytes), "r") as z:
                 sheet_entries = []
@@ -217,8 +226,17 @@ class BudgetReader:
                         continue
                     sheet_entries.append((int(m.group(1)), name))
                 sheet_entries.sort(key=lambda x: x[0])
-                for _, sheet_path in sheet_entries:
-                    sheets.append(z.read(sheet_path).decode("utf-8"))
+                tab_names = BudgetReader._workbook_tab_names_in_order(z)
+                for pos, (idx, sheet_path) in enumerate(sheet_entries):
+                    xml = z.read(sheet_path).decode("utf-8")
+                    name = tab_names[pos] if pos < len(tab_names) else f"sheet{idx}"
+                    sheets.append(
+                        {
+                            "sheet_index": idx,
+                            "sheet_name": name,
+                            "sheet_xml": xml,
+                        }
+                    )
         except (zipfile.BadZipFile, IOError, OSError):
             pass
         return sheets

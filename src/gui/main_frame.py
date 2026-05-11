@@ -293,7 +293,9 @@ class MainFrame(QMainWindow):
             QMessageBox.critical(self, "Error", result.error)
             return
 
-        self._offer_ai_partidas(result.excel_path, project_data)
+        # Flujo completo: contexto memoria → sugerencias históricas → revisión combinada / IA complementaria
+        # (no solo el diálogo «Generar Partidas con IA» aislado).
+        self._offer_partidas(result.excel_path, project_data)
         finalized = self._budget_svc.finalize_budget(
             result.excel_path,
             project_data=project_data,

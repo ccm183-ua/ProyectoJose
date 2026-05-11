@@ -56,6 +56,8 @@ from src.core.historical_pattern_builder import HistoricalPatternBuilder
 from src.core.database import get_db_path_as_string, open_db_folder
 from src.core.repositories import (
     append_budget_issue,
+    clear_all_historical_analysis_data,
+    delete_historical_budgets_by_ids,
     get_budget_enrichment,
     get_historical_budget_issues,
     get_historical_budget_partidas,
@@ -142,6 +144,14 @@ class HistoricalMemoryDashboard(QDialog):
             "Recalcula las sugerencias históricas usando los presupuestos incluidos."
         )
         maintenance_menu.addAction(self._act_rebuild_patterns)
+        maintenance_menu.addSeparator()
+        self._act_clear_historical = QAction("Borrar todos los presupuestos analizados...", self)
+        self._act_clear_historical.triggered.connect(self._confirm_clear_all_historical_analysis)
+        self._act_clear_historical.setToolTip(
+            "Elimina de la base de datos todo el analisis historico (panel de memoria), "
+            "partidas, patrones y registros de analisis por carpeta. No borra la cache del dashboard principal."
+        )
+        maintenance_menu.addAction(self._act_clear_historical)
         self._btn_maintenance.setMenu(maintenance_menu)
         header_actions.addWidget(self._btn_maintenance)
         header.addLayout(header_actions)
@@ -329,6 +339,23 @@ class HistoricalMemoryDashboard(QDialog):
         self._act_reject_description = QAction("Rechazar descripcion", self)
         self._act_reject_description.triggered.connect(self._reject_description_selected)
         self._description_menu.addAction(self._act_reject_description)
+        self._description_menu.addSeparator()
+        self._act_approve_descriptions_batch = QAction(
+            "Aprobar descripciones IA pendientes (selección)", self
+        )
+        self._act_approve_descriptions_batch.setToolTip(
+            "Aprueba sin abrir el editor todas las filas seleccionadas que tengan descripción IA pendiente de revisión."
+        )
+        self._act_approve_descriptions_batch.triggered.connect(self._approve_pending_descriptions_batch)
+        self._description_menu.addAction(self._act_approve_descriptions_batch)
+        self._act_reject_descriptions_batch = QAction(
+            "Rechazar descripciones IA pendientes (selección)", self
+        )
+        self._act_reject_descriptions_batch.setToolTip(
+            "Rechaza la descripción IA en todas las filas seleccionadas que estén pendientes de revisión."
+        )
+        self._act_reject_descriptions_batch.triggered.connect(self._reject_pending_descriptions_batch)
+        self._description_menu.addAction(self._act_reject_descriptions_batch)
         self._actions_menu.addMenu(self._description_menu)
         self._actions_menu.addSeparator()
         self._act_open_excel = QAction("Abrir Excel", self)
@@ -349,6 +376,12 @@ class HistoricalMemoryDashboard(QDialog):
         self._act_reanalyze = QAction("Reanalizar", self)
         self._act_reanalyze.triggered.connect(self._reanalyze_selected)
         self._actions_menu.addAction(self._act_reanalyze)
+        self._act_delete_selected = QAction("Borrar seleccionados del analisis...", self)
+        self._act_delete_selected.setToolTip(
+            "Elimina de la base de datos los presupuestos históricos seleccionados en la tabla."
+        )
+        self._act_delete_selected.triggered.connect(self._confirm_delete_selected_historical)
+        self._actions_menu.addAction(self._act_delete_selected)
         self._btn_actions.setMenu(self._actions_menu)
         actions.addWidget(self._btn_actions)
 
@@ -406,6 +439,7 @@ class HistoricalMemoryDashboard(QDialog):
         menu.addAction(self._act_include)
         menu.addAction(self._act_exclude)
         menu.addAction(self._act_reanalyze)
+        menu.addAction(self._act_delete_selected)
         menu.exec(self._table.viewport().mapToGlobal(pos))
 
     def _reload(self):
@@ -642,6 +676,10 @@ class HistoricalMemoryDashboard(QDialog):
         self._act_generate_ai_descriptions_batch.setEnabled(has_rows)
         self._act_approve_description.setEnabled(single and self._has_pending_ai_description(rows[0]) if single else False)
         self._act_reject_description.setEnabled(single and self._has_pending_ai_description(rows[0]) if single else False)
+        pending_desc = [r for r in rows if self._has_pending_ai_description(r)]
+        batch_desc_ok = len(pending_desc) >= 1
+        self._act_approve_descriptions_batch.setEnabled(batch_desc_ok)
+        self._act_reject_descriptions_batch.setEnabled(batch_desc_ok)
         can_include = has_rows and all(self._can_be_included_in_memory(row) for row in rows)
         self._act_include.setEnabled(can_include)
         can_exclude = has_rows and any(self._can_be_excluded_in_memory(row) for row in rows)
@@ -649,6 +687,7 @@ class HistoricalMemoryDashboard(QDialog):
         excel_ok = single and bool(rows[0].get("ruta_excel")) and os.path.exists(rows[0].get("ruta_excel", ""))
         self._act_open_excel.setEnabled(excel_ok)
         self._act_reanalyze.setEnabled(excel_ok)
+        self._act_delete_selected.setEnabled(has_rows)
 
     def _show_detail_selected(self):
         data = self._selected_row_data()
@@ -995,6 +1034,103 @@ class HistoricalMemoryDashboard(QDialog):
             return
         self._reload()
 
+    def _approve_pending_descriptions_batch(self):
+        rows = self._selected_rows_data()
+        pending = [r for r in rows if self._has_pending_ai_description(r)]
+        if not pending:
+            QMessageBox.information(
+                self,
+                "Descripciones IA",
+                "Ninguna fila seleccionada tiene descripcion IA pendiente de revision.",
+            )
+            return
+        n = len(pending)
+        if (
+            QMessageBox.question(
+                self,
+                "Aprobar descripciones",
+                f"Se aprobaran {n} descripcion(es) tecnica(s) generadas por IA, "
+                "sin abrir el editor (texto actual tal cual).\n\n"
+                "¿Continuar?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            != QMessageBox.StandardButton.Yes
+        ):
+            return
+        reviewed_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        ok = 0
+        errors: list[str] = []
+        for r in pending:
+            bid = int(r.get("id") or 0)
+            err = update_budget_enrichment_review_status(
+                bid, "TECHNICAL_DESCRIPTION", "APPROVED", reviewed_at=reviewed_at
+            )
+            if err:
+                errors.append(f"{self._file_or_project(r)}: {err}")
+            else:
+                ok += 1
+        log_historical_memory_event(
+            "TECHNICAL_DESCRIPTION_BATCH_APPROVED",
+            "Aprobacion masiva de descripciones IA pendientes.",
+            {"approved": ok, "failed": len(errors)},
+        )
+        self._reload()
+        msg = f"Aprobadas: {ok}\nCon error: {len(errors)}"
+        if errors:
+            msg += "\n\n" + "\n".join(errors[:12])
+            if len(errors) > 12:
+                msg += f"\n... y {len(errors) - 12} mas."
+        QMessageBox.information(self, "Descripciones IA", msg)
+
+    def _reject_pending_descriptions_batch(self):
+        rows = self._selected_rows_data()
+        pending = [r for r in rows if self._has_pending_ai_description(r)]
+        if not pending:
+            QMessageBox.information(
+                self,
+                "Descripciones IA",
+                "Ninguna fila seleccionada tiene descripcion IA pendiente de revision.",
+            )
+            return
+        n = len(pending)
+        if (
+            QMessageBox.question(
+                self,
+                "Rechazar descripciones",
+                f"Se rechazaran {n} descripcion(es) tecnica(s) pendientes de revision.\n\n"
+                "¿Continuar?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            != QMessageBox.StandardButton.Yes
+        ):
+            return
+        reviewed_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        ok = 0
+        errors: list[str] = []
+        for r in pending:
+            bid = int(r.get("id") or 0)
+            err = update_budget_enrichment_review_status(
+                bid, "TECHNICAL_DESCRIPTION", "REJECTED", reviewed_at=reviewed_at
+            )
+            if err:
+                errors.append(f"{self._file_or_project(r)}: {err}")
+            else:
+                ok += 1
+        log_historical_memory_event(
+            "TECHNICAL_DESCRIPTION_BATCH_REJECTED",
+            "Rechazo masivo de descripciones IA pendientes.",
+            {"rejected": ok, "failed": len(errors)},
+        )
+        self._reload()
+        msg = f"Rechazadas: {ok}\nCon error: {len(errors)}"
+        if errors:
+            msg += "\n\n" + "\n".join(errors[:12])
+            if len(errors) > 12:
+                msg += f"\n... y {len(errors) - 12} mas."
+        QMessageBox.information(self, "Descripciones IA", msg)
+
     def _show_ai_description_review_dialog(self):
         data = self._selected_row_data()
         if not data or not self._has_pending_ai_description(data):
@@ -1110,6 +1246,8 @@ class HistoricalMemoryDashboard(QDialog):
         self._act_generate_ai_descriptions_batch.setEnabled(enabled)
         self._act_approve_description.setEnabled(enabled)
         self._act_reject_description.setEnabled(enabled)
+        self._act_approve_descriptions_batch.setEnabled(enabled)
+        self._act_reject_descriptions_batch.setEnabled(enabled)
         if enabled:
             self._update_action_states()
 
@@ -1245,6 +1383,82 @@ class HistoricalMemoryDashboard(QDialog):
                 f"Patrones reconstruidos: {int(result.get('patterns_inserted', 0))}",
             )
         self._refresh_kpis()
+
+    def _confirm_clear_all_historical_analysis(self):
+        confirm = QMessageBox.question(
+            self,
+            "Borrar analisis historico",
+            "Se eliminaran de la base de datos activa:\n\n"
+            "- Todos los presupuestos listados en este panel (tabla historical_budget)\n"
+            "- Partidas, avisos, descripciones tecnicas asociadas\n"
+            "- Patrones sugeridos y sus fuentes\n"
+            "- Registros de analisis por carpeta y de reconstruccion de patrones\n\n"
+            "No se borra la cache del dashboard de presupuestos por carpetas (tabla presupuesto), "
+            "ni comunidades, administraciones ni contactos.\n\n"
+            "Esta accion no se puede deshacer. ¿Continuar?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        ok, detail = clear_all_historical_analysis_data()
+        if not ok:
+            QMessageBox.critical(self, "Error al borrar", detail)
+            return
+        n = int(detail) if detail.isdigit() else 0
+        log_historical_memory_event(
+            "HISTORICAL_ANALYSIS_CLEARED",
+            "Borrado completo de presupuestos analizados desde el panel de memoria.",
+            {"historical_budgets_removed": n},
+        )
+        self._reload()
+        QMessageBox.information(
+            self,
+            "Borrado completado",
+            f"Se eliminaron {n} presupuesto(s) del analisis historico y datos relacionados.",
+        )
+
+    def _confirm_delete_selected_historical(self):
+        rows = self._selected_rows_data()
+        if not rows:
+            QMessageBox.information(self, "Memoria historica", "Selecciona al menos un presupuesto en la tabla.")
+            return
+        ids = [int(r.get("id") or 0) for r in rows if int(r.get("id") or 0) > 0]
+        if not ids:
+            return
+        preview = "\n".join(self._file_or_project(r) for r in rows[:15])
+        if len(rows) > 15:
+            preview += f"\n... y {len(rows) - 15} mas."
+        if (
+            QMessageBox.question(
+                self,
+                "Borrar seleccionados",
+                f"Se eliminaran {len(ids)} presupuesto(s) del analisis historico y sus datos "
+                f"(partidas, descripciones, incidencias asociadas a esas filas).\n\n"
+                f"{preview}\n\n"
+                "Esta accion no se puede deshacer. ¿Continuar?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            != QMessageBox.StandardButton.Yes
+        ):
+            return
+        deleted, err = delete_historical_budgets_by_ids(ids)
+        if err:
+            QMessageBox.critical(self, "Error al borrar", err)
+            return
+        log_historical_memory_event(
+            "HISTORICAL_BUDGETS_DELETED_SELECTION",
+            "Borrado parcial de presupuestos analizados desde el panel.",
+            {"requested": len(ids), "deleted": deleted},
+        )
+        self._rebuild_patterns(silent=True)
+        self._reload()
+        QMessageBox.information(
+            self,
+            "Borrado completado",
+            f"Se eliminaron {deleted} presupuesto(s) del analisis historico.",
+        )
 
     @staticmethod
     def _file_or_project(data: dict) -> str:

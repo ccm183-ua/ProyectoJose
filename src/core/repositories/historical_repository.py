@@ -1173,3 +1173,64 @@ def clear_historical_partida_modules_for_budget(historical_budget_id: int) -> Op
         except sqlite3.OperationalError as e:
             conn.rollback()
             return f"Error de base de datos: {e.args[0] if e.args else 'desconocido'}."
+
+
+def delete_historical_budgets_by_ids(budget_ids: List[int]) -> Tuple[int, Optional[str]]:
+    """
+    Elimina presupuestos históricos indicados y sus datos dependientes (CASCADE).
+
+    Returns:
+        (n_borrados, mensaje_error) donde mensaje_error es None si todo fue bien.
+    """
+    clean = sorted({int(x) for x in budget_ids if int(x) > 0})
+    if not clean:
+        return 0, None
+    placeholders = ",".join("?" * len(clean))
+    with database.get_connection() as conn:
+        try:
+            conn.execute("PRAGMA foreign_keys = ON")
+            cur = conn.execute(
+                f"DELETE FROM historical_budget WHERE id IN ({placeholders})",
+                clean,
+            )
+            conn.commit()
+            return int(cur.rowcount or 0), None
+        except sqlite3.Error as e:
+            conn.rollback()
+            return 0, e.args[0] if e.args else "Error desconocido en base de datos."
+
+
+def clear_all_historical_analysis_data() -> Tuple[bool, str]:
+    """
+    Borra por completo la memoria de análisis histórico: presupuestos analizados,
+    partidas, incidencias, enriquecimientos, resúmenes por módulo, fuentes y patrones
+    sugeridos, y registros de ejecución de análisis / reconstrucción de patrones.
+
+    No modifica: tabla ``presupuesto`` (caché del dashboard de carpetas),
+    ``suggestion_template``, ``execution_module``, ``historial_presupuesto``,
+    ``historical_memory_event`` (log de auditoría).
+    """
+    with database.get_connection() as conn:
+        try:
+            conn.execute("PRAGMA foreign_keys = ON")
+            cur = conn.execute("SELECT COUNT(*) FROM historical_budget")
+            n_budgets = int((cur.fetchone() or [0])[0] or 0)
+            conn.executescript(
+                """
+                DELETE FROM suggested_partida_pattern_source;
+                DELETE FROM suggested_partida_pattern;
+                DELETE FROM historical_partida_module;
+                DELETE FROM budget_module_summary;
+                DELETE FROM historical_budget_issue;
+                DELETE FROM historical_budget_enrichment;
+                DELETE FROM historical_partida;
+                DELETE FROM historical_budget;
+                DELETE FROM historical_analysis_run;
+                DELETE FROM historical_pattern_build_run;
+                """
+            )
+            conn.commit()
+            return True, str(n_budgets)
+        except sqlite3.Error as e:
+            conn.rollback()
+            return False, e.args[0] if e.args else "Error desconocido en base de datos."

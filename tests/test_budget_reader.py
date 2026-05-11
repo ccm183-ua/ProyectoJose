@@ -204,12 +204,18 @@ class TestBudgetReaderSheetSelection:
 
         sheets = BudgetReader._read_all_sheets(buff.getvalue())
         assert len(sheets) == 3
-        assert sheets[0] == "<sheet>one</sheet>"
-        assert sheets[2] == "<sheet>three</sheet>"
+        assert sheets[0]["sheet_xml"] == "<sheet>one</sheet>"
+        assert sheets[0]["sheet_index"] == 1
+        assert sheets[2]["sheet_xml"] == "<sheet>three</sheet>"
+        assert sheets[2]["sheet_index"] == 3
 
     def test_select_best_sheet_can_match_sheet3(self, monkeypatch):
         reader = BudgetReader()
-        all_sheets = ["sheet_xml_1", "sheet_xml_2", "sheet_xml_3"]
+        all_sheets = [
+            {"sheet_index": 1, "sheet_name": "s1", "sheet_xml": "sheet_xml_1"},
+            {"sheet_index": 2, "sheet_name": "s2", "sheet_xml": "sheet_xml_2"},
+            {"sheet_index": 3, "sheet_name": "s3", "sheet_xml": "sheet_xml_3"},
+        ]
 
         monkeypatch.setattr(
             reader,
@@ -233,16 +239,20 @@ class TestBudgetReaderSheetSelection:
 
         monkeypatch.setattr(reader, "_extract_header", _fake_extract_header)
 
-        selected = reader._select_best_sheet(
+        selected = reader._select_best_sheet_info(
             b"dummy",
             shared_strings=[],
             expected_numero="61-26",
         )
-        assert selected == "sheet_xml_3"
+        assert selected is not None
+        assert selected["sheet_xml"] == "sheet_xml_3"
 
     def test_select_best_sheet_returns_none_when_no_match(self, monkeypatch):
         reader = BudgetReader()
-        all_sheets = ["sheet_xml_1", "sheet_xml_2"]
+        all_sheets = [
+            {"sheet_index": 1, "sheet_name": "s1", "sheet_xml": "sheet_xml_1"},
+            {"sheet_index": 2, "sheet_name": "s2", "sheet_xml": "sheet_xml_2"},
+        ]
 
         monkeypatch.setattr(
             reader,
@@ -265,7 +275,7 @@ class TestBudgetReaderSheetSelection:
 
         monkeypatch.setattr(reader, "_extract_header", _fake_extract_header)
 
-        selected = reader._select_best_sheet(
+        selected = reader._select_best_sheet_info(
             b"dummy",
             shared_strings=[],
             expected_numero="61-26",

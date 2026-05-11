@@ -78,6 +78,8 @@ from src.core.repositories import (
     list_historical_memory_dashboard_budgets,
     get_historical_partidas_for_classification,
     clear_historical_partida_modules_for_budget,
+    clear_all_historical_analysis_data,
+    delete_historical_budgets_by_ids,
     replace_budget_issues,
     append_budget_issue,
 )
@@ -152,6 +154,8 @@ __all__ = [
     "list_historical_memory_dashboard_budgets",
     "get_historical_partidas_for_classification",
     "clear_historical_partida_modules_for_budget",
+    "clear_all_historical_analysis_data",
+    "delete_historical_budgets_by_ids",
     "replace_budget_issues",
     "append_budget_issue",
 ]
