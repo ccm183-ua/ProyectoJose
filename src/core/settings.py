@@ -25,12 +25,19 @@ class Settings:
     PATH_SAVE_BUDGETS = "ruta_guardar_presupuestos"
     PATH_OPEN_BUDGETS = "ruta_abrir_presupuestos"
     PATH_RELATION_FILE = "ruta_relacion_presupuestos"
+    PATH_DATABASE = "ruta_base_datos"
 
-    _ALL_PATH_KEYS = (PATH_SAVE_BUDGETS, PATH_OPEN_BUDGETS, PATH_RELATION_FILE)
+    _ALL_PATH_KEYS = (PATH_SAVE_BUDGETS, PATH_OPEN_BUDGETS, PATH_RELATION_FILE, PATH_DATABASE)
+
+    def get_database_path(self) -> Optional[str]:
+        return self.get_default_path(self.PATH_DATABASE)
+
+    def set_database_path(self, path: str) -> None:
+        self.set_default_path(self.PATH_DATABASE, path)
 
     def __init__(self, config_dir: Optional[str] = None):
         if config_dir is None:
-            config_dir = os.path.join(
+            config_dir = os.environ.get("CUBIAPP_CONFIG_DIR") or os.path.join(
                 os.path.expanduser("~"), ".cubiapp"
             )
         self._config_dir = config_dir

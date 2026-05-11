@@ -142,6 +142,13 @@ class HistoricalBudgetAnalyzer:
         source_folder: str = "",
         force_reanalyze: bool = False,
     ) -> Dict:
+        if len(excel_paths or []) > 1:
+            try:
+                from src.core.database_backup import create_database_backup
+
+                create_database_backup("before_historical_analysis_batch")
+            except Exception:
+                pass
         run_id, run_err = create_analysis_run(source_folder)
         if run_err:
             return {

@@ -14,9 +14,48 @@ import os
 import sqlite3
 import subprocess
 import sys
+import uuid
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Iterator
+
+from src.core.settings import Settings
+
+
+APP_VERSION = "cubiapp"
+
+
+def get_project_root() -> Path:
+    return Path(__file__).resolve().parent.parent.parent
+
+
+def get_legacy_db_path() -> Path:
+    return get_project_root() / "datos.db"
+
+
+def get_stable_default_db_path() -> Path:
+    return Path.home() / "Documents" / "CubiApp" / "datos.db"
+
+
+def _db_has_historical_data(path: Path) -> bool:
+    if not path.exists() or path.stat().st_size <= 0:
+        return False
+    try:
+        with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
+            table = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='historical_budget'"
+            ).fetchone()
+            if not table:
+                return False
+            count = conn.execute("SELECT COUNT(*) FROM historical_budget").fetchone()[0]
+            return int(count or 0) > 0
+    except sqlite3.Error:
+        return False
+
+
+def _db_is_empty_or_missing(path: Path) -> bool:
+    return not path.exists() or path.stat().st_size == 0 or not _db_has_historical_data(path)
 
 
 def get_db_path() -> Path:
@@ -30,12 +69,19 @@ def get_db_path() -> Path:
     Returns:
         Path absoluto al fichero .db
     """
+    settings_path = Settings().get_database_path()
+    if settings_path and os.path.isabs(settings_path):
+        return Path(settings_path)
+
     env_path = os.environ.get("CUBIAPP_DB_PATH")
     if env_path and os.path.isabs(env_path):
         return Path(env_path)
     # Ruta relativa a la raíz del proyecto (donde está src/)
-    project_root = Path(__file__).resolve().parent.parent.parent
-    return project_root / "datos.db"
+    stable_path = get_stable_default_db_path()
+    legacy_path = get_legacy_db_path()
+    if _db_is_empty_or_missing(stable_path) and _db_has_historical_data(legacy_path):
+        return legacy_path
+    return stable_path
 
 
 def ensure_db_directory(path: Path) -> None:
@@ -128,6 +174,8 @@ def init_schema(conn: sqlite3.Connection) -> None:
     _migrate_historical_budget_analysis_versioning(conn)
     _migrate_suggested_pattern_traceability(conn)
     _migrate_historical_budget_enrichment(conn)
+    _migrate_historical_memory_event(conn)
+    _migrate_database_identity(conn)
     _seed_execution_modules(conn)
 
 
@@ -277,6 +325,53 @@ def _migrate_historical_budget_enrichment(conn: sqlite3.Connection) -> None:
             ON historical_budget_enrichment(historical_budget_id, enrichment_type);
         """
     )
+    conn.commit()
+
+
+def _now_str() -> str:
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _migrate_historical_memory_event(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS historical_memory_event (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_type TEXT NOT NULL,
+            message TEXT,
+            metadata_json TEXT,
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_historical_memory_event_type
+            ON historical_memory_event(event_type);
+        """
+    )
+    conn.commit()
+
+
+def _migrate_database_identity(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS app_database_identity (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            database_uuid TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            app_version TEXT
+        );
+        """
+    )
+    row = conn.execute("SELECT database_uuid FROM app_database_identity WHERE id=1").fetchone()
+    if not row:
+        conn.execute(
+            """INSERT INTO app_database_identity (id, database_uuid, created_at, app_version)
+               VALUES (1, ?, ?, ?)""",
+            (str(uuid.uuid4()), _now_str(), APP_VERSION),
+        )
+        conn.execute(
+            """INSERT INTO historical_memory_event (event_type, message, metadata_json, created_at)
+               VALUES (?, ?, ?, ?)""",
+            ("DB_INITIALIZED", "Base de datos inicializada.", "{}", _now_str()),
+        )
     conn.commit()
 
 
@@ -595,6 +690,22 @@ CREATE INDEX IF NOT EXISTS idx_pattern_source_partida ON suggested_partida_patte
 CREATE INDEX IF NOT EXISTS idx_pattern_source_budget ON suggested_partida_pattern_source(historical_budget_id);
 CREATE INDEX IF NOT EXISTS idx_pattern_source_pattern_partida ON suggested_partida_pattern_source(pattern_id, historical_partida_id);
 CREATE INDEX IF NOT EXISTS idx_hbe_budget_type ON historical_budget_enrichment(historical_budget_id, enrichment_type);
+
+CREATE TABLE IF NOT EXISTS app_database_identity (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    database_uuid TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    app_version TEXT
+);
+
+CREATE TABLE IF NOT EXISTS historical_memory_event (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_type TEXT NOT NULL,
+    message TEXT,
+    metadata_json TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_historical_memory_event_type ON historical_memory_event(event_type);
 """
 
 

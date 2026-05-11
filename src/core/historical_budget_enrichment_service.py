@@ -9,6 +9,8 @@ import re
 from typing import Any, Dict, List, Optional
 
 from src.core.ai_service import AIService
+from src.core.database_backup import create_database_backup
+from src.core.database_persistence import log_historical_memory_event
 from src.core.prompts.historical_technical_description_v1 import (
     PROMPT_VERSION,
     SYSTEM_INSTRUCTIONS,
@@ -99,6 +101,11 @@ def generate_technical_description_for_budget(
     )
     if err:
         return _result(budget_id, "error", err, input_hash=input_hash)
+    log_historical_memory_event(
+        "AI_DESCRIPTION_GENERATED",
+        "Descripcion tecnica generada con IA.",
+        {"budget_id": int(budget_id), "input_hash": input_hash, "model": ai_response.get("model", "")},
+    )
     return _result(
         budget_id,
         "generated",
@@ -235,6 +242,11 @@ def generate_technical_descriptions_for_budgets(
     force: bool = False,
     ai_client: Optional[Any] = None,
 ) -> Dict:
+    if len(budget_ids or []) > 1:
+        try:
+            create_database_backup("before_ai_batch")
+        except Exception:
+            pass
     details = []
     summary = {"processed": len(budget_ids or []), "generated": 0, "skipped": 0, "errors": 0}
     for budget_id in budget_ids or []:
@@ -251,6 +263,11 @@ def generate_technical_descriptions_for_budgets(
         else:
             summary["errors"] += 1
     summary["details"] = details
+    log_historical_memory_event(
+        "AI_BATCH_FINISHED",
+        "Lote de descripciones IA finalizado.",
+        {k: v for k, v in summary.items() if k != "details"},
+    )
     return summary
 
 

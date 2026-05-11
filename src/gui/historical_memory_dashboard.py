@@ -34,6 +34,14 @@ from PySide6.QtWidgets import (
 
 from src.core.historical_analysis_status import AnalysisStatus
 from src.core.historical_budget_analyzer import HistoricalBudgetAnalyzer
+from src.core.database_backup import create_database_backup
+from src.core.database_persistence import (
+    copy_database_as_active,
+    find_candidate_with_historical_data,
+    find_database_candidates,
+    get_database_diagnostics,
+    log_historical_memory_event,
+)
 from src.core.historical_budget_enrichment_service import (
     classify_technical_description_generation_candidates,
     format_generation_candidate_summary,
@@ -78,6 +86,7 @@ class HistoricalMemoryDashboard(QDialog):
         self.setWindowTitle("Panel de memoria historica")
         self._rows: list[dict] = []
         self._has_any_budgets = False
+        self._db_candidate_warning_shown = False
         self._analyzer = HistoricalBudgetAnalyzer()
         self._ai_description_done.connect(self._on_ai_description_done)
         self._build_ui()
@@ -120,6 +129,9 @@ class HistoricalMemoryDashboard(QDialog):
         self._act_open_db_folder = QAction("Abrir carpeta BD", self)
         self._act_open_db_folder.triggered.connect(self._open_db_folder)
         maintenance_menu.addAction(self._act_open_db_folder)
+        self._act_db_info = QAction("Informacion de base de datos", self)
+        self._act_db_info.triggered.connect(self._show_database_info)
+        maintenance_menu.addAction(self._act_db_info)
         self._act_rebuild_patterns = QAction("Reconstruir patrones", self)
         self._act_rebuild_patterns.triggered.connect(self._rebuild_patterns)
         self._act_rebuild_patterns.setToolTip(
@@ -397,6 +409,7 @@ class HistoricalMemoryDashboard(QDialog):
         self._rows = list_historical_memory_dashboard_budgets(self._filters())
         self._populate_table()
         self._update_action_states()
+        self._check_empty_active_database_warning()
 
     def _refresh_kpis(self):
         metrics = get_historical_memory_dashboard_metrics()
@@ -495,6 +508,71 @@ class HistoricalMemoryDashboard(QDialog):
                 "Base de datos",
                 "No se pudo abrir la carpeta de la base de datos activa.",
             )
+
+    def _show_database_info(self):
+        info = get_database_diagnostics()
+        candidates = find_database_candidates()
+        log_historical_memory_event(
+            "DB_PATH_INFO_VIEWED",
+            "Informacion de base de datos consultada desde el panel.",
+            {"active_path": info.get("active_path", "")},
+        )
+        candidate_lines = []
+        for candidate in candidates:
+            counts = candidate.get("counts", {})
+            marker = " (activa)" if candidate.get("is_active") else ""
+            candidate_lines.append(
+                f"{candidate.get('path')}{marker}\n"
+                f"  existe={candidate.get('exists')} | tamano={candidate.get('size_bytes')} bytes | "
+                f"historicos={counts.get('historical_budget', 0)} | enriquecimientos={counts.get('historical_budget_enrichment', 0)} | "
+                f"uuid={candidate.get('database_uuid') or '-'}"
+            )
+        counts = info.get("counts", {})
+        message = (
+            f"Ruta activa: {info.get('active_path')}\n"
+            f"Existe fichero: {'si' if info.get('exists') else 'no'}\n"
+            f"Tamano: {int(info.get('size_bytes', 0))} bytes\n"
+            f"Ultima modificacion: {info.get('modified_at') or '-'}\n"
+            f"ID base de datos: {info.get('database_uuid') or '-'}\n\n"
+            f"historical_budget: {counts.get('historical_budget', 0)}\n"
+            f"historical_partida: {counts.get('historical_partida', 0)}\n"
+            f"historical_budget_enrichment: {counts.get('historical_budget_enrichment', 0)}\n"
+            f"suggested_partida_pattern: {counts.get('suggested_partida_pattern', 0)}\n"
+            f"historical_analysis_run: {counts.get('historical_analysis_run', 0)}\n"
+            f"Presupuestos incluidos: {info.get('included_budgets', 0)}\n"
+            f"Descripciones IA: {info.get('descriptions_ai', 0)}\n"
+            f"Descripciones manuales: {info.get('descriptions_manual', 0)}\n\n"
+            "Bases candidatas:\n"
+            + "\n".join(candidate_lines)
+        )
+        QMessageBox.information(self, "Informacion de base de datos", message[:12000])
+
+    def _check_empty_active_database_warning(self):
+        try:
+            info = get_database_diagnostics()
+            if not info.get("is_empty") or self._db_candidate_warning_shown:
+                return
+            candidate = find_candidate_with_historical_data()
+            if not candidate:
+                return
+            self._db_candidate_warning_shown = True
+            answer = QMessageBox.question(
+                self,
+                "Base de datos historica encontrada",
+                "Esta base de datos no tiene presupuestos historicos.\n"
+                "Se ha encontrado otra base con datos:\n\n"
+                f"{candidate.get('path')}\n\n"
+                "Quieres copiar esta base como activa? No se borrara la base origen.",
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+            result = copy_database_as_active(candidate.get("path", ""))
+            if not result.get("ok"):
+                QMessageBox.warning(self, "Base de datos", result.get("error", "No se pudo copiar la base."))
+                return
+            self._reload()
+        except Exception:
+            return
 
     def _selected_rows_data(self) -> list[dict]:
         rows = sorted({idx.row() for idx in self._table.selectionModel().selectedRows()})
@@ -774,6 +852,10 @@ class HistoricalMemoryDashboard(QDialog):
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
+        try:
+            create_database_backup("before_ai_batch")
+        except Exception:
+            pass
         self._set_ai_actions_enabled(False)
         self._stats_lbl.setText(f"Generando descripciones... 0 / {len(ready_ids)}")
         thread = threading.Thread(

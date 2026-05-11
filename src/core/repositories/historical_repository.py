@@ -784,6 +784,16 @@ def update_budget_enrichment_review_status(
                 ),
             )
             conn.commit()
+            try:
+                from src.core.database_persistence import log_historical_memory_event
+
+                log_historical_memory_event(
+                    "HISTORICAL_SCAN_FINISHED",
+                    "Analisis historico finalizado.",
+                    {"run_id": run_id, "summary": summary},
+                )
+            except Exception:
+                pass
             return None
         except sqlite3.OperationalError as e:
             conn.rollback()

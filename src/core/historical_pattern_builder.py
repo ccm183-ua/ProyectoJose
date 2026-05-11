@@ -8,6 +8,8 @@ from typing import Dict, List, Tuple
 from uuid import uuid4
 
 from src.core import database
+from src.core.database_backup import create_database_backup
+from src.core.database_persistence import log_historical_memory_event
 
 
 class HistoricalPatternBuilder:
@@ -17,6 +19,10 @@ class HistoricalPatternBuilder:
     PATTERN_SOURCE = "historical_learning_included"
 
     def rebuild_patterns(self) -> Dict:
+        try:
+            create_database_backup("before_patterns_rebuild")
+        except Exception:
+            pass
         groups = self._load_groups()
         inserted = 0
         build_run = f"pattern_build_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}_{uuid4().hex[:8]}"
@@ -102,6 +108,16 @@ class HistoricalPatternBuilder:
                 )
                 conn.execute("RELEASE SAVEPOINT pattern_rebuild")
                 conn.commit()
+                log_historical_memory_event(
+                    "PATTERNS_REBUILT",
+                    "Patrones historicos reconstruidos.",
+                    {
+                        "patterns_inserted": inserted,
+                        "source_budget_count": len(source_budget_ids),
+                        "source_partida_count": source_partida_count,
+                        "build_run": build_run,
+                    },
+                )
             except Exception as exc:
                 conn.execute("ROLLBACK TO SAVEPOINT pattern_rebuild")
                 conn.execute("RELEASE SAVEPOINT pattern_rebuild")
