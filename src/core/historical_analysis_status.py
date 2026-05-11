@@ -1,0 +1,20 @@
+"""
+Estados y severidades del análisis histórico.
+"""
+
+
+class AnalysisStatus:
+    VALID = "VALID"
+    VALID_WITH_WARNINGS = "VALID_WITH_WARNINGS"
+    EXCLUDED_INCOMPLETE_DATA = "EXCLUDED_INCOMPLETE_DATA"
+    NOT_COMPATIBLE = "NOT_COMPATIBLE"
+    READ_ERROR = "READ_ERROR"
+    SKIPPED_UNCHANGED = "SKIPPED_UNCHANGED"
+    MANUALLY_EXCLUDED = "MANUALLY_EXCLUDED"
+
+
+class IssueSeverity:
+    INFO = "INFO"
+    WARN = "WARN"
+    SEVERE = "SEVERE"
+    ERROR = "ERROR"

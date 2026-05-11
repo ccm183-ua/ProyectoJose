@@ -27,13 +27,20 @@ class AIBudgetDialog(QDialog):
 
     _generation_done = Signal(dict)
 
-    def __init__(self, parent=None, datos_proyecto=None, context_extra=""):
+    def __init__(
+        self,
+        parent=None,
+        datos_proyecto=None,
+        context_extra="",
+        historical_context=None,
+    ):
         super().__init__(parent)
         self.setWindowTitle("Generar Partidas con IA")
         self._generation_done.connect(self._on_generation_complete)
 
         self._datos_proyecto = datos_proyecto or {}
         self._context_extra = context_extra or ""
+        self._historical_context = historical_context or {}
         self._catalog = WorkTypeCatalog()
         self._settings = Settings()
         self._selected_plantilla = None
@@ -113,7 +120,7 @@ class AIBudgetDialog(QDialog):
         self._plantilla_list.setMaximumHeight(100)
         layout.addWidget(self._plantilla_list)
 
-        if not self._settings.has_api_key():
+        if not self._settings.has_active_ai_key():
             warning_layout = QHBoxLayout()
             warning_icon = QLabel("⚠", panel)
             warning_icon.setStyleSheet(f"color: {theme.WARNING}; background: transparent;")
@@ -185,8 +192,7 @@ class AIBudgetDialog(QDialog):
 
     def _run_generation(self, tipo, descripcion):
         try:
-            api_key = self._settings.get_api_key()
-            generator = BudgetGenerator(api_key=api_key)
+            generator = BudgetGenerator(settings=self._settings)
 
             full_desc = descripcion
             if self._context_extra:
@@ -197,6 +203,7 @@ class AIBudgetDialog(QDialog):
                 descripcion=full_desc,
                 plantilla=self._selected_plantilla,
                 datos_proyecto=self._datos_proyecto,
+                historical_context=self._historical_context,
             )
 
             self._generation_done.emit(result)

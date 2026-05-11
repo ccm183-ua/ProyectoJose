@@ -6,36 +6,88 @@ Gestión de la base de datos SQLite.
 - Puedes editar el .db por fuera (DB Browser, etc.) y reemplazar el fichero
   cuando quieras; la app abrirá lo que haya en la ruta configurada.
 
-Ruta por defecto: Documents/cubiApp/datos.db
-Para usar otra ruta: variable de entorno CUBIAPP_DB_PATH (ruta absoluta al .db).
+Prioridad de ruta:
+1. Ruta guardada en Settings.
+2. Variable CUBIAPP_DB_PATH (ruta absoluta al .db).
+3. Ruta estable por defecto: Documents/CubiApp/datos.db.
+4. Fallback legacy project_root/datos.db solo si la ruta estable no existe
+   o esta vacia y legacy contiene historicos.
 """
 
 import os
 import sqlite3
 import subprocess
 import sys
+import uuid
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Iterator
+
+from src.core.settings import Settings
+
+
+APP_VERSION = "cubiapp"
+
+
+def get_project_root() -> Path:
+    return Path(__file__).resolve().parent.parent.parent
+
+
+def get_legacy_db_path() -> Path:
+    return get_project_root() / "datos.db"
+
+
+def get_stable_default_db_path() -> Path:
+    return Path.home() / "Documents" / "CubiApp" / "datos.db"
+
+
+def _db_has_historical_data(path: Path) -> bool:
+    if not path.exists() or path.stat().st_size <= 0:
+        return False
+    try:
+        with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
+            table = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='historical_budget'"
+            ).fetchone()
+            if not table:
+                return False
+            count = conn.execute("SELECT COUNT(*) FROM historical_budget").fetchone()[0]
+            return int(count or 0) > 0
+    except sqlite3.Error:
+        return False
+
+
+def _db_is_truly_empty(path: Path) -> bool:
+    return not path.exists() or path.stat().st_size == 0
 
 
 def get_db_path() -> Path:
     """
     Ruta del fichero de base de datos.
 
-    Orden de decisión:
-    1. Variable de entorno CUBIAPP_DB_PATH (ruta absoluta al .db).
-    2. Por defecto: datos.db en la raíz del proyecto.
+    Orden de decision:
+    1. Ruta guardada en Settings, si existe.
+    2. Variable de entorno CUBIAPP_DB_PATH, si existe y es absoluta.
+    3. Documents/CubiApp/datos.db.
+    4. Fallback legacy project_root/datos.db solo si la ruta estable no existe
+       o esta vacia y legacy contiene historicos.
 
     Returns:
         Path absoluto al fichero .db
     """
+    settings_path = Settings().get_database_path()
+    if settings_path and os.path.isabs(settings_path):
+        return Path(settings_path)
+
     env_path = os.environ.get("CUBIAPP_DB_PATH")
     if env_path and os.path.isabs(env_path):
         return Path(env_path)
-    # Ruta relativa a la raíz del proyecto (donde está src/)
-    project_root = Path(__file__).resolve().parent.parent.parent
-    return project_root / "datos.db"
+    stable_path = get_stable_default_db_path()
+    legacy_path = get_legacy_db_path()
+    if _db_is_truly_empty(stable_path) and _db_has_historical_data(legacy_path):
+        return legacy_path
+    return stable_path
 
 
 def ensure_db_directory(path: Path) -> None:

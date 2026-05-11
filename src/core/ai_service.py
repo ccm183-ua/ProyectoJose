@@ -12,6 +12,8 @@ import re
 import time
 from typing import Dict, List, Optional, Tuple
 
+from src.core.ai_clients import redact_secrets
+
 logger = logging.getLogger(__name__)
 
 
@@ -30,7 +32,7 @@ RETRY_DELAY = 10  # segundos
 class AIService:
     """Cliente de IA para generación de partidas presupuestarias."""
 
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
         """
         Inicializa el servicio de IA.
 
@@ -40,6 +42,8 @@ class AIService:
         """
         self._api_key = api_key if api_key and api_key.strip() else None
         self._model = None
+        self._configured_model = model.strip() if model and model.strip() else None
+        self._client = None
 
     def is_available(self) -> bool:
         """
@@ -77,6 +81,31 @@ class AIService:
         except Exception as e:
             return [], self._friendly_error(e)
 
+    def generate_text(self, prompt: str) -> Tuple[str, Optional[str], str]:
+        """
+        Genera texto libre usando la IA.
+
+        Se usa para flujos auxiliares que necesitan validar su propio JSON
+        de salida sin reutilizar el parser de partidas.
+
+        Returns:
+            Tupla (texto, mensaje_error, modelo). Si hay error, texto estara
+            vacio y mensaje_error tendra informacion legible.
+        """
+        if not self.is_available():
+            return "", "No hay API key configurada. Configure su clave en Configuracion > IA.", ""
+
+        try:
+            response = self._call_api(prompt)
+            response_text = response.text if hasattr(response, "text") else str(response)
+            return response_text, None, self._model or ""
+        except TimeoutError:
+            return "", "Tiempo de espera agotado al contactar con la IA. Intentelo de nuevo.", ""
+        except ImportError as e:
+            return "", str(e), ""
+        except Exception as e:
+            return "", self._friendly_error(e), ""
+
     def _call_api(self, prompt: str):
         """
         Realiza la llamada a la API de Gemini con fallback entre modelos.
@@ -101,18 +130,25 @@ class AIService:
                 "Ejecute: pip install google-genai"
             )
 
-        if self._model is None:
+        if self._client is None:
             client = genai.Client(api_key=self._api_key)
             self._client = client
 
         last_error = None
-        for model_name in MODELS:
+        model_names = list(MODELS)
+        if self._configured_model:
+            model_names = [self._configured_model] + [
+                model_name for model_name in MODELS if model_name != self._configured_model
+            ]
+
+        for model_name in model_names:
             for attempt in range(MAX_RETRIES_PER_MODEL + 1):
                 try:
                     response = self._client.models.generate_content(
                         model=model_name,
                         contents=prompt,
                     )
+                    self._model = model_name
                     return response
                 except Exception as e:
                     last_error = e
@@ -142,7 +178,7 @@ class AIService:
         Returns:
             Mensaje de error amigable para mostrar al usuario.
         """
-        error_str = str(exc)
+        error_str = redact_secrets(str(exc))
 
         if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
             return (

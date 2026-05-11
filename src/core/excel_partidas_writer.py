@@ -4,6 +4,7 @@ Incluye actualización de cabeceras y texto "Asciende el presupuesto...".
 """
 
 import logging
+import math
 import os
 import re
 import shutil
@@ -20,11 +21,226 @@ from src.core.xlsx_cell_utils import (
     read_shared_strings_from_dict,
     resolve_cell_text,
 )
+from src.core.partida_normalizer import (
+    force_split_long_plain_text,
+    split_title_description,
+    split_title_for_excel_bold,
+)
 
 logger = logging.getLogger(__name__)
 
 # Tipo de IVA aplicable a presupuestos
 IVA_RATE = 0.10
+
+# --- Altura de fila de partida (descripción en hoja 122-20, merge C:F o solo C) ---
+DESC_DEFAULT_CHARS_PER_LINE_SINGLE_COL = 32
+DESC_DEFAULT_CHARS_PER_LINE_MERGED = 46
+# La suma OOXML de anchos C–F suele subestimar el ancho útil real al ajustar texto;
+# un suelo evita contar demasiadas líneas y filas en blanco enormes.
+MERGED_CHARS_PER_LINE_FLOOR = 38
+MERGED_CHARS_PER_LINE_CAP = 78
+EXCEL_LINE_HEIGHT = 13.2
+EXCEL_ROW_PADDING = 6
+EXCEL_ROW_MIN_SHORT = 34
+EXCEL_ROW_MIN_MEDIUM = 42
+EXCEL_ROW_MIN_LONG = 56
+EXCEL_ROW_MAX_NORMAL = 150
+# Por encima de esto no recortar texto (casos muy densos en descripción).
+EXCEL_ROW_MAX_LONG = 230
+SPACER_ROW_HEIGHT = 8
+TITLE_DESC_VISUAL_GAP_LINES = 0.18
+
+_A1_CELL_REF = re.compile(
+    r"^(?P<ca>\$?)(?P<col>[A-Za-z]{1,3})(?P<ra>\$?)(?P<row>\d+)$",
+)
+
+
+def _shift_single_a1_cell(ref: str, start_from: int, offset: int) -> str:
+    """Desplaza la fila en una referencia A1 si la fila es >= start_from. Conserva $ de columna/fila."""
+    if offset == 0:
+        return ref
+    m = _A1_CELL_REF.match(ref.strip())
+    if not m:
+        return ref
+    row = int(m.group("row"))
+    if row < start_from:
+        return ref
+    new_row = row + offset
+    col = m.group("col").upper()
+    return f"{m.group('ca')}{col}{m.group('ra')}{new_row}"
+
+
+def _shift_operand_range(range_text: str, start_from: int, offset: int) -> str:
+    if ":" in range_text:
+        left, right = range_text.split(":", 1)
+        return _shift_single_a1_cell(left, start_from, offset) + ":" + _shift_single_a1_cell(
+            right, start_from, offset
+        )
+    return _shift_single_a1_cell(range_text, start_from, offset)
+
+
+def _shift_formula_row_refs_in_content(formula: str, start_from: int, offset: int) -> str:
+    """
+    Ajusta filas en referencias A1 dentro de una fórmula (p. ej. SUMA(I46:I47)).
+    El XML a veces guarda la fórmula sin '='; se antepone '=' solo para tokenizar.
+    """
+    if offset == 0 or not formula or not str(formula).strip():
+        return formula
+    raw = str(formula).strip()
+    parse_src = raw if raw.startswith("=") else "=" + raw
+    try:
+        from openpyxl.formula.tokenizer import Tokenizer
+    except ImportError:
+        return raw
+    try:
+        tokens = list(Tokenizer(parse_src).items)
+    except Exception:
+        return raw
+    if len(tokens) == 1 and getattr(tokens[0], "type", "") == "LITERAL":
+        return raw
+    out: list[str] = []
+    for tok in tokens:
+        if getattr(tok, "type", "") == "OPERAND" and getattr(tok, "subtype", "") == "RANGE":
+            out.append(_shift_operand_range(tok.value, start_from, offset))
+        else:
+            out.append(tok.value)
+    return "".join(out)
+
+
+def _shift_formula_row_refs_in_sheet_xml(sheet_xml: str, start_from: int, offset: int) -> str:
+    """Tras _renumber_rows, corrige filas en <f>...</f> para que coincidan con el nuevo índice."""
+
+    def _bump_f(match: re.Match) -> str:
+        attrs, inner = match.group(1), match.group(2)
+        new_inner = _shift_formula_row_refs_in_content(inner, start_from, offset)
+        return f"<f{attrs}>{new_inner}</f>"
+
+    if offset == 0:
+        return sheet_xml
+    return re.sub(r"<f([^>]*)>([^<]*)</f>", _bump_f, sheet_xml)
+
+
+def _sheet_has_merge_c_to_f(sheet_xml: str) -> bool:
+    """True si la hoja declara alguna combinación C*:F* (descripción ancha)."""
+    return bool(re.search(r'<mergeCell ref="C\d+:F\d+"', sheet_xml, re.IGNORECASE))
+
+
+def _column_width_map_from_sheet(sheet_xml: str) -> dict[int, float]:
+    """
+    Lee anchos OOXML de <cols> por índice de columna (1=A).
+    Si un <col> abarca varias columnas, asigna el mismo width a cada una (comportamiento Excel).
+    """
+    out: dict[int, float] = {}
+    cols_m = re.search(r"<cols[^>]*>(.*?)</cols>", sheet_xml, re.DOTALL | re.IGNORECASE)
+    if not cols_m:
+        return out
+    for tag in re.finditer(r"<col\b([^/>]*)/>", cols_m.group(1), re.IGNORECASE):
+        attrs = tag.group(1)
+
+        def _attr(name: str) -> str | None:
+            mm = re.search(rf'{name}="([^"]*)"', attrs, re.IGNORECASE)
+            return mm.group(1) if mm else None
+
+        w_s = _attr("width")
+        if not w_s:
+            continue
+        try:
+            w = float(w_s)
+        except ValueError:
+            continue
+        mn_s, mx_s = _attr("min"), _attr("max")
+        if not mn_s:
+            continue
+        try:
+            cmin = int(mn_s)
+            cmax = int(mx_s) if mx_s else cmin
+        except ValueError:
+            continue
+        for ci in range(cmin, cmax + 1):
+            out[ci] = w
+    return out
+
+
+def _sum_widths_cf(column_widths: dict[int, float]) -> float:
+    return float(sum(column_widths.get(i, 0.0) for i in (3, 4, 5, 6)))
+
+
+def _description_chars_per_line(sheet_xml: str, default: int | None = None) -> int:
+    """
+    Caracteres efectivos por línea para el área de descripción, según merge C:F y <cols>.
+
+    Si hay merge C:F y suma de anchos C–F > 0, usa esa suma (acotada por seguridad).
+    Si hay merge pero sin anchos, usa DESC_DEFAULT_CHARS_PER_LINE_MERGED.
+    Sin merge: ancho solo columna C si consta; si no, DESC_DEFAULT_CHARS_PER_LINE_SINGLE_COL.
+    """
+    d = default if default is not None else DESC_DEFAULT_CHARS_PER_LINE_SINGLE_COL
+    merged = _sheet_has_merge_c_to_f(sheet_xml)
+    cmap = _column_width_map_from_sheet(sheet_xml)
+    if merged:
+        s = _sum_widths_cf(cmap)
+        if s > 0:
+            est = int(round(s))
+            return max(MERGED_CHARS_PER_LINE_FLOOR, min(MERGED_CHARS_PER_LINE_CAP, est))
+        return DESC_DEFAULT_CHARS_PER_LINE_MERGED
+    w3 = cmap.get(3, 0.0)
+    if w3 > 0:
+        return max(18, min(44, int(w3)))
+    return d
+
+
+def _estimate_wrapped_lines(text: str, chars_per_line: int) -> float:
+    """
+    Líneas visuales estimadas respetando saltos explícitos y reparto por longitud.
+    Párrafo vacío cuenta como 1 línea.
+    """
+    if chars_per_line < 1:
+        chars_per_line = 1
+    raw = str(text or "")
+    if raw == "":
+        return 0.0
+    total = 0.0
+    for paragraph in raw.splitlines():
+        if paragraph == "":
+            total += 1.0
+        else:
+            total += max(1.0, float(math.ceil(len(paragraph) / chars_per_line)))
+    return total
+
+
+def _estimate_row_height_impl(titulo: str, descripcion: str, chars_per_line: int) -> str:
+    """
+    Altura de fila en puntos Excel: prioridad no cortar texto (hasta EXCEL_ROW_MAX_LONG).
+    """
+    tit = str(titulo or "").strip()
+    desc = str(descripcion or "").strip()
+    title_lines = _estimate_wrapped_lines(tit, chars_per_line)
+    desc_lines = _estimate_wrapped_lines(desc, chars_per_line)
+    if not tit and not desc:
+        total_lines = 1.0
+    else:
+        total_lines = title_lines + desc_lines
+        if tit and desc:
+            total_lines += TITLE_DESC_VISUAL_GAP_LINES
+
+    raw_height = total_lines * EXCEL_LINE_HEIGHT + EXCEL_ROW_PADDING
+
+    min_height = EXCEL_ROW_MIN_SHORT
+    if total_lines >= 4:
+        min_height = EXCEL_ROW_MIN_MEDIUM
+    if total_lines >= 7:
+        min_height = EXCEL_ROW_MIN_LONG
+
+    # Prioridad: no recortar texto. Solo acotar filas muy vacías si raw queda por encima del techo "normal".
+    soft_cap = (
+        EXCEL_ROW_MAX_LONG
+        if (total_lines > 10 or raw_height > EXCEL_ROW_MAX_NORMAL)
+        else EXCEL_ROW_MAX_NORMAL
+    )
+    if raw_height <= soft_cap:
+        height = max(min_height, raw_height)
+    else:
+        height = max(min_height, min(EXCEL_ROW_MAX_LONG, raw_height))
+    return str(round(height, 1))
 
 
 class PartidasWriter:
@@ -62,8 +278,12 @@ class PartidasWriter:
                 otros = {n: z_in.read(n) for n in namelist if n != SHEET_12220}
 
             wrap_style = self._create_wrap_style(otros, 47)
+            partida_desc_style = self._create_wrap_style(otros, 32, vertical_top=True)
             sheet_content = self._replace_partidas_in_xml(
-                sheet_content, partidas, asciende_style=wrap_style,
+                sheet_content,
+                partidas,
+                asciende_style=wrap_style,
+                partida_desc_style=partida_desc_style,
             )
 
             fd, tmp_path = tempfile.mkstemp(suffix=".xlsx")
@@ -100,33 +320,17 @@ class PartidasWriter:
             return False
 
     @staticmethod
-    def _estimate_row_height(titulo, descripcion, chars_per_line=55, line_height=14.5):
-        """
-        Estima la altura de fila necesaria para el texto de una partida.
+    def _estimate_row_height(titulo, descripcion, chars_per_line: int) -> str:
+        """Delega en `_estimate_row_height_impl`; `chars_per_line` viene del XML de la hoja."""
+        return _estimate_row_height_impl(titulo, descripcion, chars_per_line)
 
-        Calcula el número de líneas que ocupará el texto en la celda combinada
-        C:F (ancho aprox. ~55 caracteres en Calibri 10pt) y devuelve la altura
-        en puntos Excel.
-
-        Args:
-            titulo: Texto del título (1 línea).
-            descripcion: Texto de la descripción (puede ocupar varias líneas).
-            chars_per_line: Caracteres aproximados que caben por línea.
-            line_height: Altura en puntos por línea de texto.
-
-        Returns:
-            Altura de fila como string (en puntos).
-        """
-        lines = 1
-        if descripcion:
-            desc_len = len(descripcion)
-            desc_lines = max(1, -(-desc_len // chars_per_line))
-            lines += desc_lines
-        height = lines * line_height + 8
-        height = max(30, min(200, height))
-        return str(round(height, 1))
-
-    def _replace_partidas_in_xml(self, sheet_xml, partidas, asciende_style="47"):
+    def _replace_partidas_in_xml(
+        self,
+        sheet_xml,
+        partidas,
+        asciende_style="47",
+        partida_desc_style="32",
+    ):
         """
         Reemplaza las filas de partidas de ejemplo (17-26) con las partidas reales.
         """
@@ -137,6 +341,8 @@ class PartidasWriter:
         new_rows_xml = []
         first_data_row = 17
         current_row = first_data_row
+        ps = str(partida_desc_style)
+        chars_per_line = _description_chars_per_line(sheet_xml)
 
         for idx, partida in enumerate(partidas):
             num = f"1.{idx + 1}"
@@ -152,34 +358,62 @@ class PartidasWriter:
             except (ValueError, TypeError):
                 precio = 0.0
 
-            titulo = xml_escape(str(partida.get('titulo', '')))
-            descripcion = xml_escape(str(partida.get('descripcion', '')))
+            titulo_plain = str(partida.get("titulo", "") or "").strip()
+            descripcion_plain = str(partida.get("descripcion", "") or "").strip()
 
-            if titulo and descripcion:
+            if not descripcion_plain and len(titulo_plain) > 120:
+                titulo_plain, descripcion_plain = split_title_description(titulo_plain)
+            if not descripcion_plain and len(titulo_plain) > 120:
+                titulo_plain, descripcion_plain = force_split_long_plain_text(titulo_plain, 85)
+
+            bold_head, tail_title = split_title_for_excel_bold(titulo_plain, 72)
+            if tail_title:
+                titulo_plain = bold_head
+                if descripcion_plain:
+                    descripcion_plain = f"{tail_title}\n{descripcion_plain}".strip()
+                else:
+                    descripcion_plain = tail_title
+
+            titulo_esc = xml_escape(titulo_plain)
+            descripcion_esc = xml_escape(descripcion_plain)
+
+            if titulo_esc and descripcion_esc:
                 celda_c = (
-                    f'<c r="C{current_row}" s="32" t="inlineStr"><is>'
+                    f'<c r="C{current_row}" s="{ps}" t="inlineStr"><is>'
                     f'<r><rPr><b/><sz val="10"/><rFont val="Calibri"/></rPr>'
-                    f'<t>{titulo}</t></r>'
+                    f'<t>{titulo_esc}</t></r>'
                     f'<r><rPr><sz val="10"/><rFont val="Calibri"/></rPr>'
-                    f'<t xml:space="preserve">&#10;{descripcion}</t></r>'
+                    f'<t xml:space="preserve">&#10;{descripcion_esc}</t></r>'
                     f'</is></c>'
                 )
-                row_height = self._estimate_row_height(titulo, descripcion)
-            elif titulo:
+                row_height = self._estimate_row_height(
+                    titulo_plain, descripcion_plain, chars_per_line
+                )
+            elif titulo_esc and len(titulo_plain) > 80 and not descripcion_plain:
                 celda_c = (
-                    f'<c r="C{current_row}" s="32" t="inlineStr"><is>'
-                    f'<r><rPr><b/><sz val="10"/><rFont val="Calibri"/></rPr>'
-                    f'<t>{titulo}</t></r>'
+                    f'<c r="C{current_row}" s="{ps}" t="inlineStr"><is>'
+                    f'<r><rPr><sz val="10"/><rFont val="Calibri"/></rPr>'
+                    f'<t>{titulo_esc}</t></r>'
                     f'</is></c>'
                 )
-                row_height = self._estimate_row_height(titulo, '')
+                row_height = self._estimate_row_height(titulo_plain, "", chars_per_line)
+            elif titulo_esc:
+                celda_c = (
+                    f'<c r="C{current_row}" s="{ps}" t="inlineStr"><is>'
+                    f'<r><rPr><b/><sz val="10"/><rFont val="Calibri"/></rPr>'
+                    f'<t>{titulo_esc}</t></r>'
+                    f'</is></c>'
+                )
+                row_height = self._estimate_row_height(titulo_plain, "", chars_per_line)
             else:
                 concepto = xml_escape(str(partida.get('concepto', '')))
                 celda_c = (
-                    f'<c r="C{current_row}" s="32" t="inlineStr">'
+                    f'<c r="C{current_row}" s="{ps}" t="inlineStr">'
                     f'<is><t>{concepto}</t></is></c>'
                 )
-                row_height = self._estimate_row_height(concepto, '')
+                row_height = self._estimate_row_height(
+                    str(partida.get("concepto", "")), "", chars_per_line
+                )
 
             total = round(cantidad * precio, 2)
             data_row = (
@@ -187,8 +421,8 @@ class PartidasWriter:
                 f'<c r="A{current_row}" s="31" t="inlineStr"><is><t>{num}</t></is></c>'
                 f'<c r="B{current_row}" s="31" t="inlineStr"><is><t>{unidad}</t></is></c>'
                 f'{celda_c}'
-                f'<c r="D{current_row}" s="32"/>'
-                f'<c r="E{current_row}" s="32"/>'
+                f'<c r="D{current_row}" s="{ps}"/>'
+                f'<c r="E{current_row}" s="{ps}"/>'
                 f'<c r="F{current_row}" s="33"/>'
                 f'<c r="G{current_row}" s="34"><v>{cantidad}</v></c>'
                 f'<c r="H{current_row}" s="35"><v>{precio}</v></c>'
@@ -199,7 +433,7 @@ class PartidasWriter:
             current_row += 1
 
             spacer_row = (
-                f'<row r="{current_row}" spans="1:9" customHeight="1">'
+                f'<row r="{current_row}" spans="1:9" ht="{SPACER_ROW_HEIGHT}" customHeight="1">'
                 f'<c r="A{current_row}" s="31"/>'
                 f'<c r="B{current_row}" s="31"/>'
                 f'<c r="C{current_row}" s="36"/>'
@@ -244,6 +478,7 @@ class PartidasWriter:
 
         if offset != 0:
             sheet_xml = self._renumber_rows(sheet_xml, start_from=28, offset=offset)
+            sheet_xml = _shift_formula_row_refs_in_sheet_xml(sheet_xml, start_from=28, offset=offset)
 
         for row_num in range(17, 28):
             sheet_xml = re.sub(
@@ -484,8 +719,8 @@ class PartidasWriter:
             return False
 
     @staticmethod
-    def _create_wrap_style(otros_dict, base_style_idx=47):
-        """Crea un nuevo estilo en styles.xml con wrapText y horizontal left."""
+    def _create_wrap_style(otros_dict, base_style_idx=47, vertical_top=False):
+        """Crea un nuevo estilo en styles.xml con wrapText y horizontal left (opcional vertical arriba)."""
         styles_key = "xl/styles.xml"
         if styles_key not in otros_dict:
             return str(base_style_idx)
@@ -504,9 +739,15 @@ class PartidasWriter:
         if base_style_idx >= len(xfs):
             return str(base_style_idx)
         base_xf = xfs[base_style_idx].group(0)
-        if 'wrapText="1"' in base_xf and 'horizontal="left"' in base_xf:
+        has_top = 'vertical="top"' in base_xf
+        if (
+            'wrapText="1"' in base_xf
+            and 'horizontal="left"' in base_xf
+            and (not vertical_top or has_top)
+        ):
             return str(base_style_idx)
-        _align = '<alignment horizontal="left" wrapText="1"/>'
+        v_attr = ' vertical="top"' if vertical_top else ""
+        _align = f'<alignment horizontal="left" wrapText="1"{v_attr}/>'
         new_xf = base_xf
         if '<alignment' in new_xf:
             new_xf = re.sub(

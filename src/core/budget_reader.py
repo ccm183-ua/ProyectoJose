@@ -60,6 +60,7 @@ class BudgetReader:
         self,
         file_path: str,
         expected_numero: str = "",
+        include_diagnostics: bool = False,
     ) -> Optional[Dict]:
         """
         Lee un presupuesto completo.
@@ -90,11 +91,12 @@ class BudgetReader:
             shared_strings = self._read_shared_strings(file_bytes)
 
             # Elegir la hoja correcta
-            sheet_xml = self._select_best_sheet(
+            selected = self._select_best_sheet_info(
                 file_bytes, shared_strings, expected_numero
             )
-            if not sheet_xml:
+            if not selected:
                 return None
+            sheet_xml = selected["sheet_xml"]
 
             rows = self._extract_rows(sheet_xml)
 
@@ -105,13 +107,28 @@ class BudgetReader:
             if totals is None:
                 totals = self._calculate_totals(partidas)
 
-            return {
+            result = {
                 "cabecera": cabecera,
                 "partidas": partidas,
                 "subtotal": totals["subtotal"],
                 "iva": totals["iva"],
                 "total": totals["total"],
             }
+            if include_diagnostics:
+                detected_numero = (cabecera.get("numero") or "").strip()
+                norm_expected = normalize_project_num(expected_numero)
+                norm_detected = normalize_project_num(detected_numero)
+                result["diagnostics"] = {
+                    "selected_sheet": selected.get("sheet_name", ""),
+                    "selected_sheet_index": selected.get("sheet_index"),
+                    "expected_numero": expected_numero or "",
+                    "detected_numero": detected_numero,
+                    "numero_matches": bool(
+                        norm_expected and norm_detected and norm_expected == norm_detected
+                    ),
+                    "compatibility_score": 0,
+                }
+            return result
         except Exception:
             logger.exception("Error al leer presupuesto: %s", file_path)
             return None
@@ -206,12 +223,12 @@ class BudgetReader:
             pass
         return sheets
 
-    def _select_best_sheet(
+    def _select_best_sheet_info(
         self,
         file_bytes: bytes,
         shared_strings: List[str],
         expected_numero: str,
-    ) -> Optional[str]:
+    ) -> Optional[Dict]:
         """Selecciona la hoja que contiene los datos reales del proyecto.
 
         Si ``expected_numero`` está vacío, devuelve la primera hoja disponible
@@ -224,7 +241,8 @@ class BudgetReader:
         (leer una hoja de otro proyecto y contaminar el escaneo).
         """
         if not expected_numero:
-            return self._read_sheet(file_bytes)
+            sheets = self._read_all_sheets(file_bytes)
+            return sheets[0] if sheets else None
 
         sheets = self._read_all_sheets(file_bytes)
         if not sheets:
@@ -238,12 +256,12 @@ class BudgetReader:
             return sheets[0]
 
         # Comparar cabeceras de cada hoja
-        for sheet_xml in sheets:
-            rows = self._extract_rows(sheet_xml)
+        for sheet in sheets:
+            rows = self._extract_rows(sheet["sheet_xml"])
             header = self._extract_header(rows, shared_strings)
             norm_sheet = normalize_project_num(header.get("numero", ""))
             if norm_sheet == norm_expected:
-                return sheet_xml
+                return sheet
 
         # Ninguna hoja fiable coincide: mejor devolver None para no mezclar
         # datos de otros proyectos.
@@ -460,8 +478,8 @@ class BudgetReader:
 
             norm_expected = normalize_project_num(expected_numero) if expected_numero else ""
 
-            for sheet_xml in sheets:
-                rows = self._extract_rows(sheet_xml)
+            for sheet in sheets:
+                rows = self._extract_rows(sheet["sheet_xml"])
 
                 # Verificar que la hoja pertenece a ESTE proyecto
                 if norm_expected:

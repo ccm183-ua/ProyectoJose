@@ -13,6 +13,7 @@ from src.core import db_repository
 from src.core.budget_reader import BudgetReader
 from src.core.excel_manager import ExcelManager
 from src.core.file_manager import FileManager
+from src.core.partida_normalizer import normalize_partida_for_excel
 from src.core.template_manager import TemplateManager
 from src.utils.helpers import sanitize_filename
 from src.utils.budget_utils import normalize_date, strip_obra_prefix
@@ -113,7 +114,12 @@ class BudgetService:
         self, excel_path: str, partidas: List[Dict], project_data: Optional[Dict] = None,
     ) -> bool:
         """Inserta partidas en un presupuesto y actualiza el total en historial."""
-        if not self._excel.insert_partidas_via_xml(excel_path, partidas):
+        normalized = []
+        for partida in partidas or []:
+            source = str(partida.get("source") or "").strip() or "unknown"
+            normalized.append(normalize_partida_for_excel(partida, source=source))
+
+        if not self._excel.insert_partidas_via_xml(excel_path, normalized):
             return False
 
         if project_data:

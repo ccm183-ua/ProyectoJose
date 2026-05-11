@@ -15,6 +15,7 @@ import pytest
 from unittest.mock import patch, MagicMock
 
 from src.core.budget_generator import BudgetGenerator
+from src.core.settings import AI_PROVIDER_DEEPSEEK
 
 
 @pytest.fixture
@@ -94,6 +95,63 @@ class TestGenerateWithAI:
         assert len(result['partidas']) > 0
         assert result['error'] is None
         assert result['source'] == 'ia'
+
+    def test_generate_uses_deepseek_when_settings_selects_deepseek(
+        self,
+        sample_datos_proyecto,
+        monkeypatch,
+    ):
+        """Si settings selecciona DeepSeek, usa el cliente DeepSeek."""
+        calls = []
+
+        class FakeSettings:
+            def get_ai_provider(self):
+                return AI_PROVIDER_DEEPSEEK
+
+            def get_gemini_api_key(self):
+                return None
+
+            def get_gemini_model(self):
+                return "gemini-test"
+
+            def get_deepseek_api_key(self):
+                return "sk-test-key-not-real"
+
+            def get_deepseek_model(self):
+                return "deepseek-v4-flash"
+
+        class FakeDeepSeekClient:
+            def __init__(self, api_key, model):
+                calls.append((api_key, model))
+
+            def is_available(self):
+                return True
+
+            def generate_json(self, **kwargs):
+                calls.append(kwargs)
+                return {
+                    "partidas": [
+                        {
+                            "concepto": "Partida desde DeepSeek",
+                            "cantidad": 1,
+                            "unidad": "ud",
+                            "precio_unitario": 10,
+                        }
+                    ]
+                }
+
+        monkeypatch.setattr("src.core.budget_generator.DeepSeekAIClient", FakeDeepSeekClient)
+        generator = BudgetGenerator(settings=FakeSettings())
+        result = generator.generate(
+            tipo_obra="Test",
+            descripcion="Test",
+            plantilla=None,
+            datos_proyecto=sample_datos_proyecto,
+        )
+
+        assert result["source"] == "ia"
+        assert result["partidas"][0]["concepto"].startswith("PARTIDA DESDE DEEPSEEK")
+        assert calls[0] == ("sk-test-key-not-real", "deepseek-v4-flash")
 
 
 class TestFallbackOffline:
@@ -198,3 +256,22 @@ class TestResultFormat:
         assert 'error' in result
         assert 'source' in result
         assert isinstance(result['partidas'], list)
+
+    def test_generate_passes_historical_context_to_prompt_builder(self, sample_datos_proyecto):
+        """El generador propaga historical_context al PromptBuilder."""
+        generator = BudgetGenerator(api_key="fake-key")
+        historical_context = {"detected_modules": [{"name": "sustitucion_bajante"}]}
+
+        with patch.object(generator._prompt_builder, "build_prompt", return_value="PROMPT") as build_mock:
+            with patch.object(generator._ai_service, "generate_partidas", return_value=([], "error")):
+                generator.generate(
+                    tipo_obra="Reparación",
+                    descripcion="Test",
+                    plantilla=None,
+                    datos_proyecto=sample_datos_proyecto,
+                    historical_context=historical_context,
+                )
+
+        assert build_mock.called
+        kwargs = build_mock.call_args.kwargs
+        assert kwargs.get("historical_context") == historical_context
