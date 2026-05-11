@@ -18,6 +18,7 @@ from openpyxl.styles import Font, Alignment
 
 from src.core.template_manager import TemplateManager
 from src.core.excel_manager import ExcelManager
+from src.core.excel_template_filler import euros_en_letras
 
 
 @pytest.fixture
@@ -321,3 +322,22 @@ class TestAddingBudgetRows:
         ws = wb.active
         
         assert ws.max_row >= initial_rows + len(rows)
+
+
+class TestEurosEnLetras:
+    """Céntimos alineados con moneda a 2 decimales (evita desfase float vs Excel)."""
+
+    def test_centimos_coinciden_con_display_114_24(self):
+        sucio = 114.23999999999998
+        txt = euros_en_letras(sucio)
+        assert "VEINTICUATRO" in txt
+        assert "VEINTITRÉS" not in txt
+
+    def test_string_coma_decimal(self):
+        txt = euros_en_letras("114,24")
+        assert "VEINTICUATRO" in txt
+
+    def test_valor_xml_como_string_ruidoso(self):
+        v = str(float("114.23999999999998"))
+        txt = euros_en_letras(v)
+        assert "VEINTICUATRO" in txt

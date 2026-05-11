@@ -17,7 +17,14 @@ import zipfile
 import pytest
 
 from src.core.excel_manager import ExcelManager
-from src.core.excel_partidas_writer import PartidasWriter
+from src.core.excel_partidas_writer import (
+    PartidasWriter,
+    SPACER_ROW_HEIGHT,
+    _description_chars_per_line,
+    _estimate_row_height_impl,
+    _estimate_wrapped_lines,
+    _shift_formula_row_refs_in_sheet_xml,
+)
 from src.core.template_manager import TemplateManager
 
 SHEET_12220 = "xl/worksheets/sheet1.xml"
@@ -212,29 +219,96 @@ class TestInsertPartidas:
             assert inner.count("<r>") >= 2
 
 
+class TestEstimateWrappedLines:
+    def test_explicit_newlines_add_lines(self):
+        cpl = 32
+        one = _estimate_wrapped_lines("a" * 60 + "b" * 60, cpl)
+        two = _estimate_wrapped_lines("a" * 60 + "\n\n" + "b" * 60, cpl)
+        assert two > one
+
+    def test_empty_paragraph_counts_as_one_line(self):
+        assert _estimate_wrapped_lines("x\n\ny", 20) >= _estimate_wrapped_lines("x\ny", 20)
+
+
+class TestFormulaRowRefShift:
+    def test_shift_updates_row_refs_in_formulas_after_renumber(self):
+        xml = '<sheetData><c r="I27"><f>SUMA(I46:I47)+I28</f></c></sheetData>'
+        out = _shift_formula_row_refs_in_sheet_xml(xml, start_from=28, offset=-6)
+        assert "I40:I41" in out
+        assert "I22" in out
+        assert "SUMA" in out
+        assert "I46" not in out
+
+    def test_shift_leaves_refs_above_start_from(self):
+        xml = '<c r="X1"><f>SUM(I17:I26)</f></c>'
+        out = _shift_formula_row_refs_in_sheet_xml(xml, start_from=28, offset=-6)
+        assert "I17:I26" in out
+
+
+class TestDescriptionCharsPerLine:
+    def test_merge_and_col_widths_sum(self):
+        xml = (
+            '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+            '<cols><col min="3" max="6" width="10.5" customWidth="1"/></cols>'
+            '<mergeCell ref="C17:F17"/>'
+            "</worksheet>"
+        )
+        v = _description_chars_per_line(xml)
+        assert 38 <= v <= 78
+        assert v == max(38, min(78, int(round(10.5 * 4))))
+
+    def test_single_column_c_width_without_merge(self):
+        xml = (
+            '<cols><col min="3" max="3" width="29" customWidth="1"/></cols>'
+            "<worksheet/>"
+        )
+        v = _description_chars_per_line(xml)
+        assert v == 29
+
+    def test_fallback_without_cols_or_merge(self):
+        assert _description_chars_per_line("<worksheet/>") == 32
+
+
 class TestEstimateRowHeight:
-    """Alturas de fila de partida: compactas pero legibles (sin exceso de blanco)."""
+    """Alturas coherentes con chars_per_line fijo (p. ej. 32) para tests reproducibles."""
 
     def test_short_title_and_description_height_band(self):
         h = float(
-            PartidasWriter._estimate_row_height(
+            _estimate_row_height_impl(
                 "ANDAMIO.",
                 "Montaje y desmontaje de andamio tubular.",
+                32,
             )
         )
-        assert 32 <= h <= 55
+        assert 35 <= h <= 55
 
     def test_medium_title_and_description_height_band(self):
-        titulo = "T" * 100
-        descripcion = "D" * 220
-        h = float(PartidasWriter._estimate_row_height(titulo, descripcion))
-        assert 55 <= h <= 95
+        titulo = "REFUERZO EN ENCUENTROS."
+        descripcion = (
+            "Refuerzo de impermeabilización en encuentros con paramentos verticales, "
+            "juntas de dilatación y puntos singulares mediante banda de refuerzo y mástico."
+        )
+        h = float(_estimate_row_height_impl(titulo, descripcion, 32))
+        assert 65 <= h <= 95
 
-    def test_long_text_height_capped_at_135(self):
-        titulo = "T" * 100
-        descripcion = "x" * 2000
-        h = float(PartidasWriter._estimate_row_height(titulo, descripcion))
-        assert h <= 135
+    def test_long_text_height_band(self):
+        titulo = "MONTAJE DE SISTEMAS DE ANCLAJE DEFINITIVOS."
+        descripcion = "x" * 280
+        h = float(_estimate_row_height_impl(titulo, descripcion, 32))
+        assert 105 <= h <= 165
+
+    def test_extreme_height_never_exceeds_long_cap(self):
+        titulo = "T" * 80
+        descripcion = "z" * 4000
+        h = float(_estimate_row_height_impl(titulo, descripcion, 32))
+        assert h <= 230
+
+    def test_partidas_writer_delegates_same_result(self):
+        a = float(
+            PartidasWriter._estimate_row_height("ANDAMIO.", "Montaje tubular.", 32)
+        )
+        b = float(_estimate_row_height_impl("ANDAMIO.", "Montaje tubular.", 32))
+        assert a == b
 
 
 class TestPartidaSpacerRow:
@@ -246,6 +320,6 @@ class TestPartidaSpacerRow:
         )
         sheet = _read_sheet2(budget_file)
         assert re.search(
-            r'<row r="18"[^>]*ht="6"[^>]*customHeight="1"',
+            rf'<row r="18"[^>]*ht="{SPACER_ROW_HEIGHT}"[^>]*customHeight="1"',
             sheet,
-        ), "La fila separadora tras la primera partida debe tener altura explícita baja"
+        ), "La fila separadora debe tener altura explícita mínima"
