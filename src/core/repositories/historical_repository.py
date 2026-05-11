@@ -122,6 +122,69 @@ def get_historical_budget_by_path(ruta_excel: str) -> Optional[Dict]:
     }
 
 
+def get_historical_budget(historical_budget_id: int) -> Optional[Dict]:
+    with database.get_connection(read_only=True) as conn:
+        cur = conn.execute(
+            """SELECT id, ruta_excel, ruta_carpeta, numero_proyecto, nombre_proyecto,
+                      cliente, localidad, tipo_obra_original, tipo_obra_normalizado, estado,
+                      total, fecha_presupuesto, fecha_modificacion_excel, fecha_analisis,
+                      num_partidas, analysis_run_id, analisis_ok, warning_count, warnings,
+                      analysis_status, compatible_score, selected_sheet, selected_sheet_index,
+                      expected_numero, detected_numero, numero_matches, usable_for_learning,
+                      learning_status, learning_status_source, learning_decision_reason,
+                      learning_decision_at, analyzer_version, probe_version, reader_version,
+                      quality_rules_version, classifier_version, probe_diagnostics_json,
+                      header_score, partida_score, error
+               FROM historical_budget WHERE id=?""",
+            (historical_budget_id,),
+        )
+        row = cur.fetchone()
+    if not row:
+        return None
+    return {
+        "id": row[0],
+        "ruta_excel": row[1] or "",
+        "ruta_carpeta": row[2] or "",
+        "numero_proyecto": row[3] or "",
+        "nombre_proyecto": row[4] or "",
+        "cliente": row[5] or "",
+        "localidad": row[6] or "",
+        "tipo_obra_original": row[7] or "",
+        "tipo_obra_normalizado": row[8] or "",
+        "estado": row[9] or "",
+        "total": row[10],
+        "fecha_presupuesto": row[11] or "",
+        "fecha_modificacion_excel": row[12] or "",
+        "fecha_analisis": row[13] or "",
+        "num_partidas": int(row[14] or 0),
+        "analysis_run_id": row[15],
+        "analisis_ok": bool(row[16]),
+        "warning_count": int(row[17] or 0),
+        "warnings": row[18] or "",
+        "analysis_status": row[19] or "",
+        "compatible_score": int(row[20] or 0),
+        "selected_sheet": row[21] or "",
+        "selected_sheet_index": row[22],
+        "expected_numero": row[23] or "",
+        "detected_numero": row[24] or "",
+        "numero_matches": bool(row[25]),
+        "usable_for_learning": bool(row[26]),
+        "learning_status": row[27] or "",
+        "learning_status_source": row[28] or "",
+        "learning_decision_reason": row[29] or "",
+        "learning_decision_at": row[30] or "",
+        "analyzer_version": row[31] or "",
+        "probe_version": row[32] or "",
+        "reader_version": row[33] or "",
+        "quality_rules_version": row[34] or "",
+        "classifier_version": row[35] or "",
+        "probe_diagnostics_json": row[36] or "",
+        "header_score": int(row[37] or 0),
+        "partida_score": int(row[38] or 0),
+        "error": row[39] or "",
+    }
+
+
 def upsert_historical_budget(data: Dict) -> Tuple[Optional[int], Optional[str]]:
     ruta = (data.get("ruta_excel") or "").strip()
     fecha_mod = (data.get("fecha_modificacion_excel") or "").strip()
@@ -554,6 +617,21 @@ def get_historical_budget_partidas(historical_budget_id: int, limit: int = 200) 
         }
         for r in rows
     ]
+
+
+def get_historical_budget_modules(historical_budget_id: int) -> List[str]:
+    with database.get_connection(read_only=True) as conn:
+        cur = conn.execute(
+            """SELECT DISTINCT em.nombre
+               FROM historical_partida hp
+               JOIN historical_partida_module hpm ON hpm.partida_id = hp.id
+               JOIN execution_module em ON em.id = hpm.module_id
+               WHERE hp.historical_budget_id=?
+               ORDER BY em.nombre ASC""",
+            (historical_budget_id,),
+        )
+        rows = cur.fetchall()
+    return [r[0] for r in rows if r and r[0]]
 
 
 def get_budget_enrichment(historical_budget_id: int, enrichment_type: str) -> Optional[Dict]:

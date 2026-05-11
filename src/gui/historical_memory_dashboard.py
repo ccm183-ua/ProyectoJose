@@ -6,8 +6,10 @@ import json
 import os
 import subprocess
 import sys
+import threading
+from datetime import datetime
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtCore import QSettings
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
@@ -32,6 +34,9 @@ from PySide6.QtWidgets import (
 
 from src.core.historical_analysis_status import AnalysisStatus
 from src.core.historical_budget_analyzer import HistoricalBudgetAnalyzer
+from src.core.historical_budget_enrichment_service import (
+    generate_technical_description_for_budget,
+)
 from src.core.historical_enrichment import technical_description_status_label
 from src.core.historical_integrity_diagnostics import diagnose_historical_integrity
 from src.core.historical_issue_catalog import historical_issue_label
@@ -61,13 +66,18 @@ class NumericTableWidgetItem(QTableWidgetItem):
 
 
 class HistoricalMemoryDashboard(QDialog):
+    _ai_description_done = Signal(dict)
+    _ai_description_progress = Signal(str)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Panel de memoria historica")
         self._rows: list[dict] = []
         self._has_any_budgets = False
         self._analyzer = HistoricalBudgetAnalyzer()
+        self._ai_description_done.connect(self._on_ai_description_done)
         self._build_ui()
+        self._ai_description_progress.connect(self._stats_lbl.setText)
         self._reload()
 
     def _build_ui(self):
@@ -285,6 +295,21 @@ class HistoricalMemoryDashboard(QDialog):
         self._act_edit_description = QAction("Editar descripción", self)
         self._act_edit_description.triggered.connect(self._edit_description_selected)
         self._actions_menu.addAction(self._act_edit_description)
+        self._description_menu = QMenu("Descripcion tecnica", self._actions_menu)
+        self._act_generate_ai_description = QAction("Generar descripcion con IA", self)
+        self._act_generate_ai_description.triggered.connect(self._generate_ai_description_selected)
+        self._description_menu.addAction(self._act_generate_ai_description)
+        self._act_generate_ai_descriptions_batch = QAction("Generar IA para seleccionados", self)
+        self._act_generate_ai_descriptions_batch.triggered.connect(self._generate_ai_descriptions_for_selected)
+        self._description_menu.addAction(self._act_generate_ai_descriptions_batch)
+        self._description_menu.addSeparator()
+        self._act_approve_description = QAction("Aprobar descripcion", self)
+        self._act_approve_description.triggered.connect(self._approve_description_selected)
+        self._description_menu.addAction(self._act_approve_description)
+        self._act_reject_description = QAction("Rechazar descripcion", self)
+        self._act_reject_description.triggered.connect(self._reject_description_selected)
+        self._description_menu.addAction(self._act_reject_description)
+        self._actions_menu.addMenu(self._description_menu)
         self._actions_menu.addSeparator()
         self._act_open_excel = QAction("Abrir Excel", self)
         self._act_open_excel.triggered.connect(self._open_excel_selected)
@@ -355,6 +380,7 @@ class HistoricalMemoryDashboard(QDialog):
         menu = QMenu(self)
         menu.addAction(self._act_view_detail)
         menu.addAction(self._act_edit_description)
+        menu.addMenu(self._description_menu)
         menu.addSeparator()
         menu.addAction(self._act_open_excel)
         menu.addAction(self._act_include)
@@ -491,6 +517,10 @@ class HistoricalMemoryDashboard(QDialog):
         self._act_view_detail.setEnabled(single)
         self._btn_edit_description.setEnabled(single and self._can_edit_technical_description(rows[0]) if single else False)
         self._act_edit_description.setEnabled(single and self._can_edit_technical_description(rows[0]) if single else False)
+        self._act_generate_ai_description.setEnabled(single and self._can_generate_ai_description(rows[0]) if single else False)
+        self._act_generate_ai_descriptions_batch.setEnabled(has_rows)
+        self._act_approve_description.setEnabled(single and self._has_pending_ai_description(rows[0]) if single else False)
+        self._act_reject_description.setEnabled(single and self._has_pending_ai_description(rows[0]) if single else False)
         can_include = has_rows and all(self._can_be_included_in_memory(row) for row in rows)
         self._act_include.setEnabled(can_include)
         can_exclude = has_rows and any(self._can_be_excluded_in_memory(row) for row in rows)
@@ -677,6 +707,163 @@ class HistoricalMemoryDashboard(QDialog):
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self._reload()
 
+    def _generate_ai_description_selected(self):
+        data = self._selected_row_data()
+        if not data:
+            return
+        if not self._can_generate_ai_description(data):
+            QMessageBox.information(
+                self,
+                "Generar descripcion con IA",
+                "Este presupuesto no es apto o ya tiene una descripcion manual/aprobada.",
+            )
+            return
+        answer = QMessageBox.question(
+            self,
+            "Generar descripcion con IA",
+            "Se generara una descripcion tecnica usando una API externa.\n"
+            "La descripcion quedara pendiente de revision.\n\n"
+            "Continuar?",
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self._set_ai_actions_enabled(False)
+        self._stats_lbl.setText("Generando descripcion con IA...")
+        budget_id = int(data.get("id") or 0)
+        thread = threading.Thread(
+            target=self._run_ai_description_generation,
+            args=([budget_id], False),
+            daemon=True,
+        )
+        thread.start()
+
+    def _generate_ai_descriptions_for_selected(self):
+        rows = self._selected_rows_data()
+        budget_ids = [int(row.get("id") or 0) for row in rows]
+        if not budget_ids:
+            QMessageBox.information(
+                self,
+                "Generar IA para seleccionados",
+                "No hay presupuestos seleccionados aptos sin descripcion manual o aprobada.",
+            )
+            return
+        answer = QMessageBox.question(
+            self,
+            "Generar IA para seleccionados",
+            f"Vas a generar descripciones con IA para {len(budget_ids)} presupuestos.\n"
+            "Esto puede tardar y usar una API externa.\n"
+            "No se sobrescribiran descripciones aprobadas o manuales.\n\n"
+            "Continuar?",
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self._set_ai_actions_enabled(False)
+        self._stats_lbl.setText(f"Generando descripciones... 0 / {len(budget_ids)}")
+        thread = threading.Thread(
+            target=self._run_ai_description_generation,
+            args=(budget_ids, False),
+            daemon=True,
+        )
+        thread.start()
+
+    def _run_ai_description_generation(self, budget_ids: list[int], force: bool):
+        try:
+            if len(budget_ids) == 1:
+                self._ai_description_progress.emit("Generando descripciones... 1 / 1")
+                result = generate_technical_description_for_budget(budget_ids[0], force=force)
+                payload = {
+                    "processed": 1,
+                    "generated": 1 if result.get("status") == "generated" else 0,
+                    "skipped": 1 if result.get("status") == "skipped" else 0,
+                    "errors": 1 if result.get("status") == "error" else 0,
+                    "details": [result],
+                }
+            else:
+                details = []
+                payload = {"processed": len(budget_ids), "generated": 0, "skipped": 0, "errors": 0}
+                for idx, budget_id in enumerate(budget_ids, start=1):
+                    self._ai_description_progress.emit(
+                        f"Generando descripciones... {idx} / {len(budget_ids)}"
+                    )
+                    result = generate_technical_description_for_budget(budget_id, force=force)
+                    details.append(result)
+                    if result.get("status") == "generated":
+                        payload["generated"] += 1
+                    elif result.get("status") == "skipped":
+                        payload["skipped"] += 1
+                    else:
+                        payload["errors"] += 1
+                payload["details"] = details
+            self._ai_description_done.emit(payload)
+        except Exception as exc:
+            self._ai_description_done.emit(
+                {
+                    "processed": len(budget_ids),
+                    "generated": 0,
+                    "skipped": 0,
+                    "errors": len(budget_ids) or 1,
+                    "details": [{"status": "error", "message": f"Error inesperado: {exc}"}],
+                }
+            )
+
+    def _on_ai_description_done(self, result: dict):
+        self._set_ai_actions_enabled(True)
+        self._reload()
+        details = result.get("details") or []
+        first_error = next((d.get("message") for d in details if d.get("status") == "error"), "")
+        message = (
+            f"Procesados: {int(result.get('processed', 0))}\n"
+            f"Generados: {int(result.get('generated', 0))}\n"
+            f"Omitidos: {int(result.get('skipped', 0))}\n"
+            f"Errores: {int(result.get('errors', 0))}"
+        )
+        if first_error:
+            message += f"\n\nPrimer error: {first_error}"
+        QMessageBox.information(self, "Descripciones IA", message)
+
+    def _approve_description_selected(self):
+        self._review_pending_description("APPROVED")
+
+    def _reject_description_selected(self):
+        self._review_pending_description("REJECTED")
+
+    def _review_pending_description(self, status: str):
+        data = self._selected_row_data()
+        if not data or not self._has_pending_ai_description(data):
+            return
+        budget_id = int(data.get("id") or 0)
+        current = get_budget_enrichment(budget_id, "TECHNICAL_DESCRIPTION") or {}
+        content = (current.get("content") or "").strip()
+        if not content:
+            QMessageBox.warning(self, "Descripcion tecnica", "No hay descripcion pendiente que revisar.")
+            return
+        err = upsert_budget_enrichment(
+            historical_budget_id=budget_id,
+            enrichment_type="TECHNICAL_DESCRIPTION",
+            status=status,
+            source="AI",
+            content=content,
+            model=current.get("model", ""),
+            prompt_version=current.get("prompt_version", ""),
+            input_hash=current.get("input_hash", ""),
+            confidence=current.get("confidence"),
+            warnings=current.get("warnings", ""),
+            metadata_json=current.get("metadata_json", ""),
+            reviewed_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        )
+        if err:
+            QMessageBox.warning(self, "Descripcion tecnica", err)
+            return
+        self._reload()
+
+    def _set_ai_actions_enabled(self, enabled: bool):
+        self._act_generate_ai_description.setEnabled(enabled)
+        self._act_generate_ai_descriptions_batch.setEnabled(enabled)
+        self._act_approve_description.setEnabled(enabled)
+        self._act_reject_description.setEnabled(enabled)
+        if enabled:
+            self._update_action_states()
+
     def _include_selected(self):
         changed = 0
         for data in self._selected_rows_data():
@@ -833,6 +1020,25 @@ class HistoricalMemoryDashboard(QDialog):
             AnalysisStatus.VALID,
             AnalysisStatus.VALID_WITH_WARNINGS,
         )
+
+    @staticmethod
+    def _can_generate_ai_description(data: dict) -> bool:
+        if data.get("analysis_status") not in (
+            AnalysisStatus.VALID,
+            AnalysisStatus.VALID_WITH_WARNINGS,
+        ):
+            return False
+        status = (data.get("technical_description_status") or "").strip().upper()
+        source = (data.get("technical_description_source") or "").strip().upper()
+        if status in ("MANUAL", "APPROVED") or source == "MANUAL":
+            return False
+        return True
+
+    @staticmethod
+    def _has_pending_ai_description(data: dict) -> bool:
+        status = (data.get("technical_description_status") or "").strip().upper()
+        source = (data.get("technical_description_source") or "").strip().upper()
+        return source == "AI" and status in ("PENDING_REVIEW", "PENDING")
 
     @staticmethod
     def _status_label(status: str) -> str:

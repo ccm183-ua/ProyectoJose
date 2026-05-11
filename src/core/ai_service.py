@@ -77,6 +77,31 @@ class AIService:
         except Exception as e:
             return [], self._friendly_error(e)
 
+    def generate_text(self, prompt: str) -> Tuple[str, Optional[str], str]:
+        """
+        Genera texto libre usando la IA.
+
+        Se usa para flujos auxiliares que necesitan validar su propio JSON
+        de salida sin reutilizar el parser de partidas.
+
+        Returns:
+            Tupla (texto, mensaje_error, modelo). Si hay error, texto estara
+            vacio y mensaje_error tendra informacion legible.
+        """
+        if not self.is_available():
+            return "", "No hay API key configurada. Configure su clave en Configuracion > IA.", ""
+
+        try:
+            response = self._call_api(prompt)
+            response_text = response.text if hasattr(response, "text") else str(response)
+            return response_text, None, self._model or ""
+        except TimeoutError:
+            return "", "Tiempo de espera agotado al contactar con la IA. Intentelo de nuevo.", ""
+        except ImportError as e:
+            return "", str(e), ""
+        except Exception as e:
+            return "", self._friendly_error(e), ""
+
     def _call_api(self, prompt: str):
         """
         Realiza la llamada a la API de Gemini con fallback entre modelos.
@@ -113,6 +138,7 @@ class AIService:
                         model=model_name,
                         contents=prompt,
                     )
+                    self._model = model_name
                     return response
                 except Exception as e:
                     last_error = e
