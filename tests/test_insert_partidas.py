@@ -17,6 +17,7 @@ import zipfile
 import pytest
 
 from src.core.excel_manager import ExcelManager
+from src.core.excel_partidas_writer import PartidasWriter
 from src.core.template_manager import TemplateManager
 
 SHEET_12220 = "xl/worksheets/sheet1.xml"
@@ -209,3 +210,42 @@ class TestInsertPartidas:
         assert bold_count <= 1
         if bold_count == 1:
             assert inner.count("<r>") >= 2
+
+
+class TestEstimateRowHeight:
+    """Alturas de fila de partida: compactas pero legibles (sin exceso de blanco)."""
+
+    def test_short_title_and_description_height_band(self):
+        h = float(
+            PartidasWriter._estimate_row_height(
+                "ANDAMIO.",
+                "Montaje y desmontaje de andamio tubular.",
+            )
+        )
+        assert 32 <= h <= 55
+
+    def test_medium_title_and_description_height_band(self):
+        titulo = "T" * 100
+        descripcion = "D" * 220
+        h = float(PartidasWriter._estimate_row_height(titulo, descripcion))
+        assert 55 <= h <= 95
+
+    def test_long_text_height_capped_at_135(self):
+        titulo = "T" * 100
+        descripcion = "x" * 2000
+        h = float(PartidasWriter._estimate_row_height(titulo, descripcion))
+        assert h <= 135
+
+
+class TestPartidaSpacerRow:
+    def test_spacer_row_after_partida_has_small_fixed_height(self, budget_file):
+        em = ExcelManager()
+        em.insert_partidas_via_xml(
+            budget_file,
+            [{"titulo": "P1.", "descripcion": "D1.", "cantidad": 1, "unidad": "ud", "precio_unitario": 1}],
+        )
+        sheet = _read_sheet2(budget_file)
+        assert re.search(
+            r'<row r="18"[^>]*ht="6"[^>]*customHeight="1"',
+            sheet,
+        ), "La fila separadora tras la primera partida debe tener altura explícita baja"

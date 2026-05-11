@@ -887,7 +887,7 @@ class HistoricalMemoryDashboard(QDialog):
             + "\n\n"
             + cost_warning
             + ("\n\n" if cost_warning else "")
-            f"Se generaran descripciones con IA para {int(counts.get('ready', 0))} presupuestos aptos.\n"
+            + f"Se generaran descripciones con IA para {int(counts.get('ready', 0))} presupuestos aptos.\n"
             "Esto puede tardar y usar una API externa.\n"
             "No se sobrescribiran descripciones aprobadas o manuales.\n\n"
             "Continuar?",

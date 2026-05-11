@@ -109,19 +109,27 @@ class PartidasWriter:
             return False
 
     @staticmethod
-    def _estimate_row_height(titulo, descripcion, chars_per_line=48, line_height=15.0):
+    def _estimate_row_height(
+        titulo,
+        descripcion,
+        chars_per_line=58,
+        line_height=12.8,
+        padding=8,
+    ):
         """
         Estima la altura de fila necesaria para el texto de una partida.
 
         Calcula el número de líneas que ocupará el texto en la celda combinada
-        C:F (ancho aprox. ~48 caracteres en Calibri 10pt) y devuelve la altura
-        en puntos Excel.
+        C:F (ancho aprox. ~58 caracteres en Calibri 10pt) y devuelve la altura
+        en puntos Excel. El salto entre título y descripción ya va en el XML
+        (&#10;); no se suma una línea lógica extra entre ambos.
 
         Args:
             titulo: Texto del título (1 línea).
             descripcion: Texto de la descripción (puede ocupar varias líneas).
             chars_per_line: Caracteres aproximados que caben por línea.
             line_height: Altura en puntos por línea de texto.
+            padding: Puntos extra (márgenes internos de celda).
 
         Returns:
             Altura de fila como string (en puntos).
@@ -139,15 +147,15 @@ class PartidasWriter:
         desc = str(descripcion or "")
         lines = max(1, _wrapped_logical_lines(tit))
         if desc:
-            lines += 1 + _wrapped_logical_lines(desc)
-        height = lines * line_height + 18
-        # Alturas mínimas legibles según volumen de texto
-        min_h = 45
-        if len(tit) + len(desc) > 180:
-            min_h = 52
-        if len(tit) + len(desc) > 400:
-            min_h = 68
-        height = max(min_h, min(175, height))
+            lines += _wrapped_logical_lines(desc)
+        height = lines * line_height + padding
+        total_len = len(tit) + len(desc)
+        min_h = 32
+        if total_len > 180:
+            min_h = 42
+        if total_len > 400:
+            min_h = 56
+        height = max(min_h, min(135, height))
         return str(round(height, 1))
 
     def _replace_partidas_in_xml(
@@ -254,7 +262,7 @@ class PartidasWriter:
             current_row += 1
 
             spacer_row = (
-                f'<row r="{current_row}" spans="1:9" customHeight="1">'
+                f'<row r="{current_row}" spans="1:9" ht="6" customHeight="1">'
                 f'<c r="A{current_row}" s="31"/>'
                 f'<c r="B{current_row}" s="31"/>'
                 f'<c r="C{current_row}" s="36"/>'
