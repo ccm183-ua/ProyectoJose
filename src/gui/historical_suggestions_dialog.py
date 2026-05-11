@@ -2,7 +2,9 @@
 Diálogo para revisar sugerencias históricas de partidas.
 """
 
-from PySide6.QtCore import Qt
+import threading
+
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -18,11 +20,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.core.historical_context_enhancer import HistoricalSearchContextEnhancer
 from src.core.historical_context import (
     build_initial_historical_context,
     is_generic_historical_context,
     is_useful_historical_context,
 )
+from src.core.settings import AI_PROVIDER_DEEPSEEK, Settings
+from src.core.speech_to_text_service import SpeechToTextService, SpeechToTextUnavailable
 from src.gui import theme
 
 
@@ -49,12 +54,21 @@ _FAILURE_HELP = {
 class HistoricalSuggestionDescriptionDialog(QDialog):
     """Pide confirmar contexto antes de buscar sugerencias historicas."""
 
+    _enhancement_done = Signal(dict)
+    _speech_done = Signal(str, str)
+
     def __init__(self, parent, project_data: dict | None = None):
         super().__init__(parent)
         self.setWindowTitle("Describir trabajo para buscar en memoria")
         self._project_data = project_data or {}
         self._confirmed_context = ""
         self._search_requested = False
+        self._settings = Settings()
+        self._enhancer = HistoricalSearchContextEnhancer()
+        self._speech_service = SpeechToTextService()
+        self._enhancement_in_progress = False
+        self._enhancement_done.connect(self._on_enhancement_done)
+        self._speech_done.connect(self._on_speech_done)
         self._build_ui()
 
     def _build_ui(self):
@@ -96,7 +110,30 @@ class HistoricalSuggestionDescriptionDialog(QDialog):
         self._context_edit.setPlaceholderText("Ejemplo: Reparación de bajante en patio interior con sustitución de PVC")
         self._context_edit.setMinimumHeight(150)
         self._context_edit.setPlainText(initial_context)
+        self._context_edit.textChanged.connect(self._update_enhance_button)
         lay.addWidget(self._context_edit, 1)
+
+        helper_actions = QHBoxLayout()
+        self._btn_dictate = QPushButton("Dictar", self)
+        self._btn_dictate.clicked.connect(self._on_dictate)
+        if not self._speech_service.is_available():
+            self._btn_dictate.setToolTip("Dictado no disponible en esta instalacion.")
+        helper_actions.addWidget(self._btn_dictate)
+
+        self._btn_enhance = QPushButton("Mejorar con IA", self)
+        self._btn_enhance.clicked.connect(self._on_enhance_with_ai)
+        helper_actions.addWidget(self._btn_enhance)
+
+        self._status_label = QLabel("", self)
+        self._status_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; background: transparent;")
+        helper_actions.addWidget(self._status_label, 1)
+        lay.addLayout(helper_actions)
+
+        self._cost_label = QLabel(self._active_provider_cost_warning(), self)
+        self._cost_label.setWordWrap(True)
+        self._cost_label.setStyleSheet(f"color: {theme.WARNING}; background: transparent;")
+        self._cost_label.setVisible(bool(self._cost_label.text()))
+        lay.addWidget(self._cost_label)
 
         actions = QHBoxLayout()
         actions.addStretch()
@@ -108,7 +145,92 @@ class HistoricalSuggestionDescriptionDialog(QDialog):
         btn_search.clicked.connect(self._on_search)
         actions.addWidget(btn_search)
         lay.addLayout(actions)
+        self._update_enhance_button()
         self.resize(820, 460)
+
+    def _update_enhance_button(self):
+        has_text = bool(self._context_edit.toPlainText().strip())
+        has_key = self._settings.has_active_ai_key()
+        self._btn_enhance.setEnabled(has_text and has_key and not self._enhancement_in_progress)
+        if not has_key:
+            self._btn_enhance.setToolTip("Configura un proveedor IA y su API key para mejorar la descripcion.")
+        else:
+            self._btn_enhance.setToolTip("")
+
+    def _on_enhance_with_ai(self):
+        base_description = self._context_edit.toPlainText().strip()
+        if not base_description:
+            QMessageBox.warning(self, "Descripcion requerida", "Escribe una descripcion antes de mejorarla.")
+            return
+        if not self._settings.has_active_ai_key():
+            QMessageBox.information(
+                self,
+                "IA no configurada",
+                "Configura un proveedor IA y su API key para mejorar la descripcion.",
+            )
+            return
+        self._enhancement_in_progress = True
+        self._status_label.setText("Mejorando descripcion...")
+        self._update_enhance_button()
+        threading.Thread(target=self._run_enhancement, args=(base_description,), daemon=True).start()
+
+    def _run_enhancement(self, base_description: str):
+        try:
+            result = self._enhancer.enhance(base_description, project_data=self._project_data)
+            result["error"] = ""
+        except Exception as exc:
+            result = {
+                "original_description": base_description,
+                "enhanced_description": "",
+                "error": str(exc),
+            }
+        self._enhancement_done.emit(result)
+
+    def _on_enhancement_done(self, result: dict):
+        self._enhancement_in_progress = False
+        self._status_label.setText("")
+        self._update_enhance_button()
+        if result.get("error"):
+            QMessageBox.warning(self, "Mejorar con IA", result.get("error") or "No se pudo mejorar la descripcion.")
+            return
+        dlg = EnhancedDescriptionReviewDialog(self, result)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        decision = dlg.decision()
+        if decision == "use":
+            self._context_edit.setPlainText(dlg.proposed_text())
+        elif decision == "original":
+            self._context_edit.setPlainText(result.get("original_description", ""))
+
+    def _on_dictate(self):
+        if not self._speech_service.is_available():
+            QMessageBox.information(self, "Dictado", "Dictado no disponible en esta instalacion.")
+            return
+        self._status_label.setText("Escuchando...")
+        threading.Thread(target=self._run_speech_to_text, daemon=True).start()
+
+    def _run_speech_to_text(self):
+        try:
+            text = self._speech_service.transcribe_once()
+            self._speech_done.emit(text, "")
+        except SpeechToTextUnavailable as exc:
+            self._speech_done.emit("", str(exc))
+        except Exception:
+            self._speech_done.emit("", "No se pudo completar el dictado.")
+
+    def _on_speech_done(self, text: str, error: str):
+        self._status_label.setText("")
+        if error:
+            QMessageBox.information(self, "Dictado", error)
+            return
+        current = self._context_edit.toPlainText().strip()
+        new_text = text.strip()
+        self._context_edit.setPlainText(f"{current}\n{new_text}".strip() if current else new_text)
+
+    def _active_provider_cost_warning(self) -> str:
+        if self._settings.get_ai_provider() != AI_PROVIDER_DEEPSEEK:
+            return ""
+        return "Proveedor IA activo: DeepSeek. Esta mejora usara saldo de la API configurada."
 
     def _on_search(self):
         context = self._context_edit.toPlainText().strip()
@@ -133,6 +255,74 @@ class HistoricalSuggestionDescriptionDialog(QDialog):
 
     def wants_search(self) -> bool:
         return self._search_requested
+
+
+class EnhancedDescriptionReviewDialog(QDialog):
+    """Permite revisar y editar la descripcion mejorada antes de usarla."""
+
+    def __init__(self, parent, result: dict):
+        super().__init__(parent)
+        self.setWindowTitle("Descripcion mejorada para busqueda")
+        self._result = result or {}
+        self._decision = "cancel"
+        self._build_ui()
+
+    def _build_ui(self):
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(theme.SPACE_XL, theme.SPACE_XL, theme.SPACE_XL, theme.SPACE_XL)
+        lay.setSpacing(theme.SPACE_SM)
+
+        title = theme.create_title(self, "Descripcion mejorada para busqueda", "lg")
+        lay.addWidget(title)
+
+        original = QLabel(f"Texto original:\n{self._result.get('original_description', '')}", self)
+        original.setWordWrap(True)
+        original.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; background: transparent;")
+        lay.addWidget(original)
+
+        lay.addWidget(QLabel("Propuesta IA (editable):", self))
+        self._proposal_edit = QTextEdit(self)
+        self._proposal_edit.setMinimumHeight(150)
+        self._proposal_edit.setPlainText(self._result.get("enhanced_description", ""))
+        lay.addWidget(self._proposal_edit, 1)
+
+        warnings = self._result.get("warnings") or []
+        if warnings:
+            warn_label = QLabel("Avisos: " + "; ".join(str(w) for w in warnings[:3]), self)
+            warn_label.setWordWrap(True)
+            warn_label.setStyleSheet(f"color: {theme.WARNING}; background: transparent;")
+            lay.addWidget(warn_label)
+
+        actions = QHBoxLayout()
+        actions.addStretch()
+        btn_cancel = QPushButton("Cancelar", self)
+        btn_cancel.clicked.connect(lambda: self._finish("cancel", accepted=False))
+        actions.addWidget(btn_cancel)
+        btn_original = QPushButton("Mantener texto original", self)
+        btn_original.clicked.connect(lambda: self._finish("original"))
+        actions.addWidget(btn_original)
+        btn_edit = QPushButton("Editar antes de buscar", self)
+        btn_edit.clicked.connect(lambda: self._finish("use"))
+        actions.addWidget(btn_edit)
+        btn_use = QPushButton("Usar descripcion mejorada", self)
+        btn_use.setProperty("class", "primary")
+        btn_use.clicked.connect(lambda: self._finish("use"))
+        actions.addWidget(btn_use)
+        lay.addLayout(actions)
+        self.resize(820, 520)
+
+    def _finish(self, decision: str, accepted: bool = True):
+        self._decision = decision
+        if accepted:
+            self.accept()
+        else:
+            self.reject()
+
+    def decision(self) -> str:
+        return self._decision
+
+    def proposed_text(self) -> str:
+        return self._proposal_edit.toPlainText().strip()
 
 
 class HistoricalSuggestionContextDialog(QDialog):
