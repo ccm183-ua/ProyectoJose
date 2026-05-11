@@ -14,6 +14,10 @@ from PySide6.QtWidgets import (
 
 from src.core import database as db_module
 from src.core.historical_context import request_historical_suggestions_for_context
+from src.core.historical_suggestions_dedupe import (
+    dedupe_historical_partidas,
+    dedupe_merged_review_partidas,
+)
 from src.core.partida_normalizer import normalize_partida_for_excel
 from src.core.services import BudgetService, DatabaseService
 from src.gui import theme
@@ -422,7 +426,12 @@ class MainFrame(QMainWindow):
             from src.gui.combined_partidas_review_dialog import CombinedPartidasReviewDialog
             from src.gui.historical_selection_next_step_dialog import HistoricalSelectionNextStepDialog
 
-            dlg = HistoricalSuggestionsDialog(self, historical_result, project_data=project_data)
+            hr = dict(historical_result)
+            partidas_dedup, dup_removed = dedupe_historical_partidas(hr.get("partidas", []))
+            hr["partidas"] = partidas_dedup
+            hr["duplicates_hidden_count"] = dup_removed
+
+            dlg = HistoricalSuggestionsDialog(self, hr, project_data=project_data)
             if dlg.exec() == 1:
                 selected = dlg.get_selected_partidas()
                 if selected:
@@ -431,8 +440,7 @@ class MainFrame(QMainWindow):
                         for p in selected
                     ]
                     next_step = HistoricalSelectionNextStepDialog(self, selected_count=len(selected_normalized))
-                    if next_step.exec() != 1:
-                        return
+                    next_step.exec()
                     user_action = next_step.get_result()
                     if user_action == HistoricalSelectionNextStepDialog.CANCEL:
                         return
@@ -476,10 +484,21 @@ class MainFrame(QMainWindow):
                             "Sin complementos",
                             "La IA no ha detectado partidas complementarias. Puedes continuar con históricas.",
                         )
+                    hist_for_review, ai_for_review, cross_deduped = dedupe_merged_review_partidas(
+                        selected_normalized,
+                        ai_partidas,
+                    )
+                    merge_note = ""
+                    if cross_deduped > 0:
+                        merge_note = (
+                            f"Se han ocultado {cross_deduped} partidas duplicadas entre históricas "
+                            "e IA complementaria."
+                        )
                     review = CombinedPartidasReviewDialog(
                         self,
-                        historical_partidas=selected_normalized,
-                        ai_partidas=ai_partidas,
+                        historical_partidas=hist_for_review,
+                        ai_partidas=ai_for_review,
+                        merge_duplicates_note=merge_note,
                     )
                     if review.exec() != 1:
                         return

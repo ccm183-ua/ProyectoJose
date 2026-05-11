@@ -10,8 +10,12 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
-    QTextEdit,
+    QScrollArea,
+    QTableWidget,
+    QTableWidgetItem,
+    QHeaderView,
     QVBoxLayout,
     QWidget,
 )
@@ -49,7 +53,9 @@ class AICompleteHistoricalBudgetDialog(QDialog):
 
     def _build_ui(self):
         main_layout = QVBoxLayout(self)
-        panel = QWidget(self)
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        panel = QWidget()
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(theme.SPACE_XL, theme.SPACE_XL, theme.SPACE_XL, theme.SPACE_XL)
         layout.setSpacing(theme.SPACE_SM)
@@ -77,39 +83,44 @@ class AICompleteHistoricalBudgetDialog(QDialog):
 
         selected_count = len(self._selected_historical_partidas)
         layout.addWidget(QLabel(f"Partidas históricas seleccionadas: {selected_count}", panel))
-        layout.addWidget(
-            QLabel(
-                "Resumen del contexto confirmado:\n"
-                f"{self._confirmed_context or '(sin contexto adicional)'}",
-                panel,
-            )
-        )
+        layout.addWidget(QLabel("Resumen del contexto confirmado:", panel))
+        self._context_preview = QPlainTextEdit(panel)
+        self._context_preview.setReadOnly(True)
+        self._context_preview.setPlainText(self._confirmed_context or "(sin contexto adicional)")
+        self._context_preview.setMinimumHeight(120)
+        self._context_preview.setMaximumHeight(160)
+        layout.addWidget(self._context_preview)
 
-        resumen = []
-        for p in self._selected_historical_partidas[:12]:
-            concepto = p.get("concepto") or p.get("titulo") or "-"
-            unidad = p.get("unidad", "ud")
-            cantidad = p.get("cantidad", 0)
-            resumen.append(f"- {concepto} ({cantidad} {unidad})")
-        if len(self._selected_historical_partidas) > 12:
-            resumen.append(f"... y {len(self._selected_historical_partidas) - 12} más")
-        resumen_text = "\n".join(resumen) if resumen else "-"
-        resumen_label = QLabel(f"Listado resumido:\n{resumen_text}", panel)
-        resumen_label.setWordWrap(True)
-        layout.addWidget(resumen_label)
+        layout.addWidget(QLabel("Partidas históricas seleccionadas (resumen):", panel))
+        self._selected_table = QTableWidget(panel)
+        self._selected_table.setColumnCount(5)
+        self._selected_table.setHorizontalHeaderLabels(["Código", "Título/Concepto", "Ud", "Cantidad", "Precio"])
+        self._selected_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self._selected_table.setColumnWidth(0, 90)
+        self._selected_table.setColumnWidth(2, 70)
+        self._selected_table.setColumnWidth(3, 90)
+        self._selected_table.setColumnWidth(4, 100)
+        self._selected_table.setMinimumHeight(180)
+        self._selected_table.setMaximumHeight(220)
+        self._selected_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._populate_selected_table()
+        layout.addWidget(self._selected_table)
 
         lbl_extra = QLabel("Instrucciones adicionales para completar (opcional):", panel)
         lbl_extra.setFont(theme.get_font_medium())
         layout.addWidget(lbl_extra)
 
-        self._instructions = QTextEdit(panel)
+        self._instructions = QPlainTextEdit(panel)
         self._instructions.setPlaceholderText(
-            "Opcional: prioridades, límites de alcance, exclusiones, etc."
+            "Ej.: Añade solo partidas de remates, limpieza o medios auxiliares si faltan."
         )
-        self._instructions.setMaximumHeight(100)
+        self._instructions.setMinimumHeight(90)
+        self._instructions.setMaximumHeight(120)
         layout.addWidget(self._instructions)
 
-        layout.addWidget(theme.create_divider(panel))
+        scroll.setWidget(panel)
+        main_layout.addWidget(scroll)
+        main_layout.addWidget(theme.create_divider(self))
         buttons = QHBoxLayout()
         buttons.addStretch()
 
@@ -125,10 +136,23 @@ class AICompleteHistoricalBudgetDialog(QDialog):
         self._btn_generate.setProperty("class", "primary")
         self._btn_generate.clicked.connect(self._on_generate)
         buttons.addWidget(self._btn_generate)
-        layout.addLayout(buttons)
+        main_layout.addLayout(buttons)
+        self.resize(760, 620)
+        self.setMinimumSize(640, 480)
 
-        main_layout.addWidget(panel)
-        self.resize(900, 680)
+    def _populate_selected_table(self):
+        self._selected_table.setRowCount(len(self._selected_historical_partidas))
+        for row, partida in enumerate(self._selected_historical_partidas):
+            codigo = str(partida.get("codigo", "") or "").strip()
+            concepto = str(partida.get("titulo") or partida.get("concepto") or "-").strip()
+            unidad = str(partida.get("unidad", "ud"))
+            cantidad = str(partida.get("cantidad", 0))
+            precio = str(partida.get("precio_unitario", partida.get("precio", 0)))
+            self._selected_table.setItem(row, 0, QTableWidgetItem(codigo))
+            self._selected_table.setItem(row, 1, QTableWidgetItem(concepto))
+            self._selected_table.setItem(row, 2, QTableWidgetItem(unidad))
+            self._selected_table.setItem(row, 3, QTableWidgetItem(cantidad))
+            self._selected_table.setItem(row, 4, QTableWidgetItem(precio))
 
     def _on_continue_historical(self):
         self._action = "historical_only"

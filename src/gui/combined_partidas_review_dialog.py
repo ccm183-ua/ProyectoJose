@@ -4,6 +4,7 @@ Diálogo final para revisar partidas históricas + IA complementaria.
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QDialog,
     QHBoxLayout,
     QHeaderView,
@@ -21,11 +22,18 @@ from src.gui import theme
 
 
 class CombinedPartidasReviewDialog(QDialog):
-    def __init__(self, parent, historical_partidas=None, ai_partidas=None):
+    def __init__(
+        self,
+        parent,
+        historical_partidas=None,
+        ai_partidas=None,
+        merge_duplicates_note: str = "",
+    ):
         super().__init__(parent)
         self.setWindowTitle("Revisión final de partidas")
         self._historical_partidas = historical_partidas or []
         self._ai_partidas = ai_partidas or []
+        self._merge_duplicates_note = (merge_duplicates_note or "").strip()
         self._rows = []
         self._selected_partidas = []
         self._updating_totals = False
@@ -35,11 +43,19 @@ class CombinedPartidasReviewDialog(QDialog):
 
     def _build_rows(self):
         for partida in self._historical_partidas:
-            self._rows.append({"origin": "Histórica", "partida": dict(partida or {})})
+            self._rows.append(
+                {
+                    "origin": "Histórica",
+                    "partida": normalize_partida_for_excel(dict(partida or {}), source="historical"),
+                }
+            )
         for partida in self._ai_partidas:
-            self._rows.append({"origin": "IA complementaria", "partida": dict(partida or {})})
-        self._selected = [True] * len(self._rows)
-
+            self._rows.append(
+                {
+                    "origin": "IA complementaria",
+                    "partida": normalize_partida_for_excel(dict(partida or {}), source="ai_completion"),
+                }
+            )
     def _build_ui(self):
         main = QVBoxLayout(self)
         panel = QWidget(self)
@@ -54,6 +70,11 @@ class CombinedPartidasReviewDialog(QDialog):
                 panel,
             )
         )
+        if self._merge_duplicates_note:
+            dup = QLabel(self._merge_duplicates_note, panel)
+            dup.setWordWrap(True)
+            dup.setStyleSheet(f"color: {theme.TEXT_TERTIARY}; background: transparent;")
+            lay.addWidget(dup)
 
         self._table = QTableWidget(panel)
         self._table.setColumnCount(10)
@@ -63,7 +84,7 @@ class CombinedPartidasReviewDialog(QDialog):
                 "Origen",
                 "Título",
                 "Descripción",
-                "Unidad",
+                "Ud",
                 "Cantidad",
                 "Precio",
                 "Total",
@@ -71,11 +92,25 @@ class CombinedPartidasReviewDialog(QDialog):
                 "Motivo/Fuente",
             ]
         )
-        self._table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        self._table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        self._table.setColumnWidth(0, 55)
+        self._table.setColumnWidth(1, 110)
+        self._table.setColumnWidth(2, 260)
+        self._table.setColumnWidth(3, 420)
+        self._table.setColumnWidth(4, 70)
+        self._table.setColumnWidth(5, 90)
+        self._table.setColumnWidth(6, 90)
+        self._table.setColumnWidth(7, 90)
+        self._table.setColumnWidth(8, 90)
+        self._table.setColumnWidth(9, 260)
         self._table.setAlternatingRowColors(True)
         self._table.setSortingEnabled(False)
+        self._table.setWordWrap(False)
         self._table.verticalHeader().setVisible(False)
+        self._table.setEditTriggers(
+            QAbstractItemView.EditTrigger.DoubleClicked
+            | QAbstractItemView.EditTrigger.SelectedClicked
+        )
         self._table.doubleClicked.connect(self._toggle_current_row)
         self._table.itemChanged.connect(self._on_item_changed)
         lay.addWidget(self._table, 1)
@@ -104,7 +139,8 @@ class CombinedPartidasReviewDialog(QDialog):
         lay.addLayout(actions)
 
         main.addWidget(panel)
-        self.resize(1180, 660)
+        self.resize(1100, 650)
+        self.setMinimumSize(900, 520)
 
     def _populate(self):
         self._table.setRowCount(len(self._rows))
@@ -120,12 +156,38 @@ class CombinedPartidasReviewDialog(QDialog):
             motivo = partida.get("reason") or partida.get("source") or partida.get("module") or ""
             total = cantidad * precio
 
-            self._table.setItem(i, 0, QTableWidgetItem("✓"))
-            self._table.item(i, 0).setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self._table.setItem(i, 1, QTableWidgetItem(origin))
-            self._table.setItem(i, 2, QTableWidgetItem(concepto))
-            self._table.setItem(i, 3, QTableWidgetItem(descripcion))
-            self._table.setItem(i, 4, QTableWidgetItem(unidad))
+            tooltip = (
+                f"Título: {concepto or '-'}\n"
+                f"Descripción: {descripcion or '-'}\n"
+                f"Origen: {origin}"
+            )
+
+            use_item = QTableWidgetItem()
+            use_item.setFlags(
+                Qt.ItemFlag.ItemIsEnabled
+                | Qt.ItemFlag.ItemIsUserCheckable
+                | Qt.ItemFlag.ItemIsSelectable
+            )
+            use_item.setCheckState(Qt.CheckState.Checked)
+            use_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            use_item.setToolTip(tooltip)
+            self._table.setItem(i, 0, use_item)
+
+            origin_item = QTableWidgetItem(origin)
+            origin_item.setToolTip(tooltip)
+            self._table.setItem(i, 1, origin_item)
+
+            title_item = QTableWidgetItem(concepto)
+            title_item.setToolTip(tooltip)
+            self._table.setItem(i, 2, title_item)
+
+            desc_item = QTableWidgetItem(descripcion)
+            desc_item.setToolTip(tooltip)
+            self._table.setItem(i, 3, desc_item)
+
+            unit_item = QTableWidgetItem(unidad)
+            unit_item.setToolTip(tooltip)
+            self._table.setItem(i, 4, unit_item)
             self._table.setItem(i, 5, QTableWidgetItem(str(cantidad)))
             self._table.setItem(i, 6, QTableWidgetItem(str(precio)))
             self._table.setItem(i, 7, QTableWidgetItem(f"{total:.2f}"))
@@ -138,25 +200,38 @@ class CombinedPartidasReviewDialog(QDialog):
 
     def _toggle_current_row(self):
         row = self._table.currentRow()
-        if row < 0 or row >= len(self._selected):
+        if row < 0 or row >= len(self._rows):
             return
-        self._selected[row] = not self._selected[row]
-        self._table.item(row, 0).setText("✓" if self._selected[row] else "")
+        it = self._table.item(row, 0)
+        if it is None:
+            return
+        it.setCheckState(
+            Qt.CheckState.Unchecked
+            if it.checkState() == Qt.CheckState.Checked
+            else Qt.CheckState.Checked
+        )
 
     def _select_all(self):
-        for i in range(len(self._selected)):
-            self._selected[i] = True
-            self._table.item(i, 0).setText("✓")
+        self._table.blockSignals(True)
+        for i in range(self._table.rowCount()):
+            it = self._table.item(i, 0)
+            if it is not None:
+                it.setCheckState(Qt.CheckState.Checked)
+        self._table.blockSignals(False)
 
     def _select_none(self):
-        for i in range(len(self._selected)):
-            self._selected[i] = False
-            self._table.item(i, 0).setText("")
+        self._table.blockSignals(True)
+        for i in range(self._table.rowCount()):
+            it = self._table.item(i, 0)
+            if it is not None:
+                it.setCheckState(Qt.CheckState.Unchecked)
+        self._table.blockSignals(False)
 
     def _on_apply(self):
         selected = []
         for row, data in enumerate(self._rows):
-            if not self._selected[row]:
+            use_it = self._table.item(row, 0)
+            if use_it is None or use_it.checkState() != Qt.CheckState.Checked:
                 continue
             try:
                 cantidad = float((self._table.item(row, 5).text() or "1").replace(",", "."))
@@ -197,8 +272,8 @@ class CombinedPartidasReviewDialog(QDialog):
                 )
                 return
 
+            partida["titulo"] = concepto
             partida["concepto"] = concepto
-            partida["titulo"] = str(partida.get("titulo") or partida["concepto"]).strip()
             partida["descripcion"] = str(self._table.item(row, 3).text() or "").strip()
             partida["unidad"] = unidad
             partida["cantidad"] = cantidad

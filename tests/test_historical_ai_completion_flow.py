@@ -295,6 +295,10 @@ def test_complete_dialog_does_not_require_tipo_or_plantilla_fields():
     source = inspect.getsource(AICompleteHistoricalBudgetDialog)
     assert "Tipo de obra:" not in source
     assert "Plantilla de referencia" not in source
+    assert "QPlainTextEdit" in source
+    assert "setMinimumSize(640, 480)" in source
+    assert "setMinimumHeight(120)" in source
+    assert "QScrollArea" in source
 
 
 def test_combined_review_sorting_is_disabled_in_source():
@@ -310,11 +314,39 @@ def test_combined_review_has_input_validations_in_source():
     assert "precio negativo" in src
 
 
+def test_combined_review_shows_description_with_tooltips_and_normalization():
+    src = Path("src/gui/combined_partidas_review_dialog.py").read_text(encoding="utf-8")
+    assert '"Descripción"' in src
+    assert "setToolTip(" in src
+    assert "normalize_partida_for_excel" in src
+    assert "setColumnWidth(3, 420)" in src
+
+
+def test_historical_suggestions_usar_column_uses_checkbox_in_source():
+    src = Path("src/gui/historical_suggestions_dialog.py").read_text(encoding="utf-8")
+    assert "ItemIsUserCheckable" in src
+    assert "use_item.setCheckState" in src
+    assert "CheckState.Checked" in src
+    assert '"✓"' not in src
+    assert "for col in (3, 5):" in src
+
+
+def test_combined_review_usar_column_uses_checkbox_in_source():
+    src = Path("src/gui/combined_partidas_review_dialog.py").read_text(encoding="utf-8")
+    assert "ItemIsUserCheckable" in src
+    assert "checkState()" in src
+    assert '"✓"' not in src
+
+
 def test_next_step_dialog_has_compact_clear_buttons_in_source():
     src = Path("src/gui/historical_selection_next_step_dialog.py").read_text(encoding="utf-8")
-    assert "Crear solo con históricas" in src
-    assert "Completar con IA" in src
-    assert "Volver" in src
+    assert "QMessageBox" in src
+    assert 'addButton("Crear"' in src
+    assert 'addButton("Usar IA"' in src
+    assert "Cancelar" in src
+    assert "setMinimumWidth(420)" in src
+    assert "Partidas seleccionadas" in src
+    assert "QFrame" not in src
     assert "CREATE_ONLY" in src
     assert "COMPLETE_WITH_AI" in src
     assert "CANCEL" in src
@@ -322,6 +354,6 @@ def test_next_step_dialog_has_compact_clear_buttons_in_source():
 
 def test_writer_uses_same_title_description_path_without_source_branching():
     src = Path("src/core/excel_partidas_writer.py").read_text(encoding="utf-8")
-    assert "partida.get('titulo'" in src
-    assert "partida.get('descripcion'" in src
-    assert "partida.get('source'" not in src
+    assert 'partida.get("titulo"' in src or "partida.get('titulo'" in src
+    assert 'partida.get("descripcion"' in src or "partida.get('descripcion'" in src
+    assert "partida.get('source'" not in src and 'partida.get("source"' not in src

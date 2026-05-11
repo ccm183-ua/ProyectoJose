@@ -192,3 +192,20 @@ class TestInsertPartidas:
             r'<r><rPr><sz val="10"/><rFont val="Calibri"/></rPr>\s*<t xml:space="preserve">&#10;Aplicación de pintura plástica mate en paredes\.</t></r>',
             sheet2,
         )
+
+    def test_long_title_without_description_not_single_bold_block(self, budget_file):
+        """Título largo sin descripción: no debe aplicarse negrita a todo un bloque enorme."""
+        em = ExcelManager()
+        long_t = "TITULO LARGO " * 25
+        em.insert_partidas_via_xml(
+            budget_file,
+            [{"titulo": long_t, "descripcion": "", "unidad": "ud", "cantidad": 1, "precio_unitario": 1}],
+        )
+        sheet2 = _read_sheet2(budget_file)
+        m = re.search(r'<c r="C17"[^>]*>(.*?)</c>', sheet2, re.DOTALL)
+        assert m
+        inner = m.group(1)
+        bold_count = inner.count("<b/>")
+        assert bold_count <= 1
+        if bold_count == 1:
+            assert inner.count("<r>") >= 2

@@ -4,6 +4,7 @@ Diálogo para revisar sugerencias históricas de partidas.
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QDialog,
     QHBoxLayout,
     QHeaderView,
@@ -235,13 +236,6 @@ class HistoricalSuggestionsDialog(QDialog):
         self._project_data = project_data or {}
         self._modules = self._result.get("detected_modules", [])
         self._partidas = self._result.get("partidas", [])
-        self._selected = [
-            (
-                float(p.get("confidence", 0.0)) >= 0.7
-                and int(p.get("historical_frequency", 0)) >= 3
-            )
-            for p in self._partidas
-        ]
         self._selected_partidas = []
         self._build_ui()
         self._populate()
@@ -277,13 +271,19 @@ class HistoricalSuggestionsDialog(QDialog):
         layout.addWidget(self._modules_label)
         self._set_modules_text(modules_text)
 
+        self._dup_label = QLabel("", panel)
+        self._dup_label.setWordWrap(True)
+        self._dup_label.setStyleSheet(f"color: {theme.TEXT_TERTIARY}; background: transparent;")
+        layout.addWidget(self._dup_label)
+        self._update_dup_notice()
+
         self._table = QTableWidget(panel)
         self._table.setColumnCount(9)
         self._table.setHorizontalHeaderLabels(
-            ["", "Módulo", "Concepto", "Cantidad", "Unidad", "Precio Unit.", "Rango €", "Frecuencia", "Conf."]
+            ["Usar", "Módulo", "Concepto", "Cantidad", "Unidad", "Precio Unit.", "Rango €", "Frecuencia", "Conf."]
         )
         self._table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        self._table.setColumnWidth(0, 32)
+        self._table.setColumnWidth(0, 44)
         self._table.setColumnWidth(1, 140)
         self._table.setColumnWidth(3, 85)
         self._table.setColumnWidth(4, 70)
@@ -295,6 +295,10 @@ class HistoricalSuggestionsDialog(QDialog):
         self._table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self._table.setAlternatingRowColors(True)
         self._table.verticalHeader().setVisible(False)
+        self._table.setEditTriggers(
+            QAbstractItemView.EditTrigger.DoubleClicked
+            | QAbstractItemView.EditTrigger.SelectedClicked
+        )
         self._table.doubleClicked.connect(self._toggle_current_row)
         layout.addWidget(self._table, 1)
 
@@ -339,6 +343,15 @@ class HistoricalSuggestionsDialog(QDialog):
         else:
             self._modules_label.hide()
 
+    def _update_dup_notice(self):
+        removed = int(self._result.get("duplicates_hidden_count") or 0)
+        if removed > 0:
+            self._dup_label.setText(f"Se han ocultado {removed} sugerencias similares.")
+            self._dup_label.show()
+        else:
+            self._dup_label.clear()
+            self._dup_label.hide()
+
     def _populate(self):
         stats = self._result.get("stats", {})
         self._msg_label.setText(
@@ -351,8 +364,21 @@ class HistoricalSuggestionsDialog(QDialog):
         self._set_modules_text(modules_text)
         self._table.setRowCount(len(self._partidas))
         for i, partida in enumerate(self._partidas):
-            self._table.setItem(i, 0, QTableWidgetItem("✓" if self._selected[i] else ""))
-            self._table.item(i, 0).setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            use_checked = (
+                float(partida.get("confidence", 0.0)) >= 0.7
+                and int(partida.get("historical_frequency", 0)) >= 3
+            )
+            use_item = QTableWidgetItem()
+            use_item.setFlags(
+                Qt.ItemFlag.ItemIsEnabled
+                | Qt.ItemFlag.ItemIsUserCheckable
+                | Qt.ItemFlag.ItemIsSelectable
+            )
+            use_item.setCheckState(
+                Qt.CheckState.Checked if use_checked else Qt.CheckState.Unchecked
+            )
+            use_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._table.setItem(i, 0, use_item)
             self._table.setItem(i, 1, QTableWidgetItem(str(partida.get("module", ""))))
             self._table.setItem(i, 2, QTableWidgetItem(str(partida.get("concepto", ""))))
 
@@ -386,28 +412,38 @@ class HistoricalSuggestionsDialog(QDialog):
             for col in (3, 5):
                 item = self._table.item(row, col)
                 item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
+        self._update_dup_notice()
 
     def _toggle_current_row(self):
         row = self._table.currentRow()
         if row < 0:
             return
-        self._selected[row] = not self._selected[row]
-        self._table.item(row, 0).setText("✓" if self._selected[row] else "")
+        it = self._table.item(row, 0)
+        if it is None:
+            return
+        it.setCheckState(
+            Qt.CheckState.Unchecked
+            if it.checkState() == Qt.CheckState.Checked
+            else Qt.CheckState.Checked
+        )
 
     def _select_all(self):
-        for i in range(len(self._selected)):
-            self._selected[i] = True
-            self._table.item(i, 0).setText("✓")
+        for i in range(self._table.rowCount()):
+            it = self._table.item(i, 0)
+            if it is not None:
+                it.setCheckState(Qt.CheckState.Checked)
 
     def _select_none(self):
-        for i in range(len(self._selected)):
-            self._selected[i] = False
-            self._table.item(i, 0).setText("")
+        for i in range(self._table.rowCount()):
+            it = self._table.item(i, 0)
+            if it is not None:
+                it.setCheckState(Qt.CheckState.Unchecked)
 
     def _on_apply(self):
         selected = []
         for row, partida in enumerate(self._partidas):
-            if not self._selected[row]:
+            use_it = self._table.item(row, 0)
+            if use_it is None or use_it.checkState() != Qt.CheckState.Checked:
                 continue
             try:
                 cantidad = float((self._table.item(row, 3).text() or "1").replace(",", "."))
@@ -466,17 +502,16 @@ class HistoricalSuggestionsDialog(QDialog):
             )
             return
 
+        from src.core.historical_suggestions_dedupe import dedupe_historical_partidas
+
+        deduped, removed = dedupe_historical_partidas(fresh.get("partidas", []))
+        fresh["partidas"] = deduped
+        fresh["duplicates_hidden_count"] = removed
+
         self._result = fresh
         self._modules = fresh.get("detected_modules", [])
         self._partidas = fresh.get("partidas", [])
         self._selected_partidas = []
-        self._selected = [
-            (
-                float(p.get("confidence", 0.0)) >= 0.7
-                and int(p.get("historical_frequency", 0)) >= 3
-            )
-            for p in self._partidas
-        ]
         self._populate()
 
     def get_selected_partidas(self):

@@ -20,6 +20,11 @@ from src.core.xlsx_cell_utils import (
     read_shared_strings_from_dict,
     resolve_cell_text,
 )
+from src.core.partida_normalizer import (
+    force_split_long_plain_text,
+    split_title_description,
+    split_title_for_excel_bold,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -62,8 +67,12 @@ class PartidasWriter:
                 otros = {n: z_in.read(n) for n in namelist if n != SHEET_12220}
 
             wrap_style = self._create_wrap_style(otros, 47)
+            partida_desc_style = self._create_wrap_style(otros, 32, vertical_top=True)
             sheet_content = self._replace_partidas_in_xml(
-                sheet_content, partidas, asciende_style=wrap_style,
+                sheet_content,
+                partidas,
+                asciende_style=wrap_style,
+                partida_desc_style=partida_desc_style,
             )
 
             fd, tmp_path = tempfile.mkstemp(suffix=".xlsx")
@@ -100,12 +109,12 @@ class PartidasWriter:
             return False
 
     @staticmethod
-    def _estimate_row_height(titulo, descripcion, chars_per_line=55, line_height=14.5):
+    def _estimate_row_height(titulo, descripcion, chars_per_line=48, line_height=15.0):
         """
         Estima la altura de fila necesaria para el texto de una partida.
 
         Calcula el número de líneas que ocupará el texto en la celda combinada
-        C:F (ancho aprox. ~55 caracteres en Calibri 10pt) y devuelve la altura
+        C:F (ancho aprox. ~48 caracteres en Calibri 10pt) y devuelve la altura
         en puntos Excel.
 
         Args:
@@ -126,14 +135,28 @@ class PartidasWriter:
                 count += max(1, -(-len(paragraph) // chars_per_line))
             return count
 
-        lines = max(1, _wrapped_logical_lines(titulo))
-        if descripcion:
-            lines += _wrapped_logical_lines(descripcion)
-        height = lines * line_height + 8
-        height = max(30, min(200, height))
+        tit = str(titulo or "")
+        desc = str(descripcion or "")
+        lines = max(1, _wrapped_logical_lines(tit))
+        if desc:
+            lines += 1 + _wrapped_logical_lines(desc)
+        height = lines * line_height + 18
+        # Alturas mínimas legibles según volumen de texto
+        min_h = 45
+        if len(tit) + len(desc) > 180:
+            min_h = 52
+        if len(tit) + len(desc) > 400:
+            min_h = 68
+        height = max(min_h, min(175, height))
         return str(round(height, 1))
 
-    def _replace_partidas_in_xml(self, sheet_xml, partidas, asciende_style="47"):
+    def _replace_partidas_in_xml(
+        self,
+        sheet_xml,
+        partidas,
+        asciende_style="47",
+        partida_desc_style="32",
+    ):
         """
         Reemplaza las filas de partidas de ejemplo (17-26) con las partidas reales.
         """
@@ -144,6 +167,7 @@ class PartidasWriter:
         new_rows_xml = []
         first_data_row = 17
         current_row = first_data_row
+        ps = str(partida_desc_style)
 
         for idx, partida in enumerate(partidas):
             num = f"1.{idx + 1}"
@@ -159,34 +183,58 @@ class PartidasWriter:
             except (ValueError, TypeError):
                 precio = 0.0
 
-            titulo = xml_escape(str(partida.get('titulo', '')))
-            descripcion = xml_escape(str(partida.get('descripcion', '')))
+            titulo_plain = str(partida.get("titulo", "") or "").strip()
+            descripcion_plain = str(partida.get("descripcion", "") or "").strip()
 
-            if titulo and descripcion:
+            if not descripcion_plain and len(titulo_plain) > 120:
+                titulo_plain, descripcion_plain = split_title_description(titulo_plain)
+            if not descripcion_plain and len(titulo_plain) > 120:
+                titulo_plain, descripcion_plain = force_split_long_plain_text(titulo_plain, 85)
+
+            bold_head, tail_title = split_title_for_excel_bold(titulo_plain, 72)
+            if tail_title:
+                titulo_plain = bold_head
+                if descripcion_plain:
+                    descripcion_plain = f"{tail_title}\n{descripcion_plain}".strip()
+                else:
+                    descripcion_plain = tail_title
+
+            titulo_esc = xml_escape(titulo_plain)
+            descripcion_esc = xml_escape(descripcion_plain)
+
+            if titulo_esc and descripcion_esc:
                 celda_c = (
-                    f'<c r="C{current_row}" s="32" t="inlineStr"><is>'
+                    f'<c r="C{current_row}" s="{ps}" t="inlineStr"><is>'
                     f'<r><rPr><b/><sz val="10"/><rFont val="Calibri"/></rPr>'
-                    f'<t>{titulo}</t></r>'
+                    f'<t>{titulo_esc}</t></r>'
                     f'<r><rPr><sz val="10"/><rFont val="Calibri"/></rPr>'
-                    f'<t xml:space="preserve">&#10;{descripcion}</t></r>'
+                    f'<t xml:space="preserve">&#10;{descripcion_esc}</t></r>'
                     f'</is></c>'
                 )
-                row_height = self._estimate_row_height(titulo, descripcion)
-            elif titulo:
+                row_height = self._estimate_row_height(titulo_plain, descripcion_plain)
+            elif titulo_esc and len(titulo_plain) > 80 and not descripcion_plain:
                 celda_c = (
-                    f'<c r="C{current_row}" s="32" t="inlineStr"><is>'
-                    f'<r><rPr><b/><sz val="10"/><rFont val="Calibri"/></rPr>'
-                    f'<t>{titulo}</t></r>'
+                    f'<c r="C{current_row}" s="{ps}" t="inlineStr"><is>'
+                    f'<r><rPr><sz val="10"/><rFont val="Calibri"/></rPr>'
+                    f'<t>{titulo_esc}</t></r>'
                     f'</is></c>'
                 )
-                row_height = self._estimate_row_height(titulo, '')
+                row_height = self._estimate_row_height(titulo_plain, "")
+            elif titulo_esc:
+                celda_c = (
+                    f'<c r="C{current_row}" s="{ps}" t="inlineStr"><is>'
+                    f'<r><rPr><b/><sz val="10"/><rFont val="Calibri"/></rPr>'
+                    f'<t>{titulo_esc}</t></r>'
+                    f'</is></c>'
+                )
+                row_height = self._estimate_row_height(titulo_plain, "")
             else:
                 concepto = xml_escape(str(partida.get('concepto', '')))
                 celda_c = (
-                    f'<c r="C{current_row}" s="32" t="inlineStr">'
+                    f'<c r="C{current_row}" s="{ps}" t="inlineStr">'
                     f'<is><t>{concepto}</t></is></c>'
                 )
-                row_height = self._estimate_row_height(concepto, '')
+                row_height = self._estimate_row_height(str(partida.get('concepto', '')), '')
 
             total = round(cantidad * precio, 2)
             data_row = (
@@ -194,8 +242,8 @@ class PartidasWriter:
                 f'<c r="A{current_row}" s="31" t="inlineStr"><is><t>{num}</t></is></c>'
                 f'<c r="B{current_row}" s="31" t="inlineStr"><is><t>{unidad}</t></is></c>'
                 f'{celda_c}'
-                f'<c r="D{current_row}" s="32"/>'
-                f'<c r="E{current_row}" s="32"/>'
+                f'<c r="D{current_row}" s="{ps}"/>'
+                f'<c r="E{current_row}" s="{ps}"/>'
                 f'<c r="F{current_row}" s="33"/>'
                 f'<c r="G{current_row}" s="34"><v>{cantidad}</v></c>'
                 f'<c r="H{current_row}" s="35"><v>{precio}</v></c>'
@@ -491,8 +539,8 @@ class PartidasWriter:
             return False
 
     @staticmethod
-    def _create_wrap_style(otros_dict, base_style_idx=47):
-        """Crea un nuevo estilo en styles.xml con wrapText y horizontal left."""
+    def _create_wrap_style(otros_dict, base_style_idx=47, vertical_top=False):
+        """Crea un nuevo estilo en styles.xml con wrapText y horizontal left (opcional vertical arriba)."""
         styles_key = "xl/styles.xml"
         if styles_key not in otros_dict:
             return str(base_style_idx)
@@ -511,9 +559,15 @@ class PartidasWriter:
         if base_style_idx >= len(xfs):
             return str(base_style_idx)
         base_xf = xfs[base_style_idx].group(0)
-        if 'wrapText="1"' in base_xf and 'horizontal="left"' in base_xf:
+        has_top = 'vertical="top"' in base_xf
+        if (
+            'wrapText="1"' in base_xf
+            and 'horizontal="left"' in base_xf
+            and (not vertical_top or has_top)
+        ):
             return str(base_style_idx)
-        _align = '<alignment horizontal="left" wrapText="1"/>'
+        v_attr = ' vertical="top"' if vertical_top else ""
+        _align = f'<alignment horizontal="left" wrapText="1"{v_attr}/>'
         new_xf = base_xf
         if '<alignment' in new_xf:
             new_xf = re.sub(
