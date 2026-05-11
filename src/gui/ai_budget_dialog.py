@@ -120,7 +120,7 @@ class AIBudgetDialog(QDialog):
         self._plantilla_list.setMaximumHeight(100)
         layout.addWidget(self._plantilla_list)
 
-        if not self._settings.has_api_key():
+        if not self._settings.has_active_ai_key():
             warning_layout = QHBoxLayout()
             warning_icon = QLabel("⚠", panel)
             warning_icon.setStyleSheet(f"color: {theme.WARNING}; background: transparent;")
@@ -192,8 +192,7 @@ class AIBudgetDialog(QDialog):
 
     def _run_generation(self, tipo, descripcion):
         try:
-            api_key = self._settings.get_api_key()
-            generator = BudgetGenerator(api_key=api_key)
+            generator = BudgetGenerator(settings=self._settings)
 
             full_desc = descripcion
             if self._context_extra:

@@ -8,6 +8,7 @@ import os
 import re
 from typing import Any, Dict, List, Optional
 
+from src.core.ai_clients import get_ai_client_from_settings, normalize_ai_error
 from src.core.ai_service import AIService
 from src.core.database_backup import create_database_backup
 from src.core.database_persistence import log_historical_memory_event
@@ -23,7 +24,6 @@ from src.core.repositories import (
     get_historical_budget_partidas,
     upsert_budget_enrichment,
 )
-from src.core.settings import Settings
 
 
 ENRICHMENT_TYPE = "TECHNICAL_DESCRIPTION"
@@ -34,12 +34,28 @@ MAX_DESCRIPTION_LENGTH = 900
 
 
 class HistoricalTechnicalDescriptionAIClient:
-    """Adaptador minimo sobre AIService para poder inyectar fakes en tests."""
+    """Adaptador minimo sobre proveedores IA para poder inyectar fakes en tests."""
 
     def __init__(self, ai_service: Optional[AIService] = None):
-        self._ai_service = ai_service or AIService(api_key=Settings().get_api_key())
+        self._ai_service = ai_service
+        self._provider_client = None if ai_service is not None else get_ai_client_from_settings()
 
     def generate_technical_description(self, prompt: str) -> Dict[str, str]:
+        if self._ai_service is None:
+            try:
+                data = self._provider_client.generate_json(
+                    system_prompt=SYSTEM_INSTRUCTIONS,
+                    user_payload={"prompt": prompt},
+                    temperature=0.2,
+                    max_tokens=1200,
+                )
+                return {
+                    "text": json.dumps(data, ensure_ascii=False),
+                    "error": "",
+                    "model": self._provider_client.model_label,
+                }
+            except Exception as exc:
+                return {"text": "", "error": normalize_ai_error(exc), "model": ""}
         text, error, model = self._ai_service.generate_text(prompt)
         return {"text": text, "error": error or "", "model": model or ""}
 

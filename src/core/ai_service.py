@@ -12,6 +12,8 @@ import re
 import time
 from typing import Dict, List, Optional, Tuple
 
+from src.core.ai_clients import redact_secrets
+
 logger = logging.getLogger(__name__)
 
 
@@ -30,7 +32,7 @@ RETRY_DELAY = 10  # segundos
 class AIService:
     """Cliente de IA para generación de partidas presupuestarias."""
 
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
         """
         Inicializa el servicio de IA.
 
@@ -40,6 +42,8 @@ class AIService:
         """
         self._api_key = api_key if api_key and api_key.strip() else None
         self._model = None
+        self._configured_model = model.strip() if model and model.strip() else None
+        self._client = None
 
     def is_available(self) -> bool:
         """
@@ -126,12 +130,18 @@ class AIService:
                 "Ejecute: pip install google-genai"
             )
 
-        if self._model is None:
+        if self._client is None:
             client = genai.Client(api_key=self._api_key)
             self._client = client
 
         last_error = None
-        for model_name in MODELS:
+        model_names = list(MODELS)
+        if self._configured_model:
+            model_names = [self._configured_model] + [
+                model_name for model_name in MODELS if model_name != self._configured_model
+            ]
+
+        for model_name in model_names:
             for attempt in range(MAX_RETRIES_PER_MODEL + 1):
                 try:
                     response = self._client.models.generate_content(
@@ -168,7 +178,7 @@ class AIService:
         Returns:
             Mensaje de error amigable para mostrar al usuario.
         """
-        error_str = str(exc)
+        error_str = redact_secrets(str(exc))
 
         if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
             return (

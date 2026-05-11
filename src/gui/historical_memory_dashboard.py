@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.core.historical_analysis_status import AnalysisStatus
+from src.core.settings import AI_PROVIDER_DEEPSEEK, Settings
 from src.core.historical_budget_analyzer import HistoricalBudgetAnalyzer
 from src.core.database_backup import create_database_backup
 from src.core.database_persistence import (
@@ -878,11 +879,14 @@ class HistoricalMemoryDashboard(QDialog):
                 + "\n\nNo hay presupuestos aptos para generar descripcion IA.",
             )
             return
+        cost_warning = self._active_provider_cost_warning()
         answer = QMessageBox.question(
             self,
             "Generar IA para seleccionados",
             self._ai_batch_confirmation_summary(classification)
             + "\n\n"
+            + cost_warning
+            + ("\n\n" if cost_warning else "")
             f"Se generaran descripciones con IA para {int(counts.get('ready', 0))} presupuestos aptos.\n"
             "Esto puede tardar y usar una API externa.\n"
             "No se sobrescribiran descripciones aprobadas o manuales.\n\n"
@@ -957,6 +961,17 @@ class HistoricalMemoryDashboard(QDialog):
         if first_error:
             message += f"\n\nPrimer error: {first_error}"
         QMessageBox.information(self, "Descripciones IA", message)
+
+    @staticmethod
+    def _active_provider_cost_warning() -> str:
+        settings = Settings()
+        if settings.get_ai_provider() != AI_PROVIDER_DEEPSEEK:
+            return ""
+        return (
+            "Proveedor activo: DeepSeek\n"
+            f"Modelo: {settings.get_deepseek_model()}\n"
+            "Esta operación usará saldo de la API de DeepSeek."
+        )
 
     def _approve_description_selected(self):
         self._show_ai_description_review_dialog()

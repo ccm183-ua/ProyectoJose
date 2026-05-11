@@ -8,7 +8,7 @@ import sys
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QFileDialog, QInputDialog, QMainWindow, QMessageBox,
+    QFileDialog, QMainWindow, QMessageBox,
     QPushButton, QVBoxLayout, QWidget,
 )
 
@@ -123,7 +123,7 @@ class MainFrame(QMainWindow):
         act_folder.triggered.connect(self._open_db_folder)
 
         m_config = menubar.addMenu("&Configuración")
-        act_ai = m_config.addAction("Configuración IA (API Key)...")
+        act_ai = m_config.addAction("Configuración IA...")
         act_ai.triggered.connect(self._open_ai_settings)
         act_templates = m_config.addAction("Gestionar plantillas...")
         act_templates.triggered.connect(self._open_template_manager)
@@ -131,6 +131,8 @@ class MainFrame(QMainWindow):
         act_paths.triggered.connect(self._open_default_paths)
 
         m_tools = menubar.addMenu("&Herramientas")
+        act_ai_tools = m_tools.addAction("Configuración IA...")
+        act_ai_tools.triggered.connect(self._open_ai_settings)
         act_hist = m_tools.addAction("Analizar presupuestos terminados...")
         act_hist.triggered.connect(self._open_historical_analysis)
         act_memory = m_tools.addAction("Panel de memoria historica...")
@@ -520,34 +522,8 @@ class MainFrame(QMainWindow):
         dlg.exec()
 
     def _open_ai_settings(self):
-        from src.core.settings import Settings
-        settings = Settings()
-        current_key = settings.get_api_key() or ""
+        from src.gui.ai_settings_dialog import AISettingsDialog
 
-        new_key, ok = QInputDialog.getText(
-            self,
-            "Configuración IA - API Key",
-            "Introduce tu API key de Google Gemini.\n"
-            "Puedes obtenerla gratis en: https://aistudio.google.com/apikey\n\n"
-            "La clave se guardará de forma local y segura.",
-            text=current_key,
-        )
-        if not ok:
-            return
-        new_key = new_key.strip()
-        if new_key and (len(new_key) < 10 or not new_key.startswith("AI")):
-            confirm = QMessageBox.warning(
-                self,
-                "Formato sospechoso",
-                "La clave introducida no parece tener el formato esperado "
-                "(las claves de Gemini suelen empezar por 'AI' y tener ~39 caracteres).\n\n"
-                "¿Guardar de todas formas?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            )
-            if confirm != QMessageBox.StandardButton.Yes:
-                return
-        settings.save_api_key(new_key)
-        if new_key:
-            QMessageBox.information(self, "Configuración IA", "API key guardada correctamente.")
-        else:
-            QMessageBox.information(self, "Configuración IA", "API key eliminada.")
+        dlg = AISettingsDialog(self)
+        if dlg.exec() == 1:
+            QMessageBox.information(self, "Configuración IA", "Configuración guardada correctamente.")

@@ -12,6 +12,7 @@ from src.core.historical_budget_enrichment_service import (
     generate_technical_descriptions_for_budgets,
     metadata_for_human_edited_ai_approval,
 )
+import src.core.historical_budget_enrichment_service as enrichment_service
 from src.core.repositories import (
     append_budget_issue,
     assign_partida_module,
@@ -43,6 +44,23 @@ class FakeAIClient:
     def generate_technical_description(self, prompt):
         self.calls += 1
         return {"text": self.text, "error": self.error, "model": "fake-model"}
+
+
+class FakeProviderClient:
+    provider_name = "deepseek"
+    model_name = "deepseek-v4-flash"
+    model_label = "deepseek:deepseek-v4-flash"
+
+    def generate_json(self, *, system_prompt, user_payload, temperature=0.2, max_tokens=1200):
+        return {
+            "technical_description": "Impermeabilizacion de cubierta comunitaria con reparacion de filtraciones.",
+            "main_works": ["impermeabilizacion"],
+            "elements": ["cubierta"],
+            "zones": ["cubierta comunitaria"],
+            "materials": ["lamina impermeabilizante"],
+            "confidence": 0.78,
+            "warnings": [],
+        }
 
 
 def _budget(tmp_path, name="budget.xlsx", **overrides):
@@ -131,6 +149,26 @@ def test_valid_budget_generates_pending_ai_enrichment(tmp_path, monkeypatch):
     metadata = json.loads(row["metadata_json"])
     assert metadata["main_works"] == ["impermeabilizacion", "reparacion de filtraciones"]
     assert metadata["elements"] == ["cubierta"]
+
+
+def test_default_ai_client_persists_deepseek_model_label(tmp_path, monkeypatch):
+    monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "ai_enrichment_deepseek.db"))
+    with database.get_connection() as _conn:
+        pass
+    budget_id = _budget(tmp_path)
+    _add_partidas_and_module(budget_id)
+    monkeypatch.setattr(
+        enrichment_service,
+        "get_ai_client_from_settings",
+        lambda: FakeProviderClient(),
+    )
+
+    result = generate_technical_description_for_budget(budget_id)
+
+    assert result["status"] == "generated"
+    row = get_budget_enrichment(budget_id, "TECHNICAL_DESCRIPTION")
+    assert row["source"] == "AI"
+    assert row["model"] == "deepseek:deepseek-v4-flash"
 
 
 def test_invalid_budget_is_skipped_without_ai_call(tmp_path, monkeypatch):

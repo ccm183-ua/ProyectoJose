@@ -13,7 +13,7 @@ import os
 import tempfile
 import pytest
 
-from src.core.settings import Settings
+from src.core.settings import AI_PROVIDER_DEEPSEEK, AI_PROVIDER_GEMINI, Settings
 
 
 @pytest.fixture
@@ -158,3 +158,26 @@ class TestDefaultPaths:
         s.save_api_key("mi-clave")
         s.set_default_path(Settings.PATH_SAVE_BUDGETS, "/ruta")
         assert s.get_api_key() == "mi-clave"
+
+
+class TestAIProviderSettings:
+    def test_provider_defaults_to_gemini(self, temp_dir):
+        s = Settings(config_dir=temp_dir)
+        assert s.get_ai_provider() == AI_PROVIDER_GEMINI
+
+    def test_save_and_load_provider_and_models(self, monkeypatch, temp_dir):
+        monkeypatch.delenv("CUBIAPP_GEMINI_KEY", raising=False)
+        monkeypatch.delenv("CUBIAPP_DEEPSEEK_KEY", raising=False)
+        s = Settings(config_dir=temp_dir)
+        s.save_ai_provider(AI_PROVIDER_DEEPSEEK)
+        s.save_gemini_model("gemini-test")
+        s.save_deepseek_model("deepseek-test")
+        s.save_gemini_api_key("AI-test-key-not-real")
+        s.save_deepseek_api_key("sk-test-key-not-real")
+
+        loaded = Settings(config_dir=temp_dir)
+        assert loaded.get_ai_provider() == AI_PROVIDER_DEEPSEEK
+        assert loaded.get_gemini_model() == "gemini-test"
+        assert loaded.get_deepseek_model() == "deepseek-test"
+        assert loaded.get_gemini_api_key() == "AI-test-key-not-real"
+        assert loaded.get_deepseek_api_key() == "sk-test-key-not-real"
