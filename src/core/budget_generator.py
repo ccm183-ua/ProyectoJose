@@ -180,3 +180,44 @@ class BudgetGenerator:
                 'precio_unitario': base.get('precio_ref', 0.0),
             })
         return partidas
+
+    def generate_complementary_partidas(
+        self,
+        project_data: Dict,
+        confirmed_context: str,
+        selected_historical_partidas: List[Dict],
+        historical_result: Dict,
+        user_instructions: str = "",
+    ) -> Dict:
+        """
+        Genera solo partidas complementarias para una selección histórica ya existente.
+        """
+        if not self._is_ai_available():
+            return {
+                "partidas": [],
+                "error": "No hay API key configurada.",
+                "source": "error",
+                "mode": "complete_historical_selection",
+            }
+
+        prompt = self._prompt_builder.build_complementary_prompt(
+            project_data=project_data or {},
+            confirmed_context=confirmed_context or "",
+            selected_historical_partidas=selected_historical_partidas or [],
+            historical_result=historical_result or {},
+            user_instructions=user_instructions or "",
+        )
+        partidas, error = self._generate_partidas_with_active_provider(prompt)
+        if error and not partidas:
+            return {
+                "partidas": [],
+                "error": error,
+                "source": "error",
+                "mode": "complete_historical_selection",
+            }
+        return {
+            "partidas": partidas or [],
+            "error": None,
+            "source": "ai_completion",
+            "mode": "complete_historical_selection",
+        }

@@ -192,3 +192,74 @@ class PromptBuilder:
 
         lines.append("--- FIN CONTEXTO HISTÓRICO ---")
         return "\n".join(lines)
+
+    def build_complementary_prompt(
+        self,
+        project_data: Optional[Dict],
+        confirmed_context: str,
+        selected_historical_partidas: List[Dict],
+        historical_result: Optional[Dict] = None,
+        user_instructions: str = "",
+    ) -> str:
+        """Construye prompt para completar una selección histórica existente."""
+        historical_result = historical_result or {}
+        lines: List[str] = [SYSTEM_PROMPT]
+        lines.append(
+            "\n--- MODO COMPLETAR SELECCIÓN HISTÓRICA ---\n"
+            "Ya existen estas partidas seleccionadas por el usuario.\n"
+            "No las repitas.\n"
+            "No las sustituyas.\n"
+            "Sugiere únicamente partidas complementarias que falten para completar el presupuesto.\n"
+            "Si no falta nada, devuelve lista vacía.\n"
+            "--- FIN MODO ---"
+        )
+
+        lines.append("\n--- CONTEXTO CONFIRMADO ---")
+        lines.append(confirmed_context or "(sin contexto adicional)")
+        lines.append("--- FIN CONTEXTO CONFIRMADO ---")
+
+        if project_data:
+            lines.append("\n--- DATOS DEL PROYECTO ---")
+            for key in ("tipo", "localidad", "cliente", "calle", "num_calle", "codigo_postal"):
+                value = str(project_data.get(key, "")).strip()
+                if value:
+                    lines.append(f"{key}: {value}")
+            lines.append("--- FIN DATOS DEL PROYECTO ---")
+
+        if historical_result:
+            modules = historical_result.get("detected_modules", []) or []
+            if modules:
+                lines.append("\n--- MÓDULOS DETECTADOS ---")
+                for module in modules[:12]:
+                    name = module.get("label") or module.get("name", "")
+                    confidence = int((module.get("confidence", 0) or 0) * 100)
+                    lines.append(f"- {name} ({confidence}%)")
+                lines.append("--- FIN MÓDULOS DETECTADOS ---")
+
+            patterns = historical_result.get("patterns", []) or []
+            if patterns:
+                lines.append("\n--- PATRONES HISTÓRICOS USADOS ---")
+                for pattern in patterns[:20]:
+                    concept = pattern.get("concepto") or pattern.get("title") or ""
+                    freq = pattern.get("frequency") or pattern.get("historical_frequency") or 0
+                    lines.append(f"- {concept} (freq: {freq})")
+                lines.append("--- FIN PATRONES HISTÓRICOS USADOS ---")
+
+        lines.append("\n--- PARTIDAS YA SELECCIONADAS (NO REPETIR) ---")
+        for partida in selected_historical_partidas or []:
+            concepto = partida.get("concepto") or partida.get("titulo") or ""
+            cantidad = partida.get("cantidad", 0)
+            unidad = partida.get("unidad", "ud")
+            precio = partida.get("precio_unitario", 0)
+            lines.append(f"- {concepto} | {cantidad} {unidad} | {precio}€")
+        lines.append("--- FIN PARTIDAS YA SELECCIONADAS ---")
+
+        if user_instructions and user_instructions.strip():
+            lines.append("\n--- INSTRUCCIONES ADICIONALES DEL USUARIO ---")
+            lines.append(user_instructions.strip())
+            lines.append("--- FIN INSTRUCCIONES ADICIONALES ---")
+
+        lines.append(
+            "\nDevuelve exclusivamente las partidas complementarias en JSON válido con clave 'partidas'."
+        )
+        return "\n".join(lines)

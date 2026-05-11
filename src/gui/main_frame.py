@@ -417,32 +417,56 @@ class MainFrame(QMainWindow):
                 )
         if historical_result and historical_result.get("partidas"):
             from src.gui.historical_suggestions_dialog import HistoricalSuggestionsDialog
+            from src.gui.ai_complete_historical_budget_dialog import AICompleteHistoricalBudgetDialog
+            from src.gui.combined_partidas_review_dialog import CombinedPartidasReviewDialog
 
             dlg = HistoricalSuggestionsDialog(self, historical_result, project_data=project_data)
             if dlg.exec() == 1:
                 selected = dlg.get_selected_partidas()
                 if selected:
-                    if self._budget_svc.insert_partidas(excel_path, selected, project_data):
-                        QMessageBox.information(
-                            self, "Éxito",
-                            f"Presupuesto creado con {len(selected)} partidas históricas:\n{excel_path}",
-                        )
-                        ask_ai = QMessageBox.question(
-                            self,
-                            "Completar con IA",
-                            "¿Desea usar IA para adaptar o completar más partidas?",
-                            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                        )
-                        if ask_ai == QMessageBox.StandardButton.Yes:
-                            self._offer_ai_partidas(
-                                excel_path, project_data, historical_context=historical_result
-                            )
+                    user_action = self._ask_historical_flow_action(len(selected))
+                    if user_action == "cancel":
                         return
-                    QMessageBox.warning(
-                        self, "Aviso",
-                        f"Presupuesto creado pero hubo un error al insertar partidas históricas.\n{excel_path}",
+                    if user_action == "historical_only":
+                        review = CombinedPartidasReviewDialog(self, historical_partidas=selected, ai_partidas=[])
+                        if review.exec() != 1:
+                            return
+                        self._insert_final_partidas_once(
+                            excel_path,
+                            review.get_selected_partidas(),
+                            project_data,
+                        )
+                        return
+                    completion_dlg = AICompleteHistoricalBudgetDialog(
+                        self,
+                        project_data=project_data,
+                        confirmed_context=confirmed_context,
+                        selected_historical_partidas=selected,
+                        historical_result=historical_result,
                     )
-                    self._offer_ai_partidas(excel_path, project_data)
+                    if completion_dlg.exec() != 1:
+                        return
+                    completion_action = completion_dlg.get_action()
+                    completion_result = completion_dlg.get_result()
+                    ai_partidas = completion_result.get("partidas", []) if completion_action == "ai_completion" else []
+                    if completion_action == "ai_completion" and not ai_partidas:
+                        QMessageBox.information(
+                            self,
+                            "Sin complementos",
+                            "La IA no ha detectado partidas complementarias. Puedes continuar con históricas.",
+                        )
+                    review = CombinedPartidasReviewDialog(
+                        self,
+                        historical_partidas=selected,
+                        ai_partidas=ai_partidas,
+                    )
+                    if review.exec() != 1:
+                        return
+                    self._insert_final_partidas_once(
+                        excel_path,
+                        review.get_selected_partidas(),
+                        project_data,
+                    )
                     return
                 # Si acepta sin seleccionar, continuar a IA opcional
                 ask_ai_no_sel = QMessageBox.question(
@@ -469,6 +493,52 @@ class MainFrame(QMainWindow):
             return
 
         self._offer_ai_partidas(excel_path, project_data)
+
+    def _ask_historical_flow_action(self, selected_count: int) -> str:
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle("Partidas históricas seleccionadas")
+        box.setText(f"Has seleccionado {selected_count} partidas históricas.")
+        box.setInformativeText("Elige cómo continuar.")
+        btn_historical = box.addButton("Crear con estas partidas", QMessageBox.ButtonRole.AcceptRole)
+        btn_complete = box.addButton("Completar con IA", QMessageBox.ButtonRole.ActionRole)
+        btn_cancel = box.addButton("Cancelar", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked == btn_historical:
+            return "historical_only"
+        if clicked == btn_complete:
+            return "complete_with_ai"
+        if clicked == btn_cancel:
+            return "cancel"
+        return "cancel"
+
+    def _insert_final_partidas_once(self, excel_path: str, selected: list, project_data: dict):
+        if selected:
+            if self._budget_svc.insert_partidas(excel_path, selected, project_data):
+                QMessageBox.information(
+                    self,
+                    "Éxito",
+                    f"Presupuesto creado con {len(selected)} partidas:\n{excel_path}",
+                )
+            else:
+                QMessageBox.warning(
+                    self,
+                    "Aviso",
+                    f"Presupuesto creado pero hubo un error al insertar las partidas.\n{excel_path}",
+                )
+        else:
+            QMessageBox.information(
+                self,
+                "Éxito",
+                f"Presupuesto creado (sin partidas):\n{excel_path}",
+            )
+
+    def _insert_complementary_partidas_safe(self, excel_path: str, partidas: list) -> bool:
+        """Fallback mínimo seguro: añade complementarias sin reescribir bloque existente."""
+        if not partidas:
+            return True
+        return self._budget_svc.append_partidas(excel_path, partidas)
 
     @staticmethod
     def _should_offer_context_retry(suggestion_result: dict) -> bool:

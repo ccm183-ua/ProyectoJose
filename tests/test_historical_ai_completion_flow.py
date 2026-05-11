@@ -1,0 +1,266 @@
+import inspect
+import importlib.util
+import pytest
+
+from src.core.budget_generator import BudgetGenerator
+
+
+class _DummyBudgetService:
+    def __init__(self):
+        self.insert_calls = []
+        self.append_calls = []
+
+    def insert_partidas(self, excel_path, partidas, project_data=None):
+        self.insert_calls.append((excel_path, partidas, project_data))
+        return True
+
+    def append_partidas(self, excel_path, partidas):
+        self.append_calls.append((excel_path, partidas))
+        return True
+
+
+class _NoUiMessageBox:
+    class StandardButton:
+        Yes = 1
+        No = 0
+
+    @staticmethod
+    def information(*args, **kwargs):
+        return 0
+
+    @staticmethod
+    def warning(*args, **kwargs):
+        return 0
+
+    @staticmethod
+    def question(*args, **kwargs):
+        return _NoUiMessageBox.StandardButton.No
+
+
+def _build_frame(monkeypatch):
+    from src.gui.main_frame import MainFrame
+    from src.gui import main_frame as main_mod
+
+    monkeypatch.setattr(main_mod, "QMessageBox", _NoUiMessageBox)
+    frame = MainFrame.__new__(MainFrame)
+    frame._budget_svc = _DummyBudgetService()
+    frame._offer_ai_partidas = lambda *args, **kwargs: None
+    frame._request_historical_context = lambda project_data: "contexto confirmado"
+    frame._should_offer_context_retry = lambda suggestion_result: False
+    frame._try_historical_suggestions = lambda project_data, confirmed_context="": {
+        "partidas": [{"concepto": "Hist 1", "cantidad": 1, "unidad": "ud", "precio_unitario": 10}],
+        "detected_modules": [{"name": "modulo", "confidence": 0.9}],
+        "patterns": [{"concepto": "Patrón A", "frequency": 4}],
+    }
+    return frame
+
+
+def test_historical_only_inserts_once(monkeypatch):
+    if importlib.util.find_spec("PySide6") is None:
+        pytest.skip("PySide6 no disponible en entorno de tests")
+    from src.gui import historical_suggestions_dialog as hist_mod
+    from src.gui import combined_partidas_review_dialog as review_mod
+
+    frame = _build_frame(monkeypatch)
+    frame._ask_historical_flow_action = lambda count: "historical_only"
+
+    class HistDialog:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def exec(self):
+            return 1
+
+        def get_selected_partidas(self):
+            return [{"concepto": "Hist 1", "cantidad": 1, "unidad": "ud", "precio_unitario": 10}]
+
+    class ReviewDialog:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def exec(self):
+            return 1
+
+        def get_selected_partidas(self):
+            return [{"concepto": "Hist 1", "cantidad": 1, "unidad": "ud", "precio_unitario": 10}]
+
+    monkeypatch.setattr(hist_mod, "HistoricalSuggestionsDialog", HistDialog)
+    monkeypatch.setattr(review_mod, "CombinedPartidasReviewDialog", ReviewDialog)
+    frame._offer_partidas("budget.xlsx", {"cliente": "X"})
+
+    assert len(frame._budget_svc.insert_calls) == 1
+    assert frame._budget_svc.insert_calls[0][1][0]["concepto"] == "Hist 1"
+
+
+def test_historical_plus_ai_inserts_once_at_end(monkeypatch):
+    if importlib.util.find_spec("PySide6") is None:
+        pytest.skip("PySide6 no disponible en entorno de tests")
+    from src.gui import historical_suggestions_dialog as hist_mod
+    from src.gui import combined_partidas_review_dialog as review_mod
+    from src.gui import ai_complete_historical_budget_dialog as complete_mod
+
+    frame = _build_frame(monkeypatch)
+    frame._ask_historical_flow_action = lambda count: "complete_with_ai"
+
+    class HistDialog:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def exec(self):
+            return 1
+
+        def get_selected_partidas(self):
+            return [{"concepto": "Hist 1", "cantidad": 1, "unidad": "ud", "precio_unitario": 10}]
+
+    class CompleteDialog:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def exec(self):
+            return 1
+
+        def get_action(self):
+            return "ai_completion"
+
+        def get_result(self):
+            return {
+                "partidas": [{"concepto": "IA 1", "cantidad": 2, "unidad": "ml", "precio_unitario": 12}],
+                "source": "ai_completion",
+                "mode": "complete_historical_selection",
+            }
+
+    class ReviewDialog:
+        def __init__(self, parent, historical_partidas=None, ai_partidas=None):
+            self._combined = (historical_partidas or []) + (ai_partidas or [])
+
+        def exec(self):
+            return 1
+
+        def get_selected_partidas(self):
+            return self._combined
+
+    monkeypatch.setattr(hist_mod, "HistoricalSuggestionsDialog", HistDialog)
+    monkeypatch.setattr(complete_mod, "AICompleteHistoricalBudgetDialog", CompleteDialog)
+    monkeypatch.setattr(review_mod, "CombinedPartidasReviewDialog", ReviewDialog)
+    frame._offer_partidas("budget.xlsx", {"cliente": "X"})
+
+    assert len(frame._budget_svc.insert_calls) == 1
+    inserted = frame._budget_svc.insert_calls[0][1]
+    assert len(inserted) == 2
+    assert {p["concepto"] for p in inserted} == {"Hist 1", "IA 1"}
+
+
+def test_ai_empty_keeps_historical(monkeypatch):
+    if importlib.util.find_spec("PySide6") is None:
+        pytest.skip("PySide6 no disponible en entorno de tests")
+    from src.gui import historical_suggestions_dialog as hist_mod
+    from src.gui import combined_partidas_review_dialog as review_mod
+    from src.gui import ai_complete_historical_budget_dialog as complete_mod
+
+    frame = _build_frame(monkeypatch)
+    frame._ask_historical_flow_action = lambda count: "complete_with_ai"
+
+    class HistDialog:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def exec(self):
+            return 1
+
+        def get_selected_partidas(self):
+            return [{"concepto": "Hist 1", "cantidad": 1, "unidad": "ud", "precio_unitario": 10}]
+
+    class CompleteDialog:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def exec(self):
+            return 1
+
+        def get_action(self):
+            return "ai_completion"
+
+        def get_result(self):
+            return {"partidas": [], "source": "ai_completion", "mode": "complete_historical_selection"}
+
+    class ReviewDialog:
+        def __init__(self, parent, historical_partidas=None, ai_partidas=None):
+            assert ai_partidas == []
+            self._historical = historical_partidas or []
+
+        def exec(self):
+            return 1
+
+        def get_selected_partidas(self):
+            return self._historical
+
+    monkeypatch.setattr(hist_mod, "HistoricalSuggestionsDialog", HistDialog)
+    monkeypatch.setattr(complete_mod, "AICompleteHistoricalBudgetDialog", CompleteDialog)
+    monkeypatch.setattr(review_mod, "CombinedPartidasReviewDialog", ReviewDialog)
+    frame._offer_partidas("budget.xlsx", {"cliente": "X"})
+
+    assert len(frame._budget_svc.insert_calls) == 1
+    inserted = frame._budget_svc.insert_calls[0][1]
+    assert len(inserted) == 1
+    assert inserted[0]["concepto"] == "Hist 1"
+
+
+def test_minimal_safe_fallback_uses_append(monkeypatch):
+    if importlib.util.find_spec("PySide6") is None:
+        pytest.skip("PySide6 no disponible en entorno de tests")
+    frame = _build_frame(monkeypatch)
+    ok = frame._insert_complementary_partidas_safe(
+        "budget.xlsx",
+        [{"concepto": "IA 1", "cantidad": 1, "unidad": "ud", "precio_unitario": 1}],
+    )
+    assert ok is True
+    assert len(frame._budget_svc.append_calls) == 1
+    assert len(frame._budget_svc.insert_calls) == 0
+
+
+def test_complementary_prompt_contains_guardrails():
+    generator = BudgetGenerator(api_key="fake-key")
+    captured_prompt = {}
+
+    def _fake_generate(prompt):
+        captured_prompt["value"] = prompt
+        return [], None
+
+    generator._ai_service.generate_partidas = _fake_generate
+    generator.generate_complementary_partidas(
+        project_data={"cliente": "Comunidad", "localidad": "Alicante"},
+        confirmed_context="Reparación de bajante en patio interior",
+        selected_historical_partidas=[{"concepto": "H1", "cantidad": 1, "unidad": "ud", "precio_unitario": 10}],
+        historical_result={"detected_modules": [{"name": "bajante", "confidence": 0.9}]},
+        user_instructions="No incluir pintura",
+    )
+    prompt = captured_prompt["value"].lower()
+    assert "no las repitas" in prompt
+    assert "no las sustituyas" in prompt
+    assert "partidas complementarias" in prompt
+
+
+def test_complementary_result_has_expected_metadata():
+    generator = BudgetGenerator(api_key="fake-key")
+    generator._ai_service.generate_partidas = lambda prompt: (
+        [{"concepto": "IA 1", "cantidad": 1, "unidad": "ud", "precio_unitario": 11}],
+        None,
+    )
+    result = generator.generate_complementary_partidas(
+        project_data={},
+        confirmed_context="ctx",
+        selected_historical_partidas=[],
+        historical_result={},
+    )
+    assert result["source"] == "ai_completion"
+    assert result["mode"] == "complete_historical_selection"
+    assert isinstance(result["partidas"], list)
+
+
+def test_complete_dialog_does_not_require_tipo_or_plantilla_fields():
+    if importlib.util.find_spec("PySide6") is None:
+        pytest.skip("PySide6 no disponible en entorno de tests")
+    from src.gui.ai_complete_historical_budget_dialog import AICompleteHistoricalBudgetDialog
+    source = inspect.getsource(AICompleteHistoricalBudgetDialog)
+    assert "Tipo de obra:" not in source
+    assert "Plantilla de referencia" not in source
