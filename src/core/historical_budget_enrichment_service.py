@@ -216,6 +216,20 @@ def format_generation_candidate_summary(classification: Dict) -> str:
     )
 
 
+def metadata_for_human_edited_ai_approval(metadata_json: str, original_ai_content: str) -> str:
+    raw = (metadata_json or "").strip()
+    try:
+        metadata = json.loads(raw) if raw else {}
+    except (TypeError, ValueError):
+        metadata = {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+    metadata["human_edited_before_approval"] = True
+    if "original_ai_content" not in metadata:
+        metadata["original_ai_content"] = original_ai_content or ""
+    return json.dumps(metadata, ensure_ascii=False, sort_keys=True)
+
+
 def generate_technical_descriptions_for_budgets(
     budget_ids: List[int],
     force: bool = False,

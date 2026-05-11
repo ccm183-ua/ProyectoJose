@@ -38,6 +38,7 @@ from src.core.historical_budget_enrichment_service import (
     classify_technical_description_generation_candidates,
     format_generation_candidate_summary,
     generate_technical_description_for_budget,
+    metadata_for_human_edited_ai_approval,
 )
 from src.core.historical_enrichment import technical_description_status_label
 from src.core.historical_integrity_diagnostics import diagnose_historical_integrity
@@ -925,6 +926,7 @@ class HistoricalMemoryDashboard(QDialog):
                 QMessageBox.warning(dlg, "Descripcion tecnica", "La descripcion no puede estar vacia.")
                 return
             current = get_budget_enrichment(budget_id, "TECHNICAL_DESCRIPTION") or {}
+            original_content = (current.get("content") or "").strip()
             err = upsert_budget_enrichment(
                 historical_budget_id=budget_id,
                 enrichment_type="TECHNICAL_DESCRIPTION",
@@ -936,7 +938,10 @@ class HistoricalMemoryDashboard(QDialog):
                 input_hash=current.get("input_hash", ""),
                 confidence=current.get("confidence"),
                 warnings=current.get("warnings", ""),
-                metadata_json=current.get("metadata_json", ""),
+                metadata_json=metadata_for_human_edited_ai_approval(
+                    current.get("metadata_json", ""),
+                    original_content,
+                ),
                 reviewed_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             )
         else:

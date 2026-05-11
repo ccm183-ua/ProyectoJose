@@ -10,6 +10,7 @@ from src.core.historical_budget_enrichment_service import (
     format_generation_candidate_summary,
     generate_technical_description_for_budget,
     generate_technical_descriptions_for_budgets,
+    metadata_for_human_edited_ai_approval,
 )
 from src.core.repositories import (
     append_budget_issue,
@@ -415,6 +416,49 @@ def test_review_status_rejects_non_ai_or_non_pending_descriptions(tmp_path, monk
     approved_err = update_budget_enrichment_review_status(approved_id, "TECHNICAL_DESCRIPTION", "REJECTED")
 
     assert approved_err == "Solo se pueden revisar descripciones IA pendientes."
+
+
+def test_edit_and_approve_marks_human_edit_and_preserves_traceability(tmp_path, monkeypatch):
+    monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "ai_edit_approve_traceability.db"))
+    with database.get_connection() as _conn:
+        pass
+    budget_id = _budget(tmp_path)
+    _add_partidas_and_module(budget_id)
+    assert generate_technical_description_for_budget(budget_id, ai_client=FakeAIClient())["status"] == "generated"
+    before = get_budget_enrichment(budget_id, "TECHNICAL_DESCRIPTION")
+    assert before is not None
+    edited_content = "Impermeabilizacion editada y aprobada por usuario."
+
+    err = upsert_budget_enrichment(
+        historical_budget_id=budget_id,
+        enrichment_type="TECHNICAL_DESCRIPTION",
+        status="APPROVED",
+        source="AI",
+        content=edited_content,
+        model=before.get("model", ""),
+        prompt_version=before.get("prompt_version", ""),
+        input_hash=before.get("input_hash", ""),
+        confidence=before.get("confidence"),
+        warnings=before.get("warnings", ""),
+        metadata_json=metadata_for_human_edited_ai_approval(
+            before.get("metadata_json", ""),
+            before.get("content", ""),
+        ),
+        reviewed_at="2026-05-11 10:30:00",
+    )
+
+    assert err is None
+    after = get_budget_enrichment(budget_id, "TECHNICAL_DESCRIPTION")
+    assert after["status"] == "APPROVED"
+    assert after["source"] == "AI"
+    assert after["content"] == edited_content
+    assert after["model"] == before["model"]
+    assert after["prompt_version"] == before["prompt_version"]
+    assert after["input_hash"] == before["input_hash"]
+    metadata = json.loads(after["metadata_json"])
+    assert metadata["human_edited_before_approval"] is True
+    assert metadata["original_ai_content"] == before["content"]
+    assert metadata["main_works"] == ["impermeabilizacion", "reparacion de filtraciones"]
 
 
 def _budget_data_stub():
