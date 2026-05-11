@@ -44,6 +44,7 @@ class AICompleteHistoricalBudgetDialog(QDialog):
 
         self._action = "cancel"
         self._result = None
+        self._pending_instructions = ""
         self._build_ui()
 
     def _build_ui(self):
@@ -135,6 +136,7 @@ class AICompleteHistoricalBudgetDialog(QDialog):
         self.accept()
 
     def _on_generate(self):
+        self._pending_instructions = self._instructions.toPlainText().strip()
         self._btn_generate.setEnabled(False)
         self._btn_generate.setText("Buscando...")
         thread = threading.Thread(target=self._run_generation, daemon=True)
@@ -148,7 +150,7 @@ class AICompleteHistoricalBudgetDialog(QDialog):
                 confirmed_context=self._confirmed_context,
                 selected_historical_partidas=self._selected_historical_partidas,
                 historical_result=self._historical_result,
-                user_instructions=self._instructions.toPlainText().strip(),
+                user_instructions=self._pending_instructions,
             )
             self._generation_done.emit(result)
         except Exception as exc:

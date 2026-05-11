@@ -1,5 +1,6 @@
 import inspect
 import importlib.util
+from pathlib import Path
 import pytest
 
 from src.core.budget_generator import BudgetGenerator
@@ -8,14 +9,10 @@ from src.core.budget_generator import BudgetGenerator
 class _DummyBudgetService:
     def __init__(self):
         self.insert_calls = []
-        self.append_calls = []
+        self.generate_called = 0
 
     def insert_partidas(self, excel_path, partidas, project_data=None):
         self.insert_calls.append((excel_path, partidas, project_data))
-        return True
-
-    def append_partidas(self, excel_path, partidas):
-        self.append_calls.append((excel_path, partidas))
         return True
 
 
@@ -113,10 +110,12 @@ def test_historical_plus_ai_inserts_once_at_end(monkeypatch):
             return [{"concepto": "Hist 1", "cantidad": 1, "unidad": "ud", "precio_unitario": 10}]
 
     class CompleteDialog:
-        def __init__(self, *args, **kwargs):
-            pass
+        def __init__(self, parent, **kwargs):
+            self._frame = parent
 
         def exec(self):
+            # Verifica que aún NO se insertó nada antes de generar complementarias/revisar
+            assert len(self._frame._budget_svc.insert_calls) == 0
             return 1
 
         def get_action(self):
@@ -205,19 +204,6 @@ def test_ai_empty_keeps_historical(monkeypatch):
     assert inserted[0]["concepto"] == "Hist 1"
 
 
-def test_minimal_safe_fallback_uses_append(monkeypatch):
-    if importlib.util.find_spec("PySide6") is None:
-        pytest.skip("PySide6 no disponible en entorno de tests")
-    frame = _build_frame(monkeypatch)
-    ok = frame._insert_complementary_partidas_safe(
-        "budget.xlsx",
-        [{"concepto": "IA 1", "cantidad": 1, "unidad": "ud", "precio_unitario": 1}],
-    )
-    assert ok is True
-    assert len(frame._budget_svc.append_calls) == 1
-    assert len(frame._budget_svc.insert_calls) == 0
-
-
 def test_complementary_prompt_contains_guardrails():
     generator = BudgetGenerator(api_key="fake-key")
     captured_prompt = {}
@@ -237,7 +223,7 @@ def test_complementary_prompt_contains_guardrails():
     prompt = captured_prompt["value"].lower()
     assert "no las repitas" in prompt
     assert "no las sustituyas" in prompt
-    assert "partidas complementarias" in prompt
+    assert "solo partidas complementarias" in prompt
 
 
 def test_complementary_result_has_expected_metadata():
@@ -264,3 +250,16 @@ def test_complete_dialog_does_not_require_tipo_or_plantilla_fields():
     source = inspect.getsource(AICompleteHistoricalBudgetDialog)
     assert "Tipo de obra:" not in source
     assert "Plantilla de referencia" not in source
+
+
+def test_combined_review_sorting_is_disabled_in_source():
+    src = Path("src/gui/combined_partidas_review_dialog.py").read_text(encoding="utf-8")
+    assert "setSortingEnabled(False)" in src
+
+
+def test_combined_review_has_input_validations_in_source():
+    src = Path("src/gui/combined_partidas_review_dialog.py").read_text(encoding="utf-8")
+    assert "concepto vacío" in src
+    assert "unidad vacía" in src
+    assert "cantidad <= 0" in src
+    assert "precio negativo" in src

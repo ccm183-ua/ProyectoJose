@@ -534,12 +534,6 @@ class MainFrame(QMainWindow):
                 f"Presupuesto creado (sin partidas):\n{excel_path}",
             )
 
-    def _insert_complementary_partidas_safe(self, excel_path: str, partidas: list) -> bool:
-        """Fallback mínimo seguro: añade complementarias sin reescribir bloque existente."""
-        if not partidas:
-            return True
-        return self._budget_svc.append_partidas(excel_path, partidas)
-
     @staticmethod
     def _should_offer_context_retry(suggestion_result: dict) -> bool:
         if not suggestion_result or suggestion_result.get("partidas"):

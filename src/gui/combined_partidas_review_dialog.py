@@ -27,6 +27,7 @@ class CombinedPartidasReviewDialog(QDialog):
         self._ai_partidas = ai_partidas or []
         self._rows = []
         self._selected_partidas = []
+        self._updating_totals = False
         self._build_rows()
         self._build_ui()
         self._populate()
@@ -72,9 +73,10 @@ class CombinedPartidasReviewDialog(QDialog):
         self._table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         self._table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         self._table.setAlternatingRowColors(True)
-        self._table.setSortingEnabled(True)
+        self._table.setSortingEnabled(False)
         self._table.verticalHeader().setVisible(False)
         self._table.doubleClicked.connect(self._toggle_current_row)
+        self._table.itemChanged.connect(self._on_item_changed)
         lay.addWidget(self._table, 1)
 
         btns = QHBoxLayout()
@@ -163,10 +165,41 @@ class CombinedPartidasReviewDialog(QDialog):
                 return
 
             partida = dict(data["partida"])
-            partida["concepto"] = str(self._table.item(row, 2).text() or "").strip()
+            concepto = str(self._table.item(row, 2).text() or "").strip()
+            unidad = str(self._table.item(row, 4).text() or "").strip()
+            if not concepto:
+                QMessageBox.warning(
+                    self,
+                    "Fila inválida",
+                    f"La fila {row + 1} tiene el concepto vacío. Debe indicar título/concepto.",
+                )
+                return
+            if not unidad:
+                QMessageBox.warning(
+                    self,
+                    "Fila inválida",
+                    f"La fila {row + 1} tiene la unidad vacía. Debe indicar una unidad.",
+                )
+                return
+            if cantidad <= 0:
+                QMessageBox.warning(
+                    self,
+                    "Fila inválida",
+                    f"La fila {row + 1} tiene cantidad <= 0. Debe ser mayor que 0.",
+                )
+                return
+            if precio < 0:
+                QMessageBox.warning(
+                    self,
+                    "Fila inválida",
+                    f"La fila {row + 1} tiene precio negativo. Debe ser >= 0.",
+                )
+                return
+
+            partida["concepto"] = concepto
             partida["titulo"] = str(partida.get("titulo") or partida["concepto"]).strip()
             partida["descripcion"] = str(self._table.item(row, 3).text() or "").strip()
-            partida["unidad"] = str(self._table.item(row, 4).text() or "ud").strip() or "ud"
+            partida["unidad"] = unidad
             partida["cantidad"] = cantidad
             partida["precio_unitario"] = precio
             selected.append(partida)
@@ -176,3 +209,23 @@ class CombinedPartidasReviewDialog(QDialog):
 
     def get_selected_partidas(self):
         return self._selected_partidas
+
+    def _on_item_changed(self, item: QTableWidgetItem):
+        if self._updating_totals or item is None:
+            return
+        if item.column() not in (5, 6):
+            return
+        row = item.row()
+        try:
+            cantidad = float((self._table.item(row, 5).text() or "0").replace(",", "."))
+            precio = float((self._table.item(row, 6).text() or "0").replace(",", "."))
+        except ValueError:
+            return
+
+        self._updating_totals = True
+        total_item = self._table.item(row, 7)
+        if total_item is None:
+            total_item = QTableWidgetItem()
+            self._table.setItem(row, 7, total_item)
+        total_item.setText(f"{(cantidad * precio):.2f}")
+        self._updating_totals = False

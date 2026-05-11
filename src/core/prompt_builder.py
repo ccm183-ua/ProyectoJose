@@ -210,6 +210,7 @@ class PromptBuilder:
             "No las repitas.\n"
             "No las sustituyas.\n"
             "Sugiere únicamente partidas complementarias que falten para completar el presupuesto.\n"
+            "Devuelve solo partidas complementarias.\n"
             "Si no falta nada, devuelve lista vacía.\n"
             "--- FIN MODO ---"
         )
