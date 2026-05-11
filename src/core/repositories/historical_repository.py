@@ -745,6 +745,51 @@ def upsert_budget_enrichment(
             return f"Error de base de datos: {e.args[0] if e.args else 'desconocido'}."
 
 
+def update_budget_enrichment_review_status(
+    historical_budget_id: int,
+    enrichment_type: str,
+    status: str,
+    reviewed_at: str = "",
+) -> Optional[str]:
+    target_status = (status or "").strip().upper()
+    if target_status not in ("APPROVED", "REJECTED"):
+        return "Estado de revision no valido."
+    with database.get_connection() as conn:
+        try:
+            row = conn.execute(
+                """SELECT id, source, status
+                   FROM historical_budget_enrichment
+                   WHERE historical_budget_id=? AND enrichment_type=?""",
+                (historical_budget_id, (enrichment_type or "").strip().upper()),
+            ).fetchone()
+            if not row:
+                return "No se encontro el enriquecimiento indicado."
+            source = (row[1] or "").strip().upper()
+            current_status = (row[2] or "").strip().upper()
+            if source != "AI" or current_status not in ("PENDING_REVIEW", "PENDING"):
+                return "Solo se pueden revisar descripciones IA pendientes."
+            now = _now_str()
+            conn.execute(
+                """UPDATE historical_budget_enrichment
+                   SET status=?,
+                       reviewed_at=?,
+                       updated_at=?
+                   WHERE historical_budget_id=? AND enrichment_type=?""",
+                (
+                    target_status,
+                    (reviewed_at or now),
+                    now,
+                    historical_budget_id,
+                    (enrichment_type or "").strip().upper(),
+                ),
+            )
+            conn.commit()
+            return None
+        except sqlite3.OperationalError as e:
+            conn.rollback()
+            return f"Error de base de datos: {e.args[0] if e.args else 'desconocido'}."
+
+
 def delete_budget_enrichment(historical_budget_id: int, enrichment_type: str) -> Optional[str]:
     with database.get_connection() as conn:
         try:

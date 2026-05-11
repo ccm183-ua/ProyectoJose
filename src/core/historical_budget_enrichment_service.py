@@ -47,44 +47,20 @@ def generate_technical_description_for_budget(
     force: bool = False,
     ai_client: Optional[Any] = None,
 ) -> Dict:
-    budget = get_historical_budget(int(budget_id or 0))
-    if not budget:
-        return _result(budget_id, "error", "No se encontro el presupuesto historico.")
-
-    analysis_status = (budget.get("analysis_status") or "").strip().upper()
-    if analysis_status not in ALLOWED_ANALYSIS_STATUSES:
+    candidate = inspect_technical_description_generation_candidate(budget_id, force=force)
+    if candidate.get("status") == "error":
+        return _result(budget_id, "error", candidate.get("message", "Error preparando generacion."))
+    if not candidate.get("eligible"):
         return _result(
             budget_id,
             "skipped",
-            f"Estado tecnico no apto: {analysis_status or 'desconocido'}.",
-            skipped_reason="not_eligible",
+            candidate.get("message", ""),
+            skipped_reason=candidate.get("reason", ""),
+            input_hash=candidate.get("input_hash", ""),
         )
 
-    current = get_budget_enrichment(int(budget_id), ENRICHMENT_TYPE)
-    if current:
-        current_status = (current.get("status") or "").strip().upper()
-        current_source = (current.get("source") or "").strip().upper()
-        if not force and (current_status in PROTECTED_STATUSES or current_source == "MANUAL"):
-            return _result(
-                budget_id,
-                "skipped",
-                "Ya existe una descripcion manual o aprobada.",
-                skipped_reason="protected_description",
-            )
-
-    payload = build_technical_description_input(budget)
-    input_hash = calculate_input_hash(payload)
-    if current and not force:
-        current_hash = (current.get("input_hash") or "").strip()
-        current_status = (current.get("status") or "").strip().upper()
-        if current_hash == input_hash and current_status != "REJECTED":
-            return _result(
-                budget_id,
-                "skipped",
-                "Ya existe una descripcion generada para los mismos datos.",
-                skipped_reason="same_input_hash",
-                input_hash=input_hash,
-            )
+    payload = candidate["payload"]
+    input_hash = candidate["input_hash"]
 
     client = ai_client or HistoricalTechnicalDescriptionAIClient()
     prompt = build_prompt(payload)
@@ -133,6 +109,99 @@ def generate_technical_description_for_budget(
     )
 
 
+def inspect_technical_description_generation_candidate(budget_id: int, force: bool = False) -> Dict:
+    budget = get_historical_budget(int(budget_id or 0))
+    if not budget:
+        return _candidate(budget_id, False, "not_found", "No se encontro el presupuesto historico.", status="error")
+
+    analysis_status = (budget.get("analysis_status") or "").strip().upper()
+    if analysis_status not in ALLOWED_ANALYSIS_STATUSES:
+        return _candidate(
+            budget_id,
+            False,
+            "not_eligible",
+            f"Estado tecnico no apto: {analysis_status or 'desconocido'}.",
+        )
+
+    current = get_budget_enrichment(int(budget_id), ENRICHMENT_TYPE)
+    if current:
+        current_status = (current.get("status") or "").strip().upper()
+        current_source = (current.get("source") or "").strip().upper()
+        if not force and (current_status in PROTECTED_STATUSES or current_source == "MANUAL"):
+            return _candidate(
+                budget_id,
+                False,
+                "protected_description",
+                "Ya existe una descripcion manual o aprobada.",
+            )
+
+    partidas_all = get_historical_budget_partidas(int(budget_id), limit=10000)
+    if not partidas_all:
+        return _candidate(budget_id, False, "no_partidas", "El presupuesto no tiene partidas extraidas.")
+    if not _has_useful_partida_concepts(partidas_all):
+        return _candidate(
+            budget_id,
+            False,
+            "no_useful_partidas",
+            "El presupuesto no tiene conceptos de partida aprovechables.",
+        )
+
+    payload = build_technical_description_input(budget, partidas_all=partidas_all)
+    input_hash = calculate_input_hash(payload)
+    if current and not force:
+        current_hash = (current.get("input_hash") or "").strip()
+        current_status = (current.get("status") or "").strip().upper()
+        if current_hash == input_hash and current_status != "REJECTED":
+            return _candidate(
+                budget_id,
+                False,
+                "same_input_hash",
+                "Ya existe una descripcion generada para los mismos datos.",
+                input_hash=input_hash,
+            )
+
+    return _candidate(
+        budget_id,
+        True,
+        "ready",
+        "Apto para generar descripcion IA.",
+        input_hash=input_hash,
+        payload=payload,
+    )
+
+
+def classify_technical_description_generation_candidates(
+    budget_ids: List[int],
+    force: bool = False,
+) -> Dict:
+    details = [
+        inspect_technical_description_generation_candidate(int(budget_id), force=force)
+        for budget_id in (budget_ids or [])
+    ]
+    ready_ids = [d["budget_id"] for d in details if d.get("eligible")]
+    counts = {
+        "ready": 0,
+        "not_eligible": 0,
+        "protected_description": 0,
+        "same_input_hash": 0,
+        "no_partidas": 0,
+        "no_useful_partidas": 0,
+        "errors": 0,
+    }
+    for detail in details:
+        reason = detail.get("reason", "")
+        if detail.get("status") == "error":
+            counts["errors"] += 1
+        elif reason in counts:
+            counts[reason] += 1
+    return {
+        "processed": len(budget_ids or []),
+        "ready_ids": ready_ids,
+        "counts": counts,
+        "details": details,
+    }
+
+
 def generate_technical_descriptions_for_budgets(
     budget_ids: List[int],
     force: bool = False,
@@ -157,11 +226,12 @@ def generate_technical_descriptions_for_budgets(
     return summary
 
 
-def build_technical_description_input(budget: Dict) -> Dict:
+def build_technical_description_input(budget: Dict, partidas_all: Optional[List[Dict]] = None) -> Dict:
     budget_id = int(budget.get("id") or 0)
     issues = get_historical_budget_issues(budget_id)
     modules = get_historical_budget_modules(budget_id)
-    partidas_all = get_historical_budget_partidas(budget_id, limit=10000)
+    if partidas_all is None:
+        partidas_all = get_historical_budget_partidas(budget_id, limit=10000)
     partidas = _select_relevant_partidas(partidas_all)
     return {
         "file_name": os.path.basename(budget.get("ruta_excel", "")),
@@ -179,7 +249,7 @@ def build_technical_description_input(budget: Dict) -> Dict:
                 "message": issue.get("message", ""),
             }
             for issue in issues
-            if (issue.get("severity") or "").upper() in {"WARN", "ERROR"}
+            if (issue.get("severity") or "").upper() in {"WARN", "SEVERE", "ERROR"}
         ],
         "partidas": [
             {
@@ -254,6 +324,29 @@ def _select_relevant_partidas(partidas: List[Dict]) -> List[Dict]:
     )[:MAX_PARTIDAS_FOR_AI]
     selected_indexes = {idx for idx, _partida in ranked}
     return [partida for idx, partida in enumerate(partidas) if idx in selected_indexes]
+
+
+def _has_useful_partida_concepts(partidas: List[Dict]) -> bool:
+    return any(str(partida.get("concepto_original") or "").strip() for partida in partidas or [])
+
+
+def _candidate(
+    budget_id: int,
+    eligible: bool,
+    reason: str,
+    message: str,
+    status: str = "ok",
+    **extra,
+) -> Dict:
+    result = {
+        "budget_id": int(budget_id or 0),
+        "eligible": bool(eligible),
+        "reason": reason,
+        "message": message,
+        "status": status,
+    }
+    result.update(extra)
+    return result
 
 
 def _call_ai_client(client: Any, prompt: str) -> Dict[str, str]:

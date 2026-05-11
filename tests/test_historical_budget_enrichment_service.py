@@ -5,14 +5,17 @@ from src.core import database
 from src.core.historical_budget_enrichment_service import (
     build_technical_description_input,
     calculate_input_hash,
+    classify_technical_description_generation_candidates,
     generate_technical_description_for_budget,
     generate_technical_descriptions_for_budgets,
 )
 from src.core.repositories import (
+    append_budget_issue,
     assign_partida_module,
     get_budget_enrichment,
     get_or_create_execution_module,
     insert_historical_partida,
+    update_budget_enrichment_review_status,
     upsert_budget_enrichment,
     upsert_historical_budget,
 )
@@ -171,6 +174,7 @@ def test_invalid_ai_response_returns_error_without_saving(tmp_path, monkeypatch)
     with database.get_connection() as _conn:
         pass
     budget_id = _budget(tmp_path)
+    _add_partidas_and_module(budget_id)
     fake = FakeAIClient(text="{bad json")
 
     result = generate_technical_description_for_budget(budget_id, ai_client=fake)
@@ -203,6 +207,7 @@ def test_batch_skips_not_eligible(tmp_path, monkeypatch):
     with database.get_connection() as _conn:
         pass
     valid_id = _budget(tmp_path, "valid.xlsx")
+    _add_partidas_and_module(valid_id)
     invalid_id = _budget(tmp_path, "invalid.xlsx", analysis_status="READ_ERROR", usable_for_learning=False)
     fake = FakeAIClient()
 
@@ -213,6 +218,141 @@ def test_batch_skips_not_eligible(tmp_path, monkeypatch):
     assert result["skipped"] == 1
     assert result["errors"] == 0
     assert fake.calls == 1
+
+
+def test_severe_issues_are_included_in_payload(tmp_path, monkeypatch):
+    monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "ai_severe_payload.db"))
+    with database.get_connection() as _conn:
+        pass
+    budget_id = _budget(tmp_path)
+    _add_partidas_and_module(budget_id)
+    assert append_budget_issue(
+        budget_id,
+        {
+            "severity": "SEVERE",
+            "code": "SEVERE_TOTAL_ZERO",
+            "message": "Total cero detectado.",
+        },
+    ) is None
+
+    payload = build_technical_description_input({"id": budget_id, **_budget_data_stub()})
+
+    assert any(issue["severity"] == "SEVERE" for issue in payload["issues"])
+    assert payload["issues"][0]["code"] == "SEVERE_TOTAL_ZERO"
+
+
+def test_batch_classification_mixes_ready_not_eligible_protected_and_same_hash(tmp_path, monkeypatch):
+    monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "ai_batch_classification.db"))
+    with database.get_connection() as _conn:
+        pass
+    ready_id = _budget(tmp_path, "ready.xlsx")
+    _add_partidas_and_module(ready_id)
+    invalid_id = _budget(tmp_path, "invalid.xlsx", analysis_status="READ_ERROR", usable_for_learning=False)
+    protected_id = _budget(tmp_path, "manual.xlsx")
+    _add_partidas_and_module(protected_id)
+    assert upsert_budget_enrichment(
+        protected_id, "TECHNICAL_DESCRIPTION", "MANUAL", "MANUAL", "Descripcion manual."
+    ) is None
+    same_hash_id = _budget(tmp_path, "same_hash.xlsx")
+    _add_partidas_and_module(same_hash_id)
+    assert generate_technical_description_for_budget(same_hash_id, ai_client=FakeAIClient())["status"] == "generated"
+
+    classification = classify_technical_description_generation_candidates(
+        [ready_id, invalid_id, protected_id, same_hash_id]
+    )
+
+    assert classification["ready_ids"] == [ready_id]
+    counts = classification["counts"]
+    assert counts["ready"] == 1
+    assert counts["not_eligible"] == 1
+    assert counts["protected_description"] == 1
+    assert counts["same_input_hash"] == 1
+
+
+def test_budget_without_partidas_skips_without_ai_call(tmp_path, monkeypatch):
+    monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "ai_no_partidas.db"))
+    with database.get_connection() as _conn:
+        pass
+    budget_id = _budget(tmp_path, num_partidas=0)
+    fake = FakeAIClient()
+
+    result = generate_technical_description_for_budget(budget_id, ai_client=fake)
+
+    assert result["status"] == "skipped"
+    assert result["skipped_reason"] == "no_partidas"
+    assert fake.calls == 0
+
+
+def test_budget_without_useful_concepts_skips_without_ai_call(tmp_path, monkeypatch):
+    monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "ai_no_useful_partidas.db"))
+    with database.get_connection() as _conn:
+        pass
+    budget_id = _budget(tmp_path)
+    partida_id, partida_err = insert_historical_partida(
+        budget_id,
+        {
+            "orden": 1,
+            "codigo": "01",
+            "concepto_original": "",
+            "concepto_normalizado": "",
+            "unidad": "ud",
+            "cantidad": 1,
+            "precio_unitario": 10,
+            "total_linea": 10,
+        },
+    )
+    assert partida_err is None
+    assert partida_id is not None
+    fake = FakeAIClient()
+
+    result = generate_technical_description_for_budget(budget_id, ai_client=fake)
+
+    assert result["status"] == "skipped"
+    assert result["skipped_reason"] == "no_useful_partidas"
+    assert fake.calls == 0
+
+
+def test_review_status_preserves_ai_traceability(tmp_path, monkeypatch):
+    monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "ai_review_traceability.db"))
+    with database.get_connection() as _conn:
+        pass
+    budget_id = _budget(tmp_path)
+    _add_partidas_and_module(budget_id)
+    assert generate_technical_description_for_budget(budget_id, ai_client=FakeAIClient())["status"] == "generated"
+    before = get_budget_enrichment(budget_id, "TECHNICAL_DESCRIPTION")
+    assert before is not None
+
+    err = update_budget_enrichment_review_status(
+        budget_id,
+        "TECHNICAL_DESCRIPTION",
+        "APPROVED",
+        reviewed_at="2026-05-11 10:00:00",
+    )
+
+    assert err is None
+    after = get_budget_enrichment(budget_id, "TECHNICAL_DESCRIPTION")
+    assert after["status"] == "APPROVED"
+    assert after["model"] == before["model"]
+    assert after["prompt_version"] == before["prompt_version"]
+    assert after["input_hash"] == before["input_hash"]
+    assert after["confidence"] == before["confidence"]
+    assert after["warnings"] == before["warnings"]
+    assert after["metadata_json"] == before["metadata_json"]
+
+    rejected_id = _budget(tmp_path, "reject_traceability.xlsx")
+    _add_partidas_and_module(rejected_id)
+    assert generate_technical_description_for_budget(rejected_id, ai_client=FakeAIClient())["status"] == "generated"
+    before_reject = get_budget_enrichment(rejected_id, "TECHNICAL_DESCRIPTION")
+    reject_err = update_budget_enrichment_review_status(rejected_id, "TECHNICAL_DESCRIPTION", "REJECTED")
+    assert reject_err is None
+    after_reject = get_budget_enrichment(rejected_id, "TECHNICAL_DESCRIPTION")
+    assert after_reject["status"] == "REJECTED"
+    assert after_reject["model"] == before_reject["model"]
+    assert after_reject["prompt_version"] == before_reject["prompt_version"]
+    assert after_reject["input_hash"] == before_reject["input_hash"]
+    assert after_reject["confidence"] == before_reject["confidence"]
+    assert after_reject["warnings"] == before_reject["warnings"]
+    assert after_reject["metadata_json"] == before_reject["metadata_json"]
 
 
 def _budget_data_stub():

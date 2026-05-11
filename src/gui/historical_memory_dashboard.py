@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
 from src.core.historical_analysis_status import AnalysisStatus
 from src.core.historical_budget_analyzer import HistoricalBudgetAnalyzer
 from src.core.historical_budget_enrichment_service import (
+    classify_technical_description_generation_candidates,
     generate_technical_description_for_budget,
 )
 from src.core.historical_enrichment import technical_description_status_label
@@ -50,6 +51,7 @@ from src.core.repositories import (
     get_historical_memory_dashboard_metrics,
     list_historical_memory_dashboard_budgets,
     set_historical_budget_learning_status,
+    update_budget_enrichment_review_status,
     upsert_budget_enrichment,
 )
 from src.gui import theme
@@ -747,10 +749,23 @@ class HistoricalMemoryDashboard(QDialog):
                 "No hay presupuestos seleccionados aptos sin descripcion manual o aprobada.",
             )
             return
+        classification = classify_technical_description_generation_candidates(budget_ids)
+        ready_ids = classification.get("ready_ids") or []
+        counts = classification.get("counts") or {}
+        if not ready_ids:
+            QMessageBox.information(
+                self,
+                "Generar IA para seleccionados",
+                self._ai_batch_confirmation_summary(classification)
+                + "\n\nNo hay presupuestos aptos para generar descripcion IA.",
+            )
+            return
         answer = QMessageBox.question(
             self,
             "Generar IA para seleccionados",
-            f"Vas a generar descripciones con IA para {len(budget_ids)} presupuestos.\n"
+            self._ai_batch_confirmation_summary(classification)
+            + "\n\n"
+            f"Se generaran descripciones con IA para {int(counts.get('ready', 0))} presupuestos aptos.\n"
             "Esto puede tardar y usar una API externa.\n"
             "No se sobrescribiran descripciones aprobadas o manuales.\n\n"
             "Continuar?",
@@ -758,10 +773,10 @@ class HistoricalMemoryDashboard(QDialog):
         if answer != QMessageBox.StandardButton.Yes:
             return
         self._set_ai_actions_enabled(False)
-        self._stats_lbl.setText(f"Generando descripciones... 0 / {len(budget_ids)}")
+        self._stats_lbl.setText(f"Generando descripciones... 0 / {len(ready_ids)}")
         thread = threading.Thread(
             target=self._run_ai_description_generation,
-            args=(budget_ids, False),
+            args=(ready_ids, False),
             daemon=True,
         )
         thread.start()
@@ -832,23 +847,10 @@ class HistoricalMemoryDashboard(QDialog):
         if not data or not self._has_pending_ai_description(data):
             return
         budget_id = int(data.get("id") or 0)
-        current = get_budget_enrichment(budget_id, "TECHNICAL_DESCRIPTION") or {}
-        content = (current.get("content") or "").strip()
-        if not content:
-            QMessageBox.warning(self, "Descripcion tecnica", "No hay descripcion pendiente que revisar.")
-            return
-        err = upsert_budget_enrichment(
-            historical_budget_id=budget_id,
-            enrichment_type="TECHNICAL_DESCRIPTION",
-            status=status,
-            source="AI",
-            content=content,
-            model=current.get("model", ""),
-            prompt_version=current.get("prompt_version", ""),
-            input_hash=current.get("input_hash", ""),
-            confidence=current.get("confidence"),
-            warnings=current.get("warnings", ""),
-            metadata_json=current.get("metadata_json", ""),
+        err = update_budget_enrichment_review_status(
+            budget_id,
+            "TECHNICAL_DESCRIPTION",
+            status,
             reviewed_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         )
         if err:
@@ -863,6 +865,19 @@ class HistoricalMemoryDashboard(QDialog):
         self._act_reject_description.setEnabled(enabled)
         if enabled:
             self._update_action_states()
+
+    @staticmethod
+    def _ai_batch_confirmation_summary(classification: dict) -> str:
+        counts = classification.get("counts") or {}
+        return (
+            f"Seleccionados: {int(classification.get('processed', 0))}\n"
+            f"Aptos para generacion: {int(counts.get('ready', 0))}\n"
+            f"No aptos por estado tecnico: {int(counts.get('not_eligible', 0))}\n"
+            f"Omitidos por descripcion manual/aprobada: {int(counts.get('protected_description', 0))}\n"
+            f"Omitidos por mismo input_hash: {int(counts.get('same_input_hash', 0))}\n"
+            f"Omitidos sin partidas: {int(counts.get('no_partidas', 0))}\n"
+            f"Omitidos sin conceptos utiles: {int(counts.get('no_useful_partidas', 0))}"
+        )
 
     def _include_selected(self):
         changed = 0
