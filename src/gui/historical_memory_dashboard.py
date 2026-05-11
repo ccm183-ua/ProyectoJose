@@ -132,6 +132,9 @@ class HistoricalMemoryDashboard(QDialog):
         self._act_db_info = QAction("Informacion de base de datos", self)
         self._act_db_info.triggered.connect(self._show_database_info)
         maintenance_menu.addAction(self._act_db_info)
+        self._act_db_candidates = QAction("Bases de datos detectadas...", self)
+        self._act_db_candidates.triggered.connect(self._show_database_candidates)
+        maintenance_menu.addAction(self._act_db_candidates)
         self._act_rebuild_patterns = QAction("Reconstruir patrones", self)
         self._act_rebuild_patterns.triggered.connect(self._rebuild_patterns)
         self._act_rebuild_patterns.setToolTip(
@@ -546,6 +549,41 @@ class HistoricalMemoryDashboard(QDialog):
             + "\n".join(candidate_lines)
         )
         QMessageBox.information(self, "Informacion de base de datos", message[:12000])
+
+    def _show_database_candidates(self):
+        candidates = find_database_candidates()
+        lines = []
+        historical_candidates = []
+        for idx, candidate in enumerate(candidates, start=1):
+            counts = candidate.get("counts", {})
+            if candidate.get("has_historical_data") and not candidate.get("is_active"):
+                historical_candidates.append(candidate)
+            marker = "ACTIVA" if candidate.get("is_active") else "candidata"
+            lines.append(
+                f"{idx}. [{marker}] {candidate.get('path')}\n"
+                f"   existe={'si' if candidate.get('exists') else 'no'} | "
+                f"tamano={candidate.get('size_bytes')} bytes | "
+                f"historicos={counts.get('historical_budget', 0)} | "
+                f"enriquecimientos={counts.get('historical_budget_enrichment', 0)} | "
+                f"uuid={candidate.get('database_uuid') or '-'}"
+            )
+        message = "Bases de datos detectadas:\n\n" + "\n".join(lines)
+        if historical_candidates:
+            message += (
+                "\n\nSe ha encontrado una base no activa con historicos. "
+                "Quieres copiar la primera como base activa? No se borrara la base origen.\n\n"
+                f"Origen: {historical_candidates[0].get('path')}"
+            )
+            answer = QMessageBox.question(self, "Bases de datos detectadas", message[:12000])
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+            result = copy_database_as_active(historical_candidates[0].get("path", ""))
+            if not result.get("ok"):
+                QMessageBox.warning(self, "Base de datos", result.get("error", "No se pudo copiar la base."))
+                return
+            self._reload()
+            return
+        QMessageBox.information(self, "Bases de datos detectadas", message[:12000])
 
     def _check_empty_active_database_warning(self):
         try:

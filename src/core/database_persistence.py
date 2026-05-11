@@ -112,6 +112,8 @@ def inspect_database_file(path: Path) -> Dict:
     except sqlite3.Error as exc:
         info["error"] = str(exc)
     info["is_empty"] = int(info["counts"].get("historical_budget", 0) or 0) == 0
+    info["is_truly_empty"] = not info["exists"] or int(info["size_bytes"] or 0) == 0
+    info["has_historical_data"] = int(info["counts"].get("historical_budget", 0) or 0) > 0
     return info
 
 
@@ -158,6 +160,8 @@ def copy_database_as_active(source_path: str) -> Dict:
     if not source.exists():
         return {"ok": False, "error": "La base de datos origen no existe."}
     active = database.get_db_path()
+    if source.resolve() == active.resolve():
+        return {"ok": False, "error": "La base seleccionada ya es la activa."}
     database.ensure_db_directory(active)
     backup_path = None
     if active.exists():

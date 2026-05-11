@@ -6,8 +6,12 @@ Gestión de la base de datos SQLite.
 - Puedes editar el .db por fuera (DB Browser, etc.) y reemplazar el fichero
   cuando quieras; la app abrirá lo que haya en la ruta configurada.
 
-Ruta por defecto: datos.db en la raíz del proyecto.
-Para usar otra ruta: variable de entorno CUBIAPP_DB_PATH (ruta absoluta al .db).
+Prioridad de ruta:
+1. Ruta guardada en Settings.
+2. Variable CUBIAPP_DB_PATH (ruta absoluta al .db).
+3. Ruta estable por defecto: Documents/CubiApp/datos.db.
+4. Fallback legacy project_root/datos.db solo si la ruta estable no existe
+   o esta vacia y legacy contiene historicos.
 """
 
 import os
@@ -54,17 +58,20 @@ def _db_has_historical_data(path: Path) -> bool:
         return False
 
 
-def _db_is_empty_or_missing(path: Path) -> bool:
-    return not path.exists() or path.stat().st_size == 0 or not _db_has_historical_data(path)
+def _db_is_truly_empty(path: Path) -> bool:
+    return not path.exists() or path.stat().st_size == 0
 
 
 def get_db_path() -> Path:
     """
     Ruta del fichero de base de datos.
 
-    Orden de decisión:
-    1. Variable de entorno CUBIAPP_DB_PATH (ruta absoluta al .db).
-    2. Por defecto: datos.db en la raíz del proyecto.
+    Orden de decision:
+    1. Ruta guardada en Settings, si existe.
+    2. Variable de entorno CUBIAPP_DB_PATH, si existe y es absoluta.
+    3. Documents/CubiApp/datos.db.
+    4. Fallback legacy project_root/datos.db solo si la ruta estable no existe
+       o esta vacia y legacy contiene historicos.
 
     Returns:
         Path absoluto al fichero .db
@@ -76,10 +83,9 @@ def get_db_path() -> Path:
     env_path = os.environ.get("CUBIAPP_DB_PATH")
     if env_path and os.path.isabs(env_path):
         return Path(env_path)
-    # Ruta relativa a la raíz del proyecto (donde está src/)
     stable_path = get_stable_default_db_path()
     legacy_path = get_legacy_db_path()
-    if _db_is_empty_or_missing(stable_path) and _db_has_historical_data(legacy_path):
+    if _db_is_truly_empty(stable_path) and _db_has_historical_data(legacy_path):
         return legacy_path
     return stable_path
 

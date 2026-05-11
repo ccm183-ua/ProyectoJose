@@ -10,6 +10,7 @@ from src.core.database_persistence import (
     inspect_database_file,
 )
 from src.core.repositories import insert_historical_partida, upsert_budget_enrichment, upsert_historical_budget
+from src.core.settings import Settings
 
 
 def _isolated_config(monkeypatch, tmp_path):
@@ -48,6 +49,75 @@ def test_get_db_path_respects_absolute_env_path(tmp_path, monkeypatch):
     monkeypatch.setenv("CUBIAPP_DB_PATH", str(target))
 
     assert database.get_db_path() == target
+
+
+def test_db_path_priority_settings_env_stable_legacy(tmp_path, monkeypatch):
+    _isolated_config(monkeypatch, tmp_path)
+    settings_path = tmp_path / "settings.db"
+    env_path = tmp_path / "env.db"
+    stable_path = tmp_path / "stable.db"
+    legacy_path = tmp_path / "legacy.db"
+    monkeypatch.setattr(database, "get_stable_default_db_path", lambda: stable_path)
+    monkeypatch.setattr(database, "get_legacy_db_path", lambda: legacy_path)
+
+    monkeypatch.setenv("CUBIAPP_DB_PATH", str(env_path))
+    Settings().set_database_path(str(settings_path))
+    assert database.get_db_path() == settings_path
+
+    Settings().set_database_path("")
+    assert database.get_db_path() == env_path
+
+    monkeypatch.delenv("CUBIAPP_DB_PATH", raising=False)
+    assert database.get_db_path() == stable_path
+
+    stable_path.unlink(missing_ok=True)
+    monkeypatch.setenv("CUBIAPP_DB_PATH", str(legacy_path))
+    with database.get_connection() as _conn:
+        pass
+    _create_budget(tmp_path, "legacy_priority.xlsx")
+    monkeypatch.delenv("CUBIAPP_DB_PATH", raising=False)
+    assert database.get_db_path() == legacy_path
+
+
+def test_stable_with_normal_app_data_is_not_replaced_by_legacy(tmp_path, monkeypatch):
+    _isolated_config(monkeypatch, tmp_path)
+    stable_path = tmp_path / "stable_normal.db"
+    legacy_path = tmp_path / "legacy_with_history.db"
+    monkeypatch.setattr(database, "get_stable_default_db_path", lambda: stable_path)
+    monkeypatch.setattr(database, "get_legacy_db_path", lambda: legacy_path)
+
+    monkeypatch.setenv("CUBIAPP_DB_PATH", str(stable_path))
+    with database.get_connection() as conn:
+        conn.execute(
+            """INSERT INTO administracion (nombre, email, telefono, direccion)
+               VALUES (?, ?, ?, ?)""",
+            ("Admin", "admin@example.com", "600000000", "Calle"),
+        )
+        conn.commit()
+
+    monkeypatch.setenv("CUBIAPP_DB_PATH", str(legacy_path))
+    with database.get_connection() as _conn:
+        pass
+    _create_budget(tmp_path, "legacy_history.xlsx")
+
+    monkeypatch.delenv("CUBIAPP_DB_PATH", raising=False)
+    assert database.get_db_path() == stable_path
+
+
+def test_missing_stable_with_legacy_historical_uses_legacy_fallback(tmp_path, monkeypatch):
+    _isolated_config(monkeypatch, tmp_path)
+    stable_path = tmp_path / "missing_stable.db"
+    legacy_path = tmp_path / "legacy_history.db"
+    monkeypatch.setattr(database, "get_stable_default_db_path", lambda: stable_path)
+    monkeypatch.setattr(database, "get_legacy_db_path", lambda: legacy_path)
+
+    monkeypatch.setenv("CUBIAPP_DB_PATH", str(legacy_path))
+    with database.get_connection() as _conn:
+        pass
+    _create_budget(tmp_path, "legacy_fallback.xlsx")
+
+    monkeypatch.delenv("CUBIAPP_DB_PATH", raising=False)
+    assert database.get_db_path() == legacy_path
 
 
 def test_database_identity_created_once(tmp_path, monkeypatch):
@@ -159,6 +229,19 @@ def test_copy_database_as_active_does_not_delete_source(tmp_path, monkeypatch):
     assert source.exists()
     assert active.exists()
     assert inspect_database_file(active)["counts"]["historical_budget"] == 1
+
+
+def test_copy_database_as_active_noops_when_source_is_active(tmp_path, monkeypatch):
+    _isolated_config(monkeypatch, tmp_path)
+    active = tmp_path / "already_active.db"
+    monkeypatch.setenv("CUBIAPP_DB_PATH", str(active))
+    with database.get_connection() as _conn:
+        pass
+
+    result = copy_database_as_active(str(active))
+
+    assert result["ok"] is False
+    assert result["error"] == "La base seleccionada ya es la activa."
 
 
 def test_empty_database_is_detected_as_empty(tmp_path, monkeypatch):
