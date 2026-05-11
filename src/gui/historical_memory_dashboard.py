@@ -36,6 +36,7 @@ from src.core.historical_analysis_status import AnalysisStatus
 from src.core.historical_budget_analyzer import HistoricalBudgetAnalyzer
 from src.core.historical_budget_enrichment_service import (
     classify_technical_description_generation_candidates,
+    format_generation_candidate_summary,
     generate_technical_description_for_budget,
 )
 from src.core.historical_enrichment import technical_description_status_label
@@ -837,7 +838,7 @@ class HistoricalMemoryDashboard(QDialog):
         QMessageBox.information(self, "Descripciones IA", message)
 
     def _approve_description_selected(self):
-        self._review_pending_description("APPROVED")
+        self._show_ai_description_review_dialog()
 
     def _reject_description_selected(self):
         self._review_pending_description("REJECTED")
@@ -858,6 +859,112 @@ class HistoricalMemoryDashboard(QDialog):
             return
         self._reload()
 
+    def _show_ai_description_review_dialog(self):
+        data = self._selected_row_data()
+        if not data or not self._has_pending_ai_description(data):
+            return
+        budget_id = int(data.get("id") or 0)
+        current = get_budget_enrichment(budget_id, "TECHNICAL_DESCRIPTION") or {}
+        content = (current.get("content") or "").strip()
+        if not content:
+            QMessageBox.warning(self, "Descripcion tecnica", "No hay descripcion pendiente que revisar.")
+            return
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Revisar descripcion IA")
+        lay = QVBoxLayout(dlg)
+        lay.addWidget(theme.create_text(dlg, "Revisa el contenido que se va a aprobar."))
+
+        fields = QGridLayout()
+        fields.addWidget(QLabel("Confianza", dlg), 0, 0)
+        confidence = current.get("confidence")
+        confidence_text = "-" if confidence is None else f"{float(confidence):.2f}"
+        fields.addWidget(QLabel(confidence_text, dlg), 0, 1)
+        fields.addWidget(QLabel("Warnings", dlg), 1, 0)
+        warnings_lbl = QLabel(self._format_ai_review_warnings(current.get("warnings", "")), dlg)
+        warnings_lbl.setWordWrap(True)
+        fields.addWidget(warnings_lbl, 1, 1)
+        lay.addLayout(fields)
+
+        editor = QTextEdit(dlg)
+        editor.setPlainText(content)
+        editor.setMinimumHeight(150)
+        lay.addWidget(editor)
+
+        buttons = QHBoxLayout()
+        btn_cancel = QPushButton("Cancelar", dlg)
+        btn_reject = QPushButton("Rechazar", dlg)
+        btn_edit_approve = QPushButton("Editar y aprobar", dlg)
+        btn_approve = QPushButton("Aprobar", dlg)
+        buttons.addWidget(btn_cancel)
+        buttons.addStretch()
+        buttons.addWidget(btn_reject)
+        buttons.addWidget(btn_edit_approve)
+        buttons.addWidget(btn_approve)
+        lay.addLayout(buttons)
+
+        btn_cancel.clicked.connect(dlg.reject)
+        btn_reject.clicked.connect(lambda: self._finish_ai_review_dialog(dlg, budget_id, "REJECTED"))
+        btn_approve.clicked.connect(lambda: self._finish_ai_review_dialog(dlg, budget_id, "APPROVED"))
+        btn_edit_approve.clicked.connect(
+            lambda: self._finish_ai_review_dialog(dlg, budget_id, "APPROVED", editor.toPlainText().strip())
+        )
+
+        theme.fit_dialog(dlg, 760, 430)
+        dlg.exec()
+
+    def _finish_ai_review_dialog(
+        self,
+        dlg: QDialog,
+        budget_id: int,
+        status: str,
+        edited_content: str | None = None,
+    ):
+        if edited_content is not None:
+            if not edited_content:
+                QMessageBox.warning(dlg, "Descripcion tecnica", "La descripcion no puede estar vacia.")
+                return
+            current = get_budget_enrichment(budget_id, "TECHNICAL_DESCRIPTION") or {}
+            err = upsert_budget_enrichment(
+                historical_budget_id=budget_id,
+                enrichment_type="TECHNICAL_DESCRIPTION",
+                status=status,
+                source="AI",
+                content=edited_content,
+                model=current.get("model", ""),
+                prompt_version=current.get("prompt_version", ""),
+                input_hash=current.get("input_hash", ""),
+                confidence=current.get("confidence"),
+                warnings=current.get("warnings", ""),
+                metadata_json=current.get("metadata_json", ""),
+                reviewed_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            )
+        else:
+            err = update_budget_enrichment_review_status(
+                budget_id,
+                "TECHNICAL_DESCRIPTION",
+                status,
+                reviewed_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            )
+        if err:
+            QMessageBox.warning(dlg, "Descripcion tecnica", err)
+            return
+        dlg.accept()
+        self._reload()
+
+    @staticmethod
+    def _format_ai_review_warnings(warnings: str) -> str:
+        raw = (warnings or "").strip()
+        if not raw:
+            return "-"
+        try:
+            parsed = json.loads(raw)
+        except (TypeError, ValueError):
+            return raw
+        if isinstance(parsed, list):
+            return ", ".join(str(item) for item in parsed if str(item).strip()) or "-"
+        return str(parsed)
+
     def _set_ai_actions_enabled(self, enabled: bool):
         self._act_generate_ai_description.setEnabled(enabled)
         self._act_generate_ai_descriptions_batch.setEnabled(enabled)
@@ -868,16 +975,7 @@ class HistoricalMemoryDashboard(QDialog):
 
     @staticmethod
     def _ai_batch_confirmation_summary(classification: dict) -> str:
-        counts = classification.get("counts") or {}
-        return (
-            f"Seleccionados: {int(classification.get('processed', 0))}\n"
-            f"Aptos para generacion: {int(counts.get('ready', 0))}\n"
-            f"No aptos por estado tecnico: {int(counts.get('not_eligible', 0))}\n"
-            f"Omitidos por descripcion manual/aprobada: {int(counts.get('protected_description', 0))}\n"
-            f"Omitidos por mismo input_hash: {int(counts.get('same_input_hash', 0))}\n"
-            f"Omitidos sin partidas: {int(counts.get('no_partidas', 0))}\n"
-            f"Omitidos sin conceptos utiles: {int(counts.get('no_useful_partidas', 0))}"
-        )
+        return format_generation_candidate_summary(classification)
 
     def _include_selected(self):
         changed = 0

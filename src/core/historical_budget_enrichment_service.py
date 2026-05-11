@@ -202,6 +202,20 @@ def classify_technical_description_generation_candidates(
     }
 
 
+def format_generation_candidate_summary(classification: Dict) -> str:
+    counts = classification.get("counts") or {}
+    return (
+        f"Seleccionados: {int(classification.get('processed', 0))}\n"
+        f"Aptos para generacion: {int(counts.get('ready', 0))}\n"
+        f"No aptos por estado tecnico: {int(counts.get('not_eligible', 0))}\n"
+        f"Omitidos por descripcion manual/aprobada: {int(counts.get('protected_description', 0))}\n"
+        f"Omitidos por mismo input_hash: {int(counts.get('same_input_hash', 0))}\n"
+        f"Omitidos sin partidas: {int(counts.get('no_partidas', 0))}\n"
+        f"Omitidos sin conceptos utiles: {int(counts.get('no_useful_partidas', 0))}\n"
+        f"Errores preparando generacion: {int(counts.get('errors', 0))}"
+    )
+
+
 def generate_technical_descriptions_for_budgets(
     budget_ids: List[int],
     force: bool = False,
@@ -327,7 +341,11 @@ def _select_relevant_partidas(partidas: List[Dict]) -> List[Dict]:
 
 
 def _has_useful_partida_concepts(partidas: List[Dict]) -> bool:
-    return any(str(partida.get("concepto_original") or "").strip() for partida in partidas or [])
+    for partida in partidas or []:
+        for key in ("concepto_original", "titulo", "concepto_normalizado"):
+            if str(partida.get(key) or "").strip():
+                return True
+    return False
 
 
 def _candidate(

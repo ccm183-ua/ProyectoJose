@@ -3,9 +3,11 @@ from datetime import datetime
 
 from src.core import database
 from src.core.historical_budget_enrichment_service import (
+    _has_useful_partida_concepts,
     build_technical_description_input,
     calculate_input_hash,
     classify_technical_description_generation_candidates,
+    format_generation_candidate_summary,
     generate_technical_description_for_budget,
     generate_technical_descriptions_for_budgets,
 )
@@ -312,6 +314,35 @@ def test_budget_without_useful_concepts_skips_without_ai_call(tmp_path, monkeypa
     assert fake.calls == 0
 
 
+def test_has_useful_partida_concepts_uses_title_and_normalized_fallbacks():
+    assert _has_useful_partida_concepts([{"concepto_original": "", "titulo": "Saneado de fachada"}])
+    assert _has_useful_partida_concepts(
+        [{"concepto_original": "", "titulo": "", "concepto_normalizado": "saneado fachada"}]
+    )
+    assert not _has_useful_partida_concepts(
+        [{"concepto_original": "", "titulo": "", "concepto_normalizado": ""}]
+    )
+
+
+def test_ai_batch_summary_includes_preparation_errors():
+    summary = format_generation_candidate_summary(
+        {
+            "processed": 3,
+            "counts": {
+                "ready": 1,
+                "not_eligible": 0,
+                "protected_description": 0,
+                "same_input_hash": 0,
+                "no_partidas": 1,
+                "no_useful_partidas": 0,
+                "errors": 1,
+            },
+        }
+    )
+
+    assert "Errores preparando generacion: 1" in summary
+
+
 def test_review_status_preserves_ai_traceability(tmp_path, monkeypatch):
     monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "ai_review_traceability.db"))
     with database.get_connection() as _conn:
@@ -353,6 +384,37 @@ def test_review_status_preserves_ai_traceability(tmp_path, monkeypatch):
     assert after_reject["confidence"] == before_reject["confidence"]
     assert after_reject["warnings"] == before_reject["warnings"]
     assert after_reject["metadata_json"] == before_reject["metadata_json"]
+
+
+def test_review_status_rejects_non_ai_or_non_pending_descriptions(tmp_path, monkeypatch):
+    monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "ai_review_rejects_invalid.db"))
+    with database.get_connection() as _conn:
+        pass
+    manual_id = _budget(tmp_path, "manual_review.xlsx")
+    assert upsert_budget_enrichment(
+        manual_id, "TECHNICAL_DESCRIPTION", "MANUAL", "MANUAL", "Descripcion manual."
+    ) is None
+
+    manual_err = update_budget_enrichment_review_status(manual_id, "TECHNICAL_DESCRIPTION", "APPROVED")
+
+    assert manual_err == "Solo se pueden revisar descripciones IA pendientes."
+
+    approved_id = _budget(tmp_path, "approved_review.xlsx")
+    assert upsert_budget_enrichment(
+        approved_id,
+        "TECHNICAL_DESCRIPTION",
+        "APPROVED",
+        "AI",
+        "Descripcion IA ya aprobada.",
+        model="fake-model",
+        prompt_version="historical_technical_description_v1",
+        input_hash="hash",
+        confidence=0.8,
+    ) is None
+
+    approved_err = update_budget_enrichment_review_status(approved_id, "TECHNICAL_DESCRIPTION", "REJECTED")
+
+    assert approved_err == "Solo se pueden revisar descripciones IA pendientes."
 
 
 def _budget_data_stub():
