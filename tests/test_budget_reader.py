@@ -10,6 +10,8 @@ Cubre:
 
 import os
 import shutil
+import io
+import zipfile
 import pytest
 
 from src.core.budget_reader import BudgetReader
@@ -187,3 +189,85 @@ class TestBudgetReaderErrors:
     def test_ruta_none(self):
         reader = BudgetReader()
         assert reader.read(None) is None
+
+
+class TestBudgetReaderSheetSelection:
+    """Selección de hoja cuando hay múltiples sheets en un mismo XLSX."""
+
+    def test_read_all_sheets_includes_sheet3(self):
+        buff = io.BytesIO()
+        with zipfile.ZipFile(buff, "w") as z:
+            z.writestr("xl/worksheets/sheet1.xml", "<sheet>one</sheet>")
+            z.writestr("xl/worksheets/sheet2.xml", "<sheet>two</sheet>")
+            z.writestr("xl/worksheets/sheet3.xml", "<sheet>three</sheet>")
+            z.writestr("xl/workbook.xml", "<workbook/>")
+
+        sheets = BudgetReader._read_all_sheets(buff.getvalue())
+        assert len(sheets) == 3
+        assert sheets[0] == "<sheet>one</sheet>"
+        assert sheets[2] == "<sheet>three</sheet>"
+
+    def test_select_best_sheet_can_match_sheet3(self, monkeypatch):
+        reader = BudgetReader()
+        all_sheets = ["sheet_xml_1", "sheet_xml_2", "sheet_xml_3"]
+
+        monkeypatch.setattr(
+            reader,
+            "_read_all_sheets",
+            lambda _file_bytes: all_sheets,
+        )
+        monkeypatch.setattr(
+            reader,
+            "_extract_rows",
+            lambda sheet_xml: {"_sheet_id": sheet_xml},
+        )
+
+        def _fake_extract_header(rows, _shared_strings):
+            sheet_id = rows["_sheet_id"]
+            mapping = {
+                "sheet_xml_1": {"numero": "122-20"},
+                "sheet_xml_2": {"numero": "60-26"},
+                "sheet_xml_3": {"numero": "61-26"},
+            }
+            return mapping.get(sheet_id, {"numero": ""})
+
+        monkeypatch.setattr(reader, "_extract_header", _fake_extract_header)
+
+        selected = reader._select_best_sheet(
+            b"dummy",
+            shared_strings=[],
+            expected_numero="61-26",
+        )
+        assert selected == "sheet_xml_3"
+
+    def test_select_best_sheet_returns_none_when_no_match(self, monkeypatch):
+        reader = BudgetReader()
+        all_sheets = ["sheet_xml_1", "sheet_xml_2"]
+
+        monkeypatch.setattr(
+            reader,
+            "_read_all_sheets",
+            lambda _file_bytes: all_sheets,
+        )
+        monkeypatch.setattr(
+            reader,
+            "_extract_rows",
+            lambda sheet_xml: {"_sheet_id": sheet_xml},
+        )
+
+        def _fake_extract_header(rows, _shared_strings):
+            sheet_id = rows["_sheet_id"]
+            mapping = {
+                "sheet_xml_1": {"numero": "60-26"},
+                "sheet_xml_2": {"numero": "59-26"},
+            }
+            return mapping.get(sheet_id, {"numero": ""})
+
+        monkeypatch.setattr(reader, "_extract_header", _fake_extract_header)
+
+        selected = reader._select_best_sheet(
+            b"dummy",
+            shared_strings=[],
+            expected_numero="61-26",
+        )
+        assert selected is None
