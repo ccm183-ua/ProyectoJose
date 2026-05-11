@@ -312,7 +312,7 @@ def test_combined_review_has_input_validations_in_source():
 
 def test_next_step_dialog_has_compact_clear_buttons_in_source():
     src = Path("src/gui/historical_selection_next_step_dialog.py").read_text(encoding="utf-8")
-    assert "Crear presupuesto" in src
+    assert "Crear solo con históricas" in src
     assert "Completar con IA" in src
     assert "Volver" in src
     assert "CREATE_ONLY" in src

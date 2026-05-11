@@ -117,11 +117,18 @@ class PartidasWriter:
         Returns:
             Altura de fila como string (en puntos).
         """
-        lines = 1
+        def _wrapped_logical_lines(text: str) -> int:
+            if not text:
+                return 0
+            count = 0
+            for paragraph in str(text).splitlines() or [""]:
+                paragraph = paragraph or ""
+                count += max(1, -(-len(paragraph) // chars_per_line))
+            return count
+
+        lines = max(1, _wrapped_logical_lines(titulo))
         if descripcion:
-            desc_len = len(descripcion)
-            desc_lines = max(1, -(-desc_len // chars_per_line))
-            lines += desc_lines
+            lines += _wrapped_logical_lines(descripcion)
         height = lines * line_height + 8
         height = max(30, min(200, height))
         return str(round(height, 1))

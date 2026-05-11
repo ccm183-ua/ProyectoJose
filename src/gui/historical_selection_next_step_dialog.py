@@ -53,7 +53,7 @@ class HistoricalSelectionNextStepDialog(QDialog):
         layout.addLayout(
             self._build_option(
                 panel,
-                "Crear presupuesto",
+                "Crear solo con históricas",
                 "Usa únicamente las partidas seleccionadas.",
                 self.CREATE_ONLY,
                 primary=True,

@@ -48,9 +48,11 @@ def normalize_partida_for_excel(partida: Dict, source: str = "") -> Dict:
     raw_title = str(partida.get("titulo", "") or "").strip()
     raw_desc = str(partida.get("descripcion", "") or "").strip()
 
-    if raw_title:
+    if raw_title and raw_desc:
         title = raw_title
         description = raw_desc
+    elif raw_title and not raw_desc:
+        title, description = split_title_description(raw_title)
     else:
         preferred_text = (
             partida.get("concepto_original")

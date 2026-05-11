@@ -58,3 +58,42 @@ def test_historical_not_all_text_inside_title_when_multiline():
     normalized = normalize_partida_for_excel(partida, source="historical")
     assert normalized["titulo"] == "REPARACION BAJANTE."
     assert normalized["descripcion"] == "Apertura de rozas.\nCierre y remates."
+
+
+def test_multiline_title_with_empty_description_is_split():
+    partida = {
+        "titulo": "PINTURA PAREDES.\nAplicación de pintura plástica mate en paredes.",
+        "descripcion": "",
+        "unidad": "m2",
+        "cantidad": 100,
+        "precio_unitario": 8.5,
+    }
+    normalized = normalize_partida_for_excel(partida, source="historical")
+    assert normalized["titulo"] == "PINTURA PAREDES."
+    assert normalized["descripcion"].startswith("Aplicación de pintura")
+
+
+def test_title_with_short_sentence_and_implicit_description_is_split():
+    partida = {
+        "titulo": "PINTURA PAREDES. Aplicación de pintura plástica mate en paredes.",
+        "descripcion": "",
+        "unidad": "m2",
+        "cantidad": 100,
+        "precio_unitario": 8.5,
+    }
+    normalized = normalize_partida_for_excel(partida, source="historical")
+    assert normalized["titulo"] == "PINTURA PAREDES."
+    assert normalized["descripcion"].startswith("Aplicación de pintura")
+
+
+def test_short_title_with_empty_description_stays_as_title():
+    partida = {
+        "titulo": "PINTURA PAREDES.",
+        "descripcion": "",
+        "unidad": "m2",
+        "cantidad": 100,
+        "precio_unitario": 8.5,
+    }
+    normalized = normalize_partida_for_excel(partida, source="historical")
+    assert normalized["titulo"] == "PINTURA PAREDES."
+    assert normalized["descripcion"] == ""

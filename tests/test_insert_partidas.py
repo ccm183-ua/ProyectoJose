@@ -169,3 +169,26 @@ class TestInsertPartidas:
         sheet2 = _read_sheet2(budget_file)
         assert "TEST CLIENT" in sheet2
         assert "Calle Test" in sheet2
+
+    def test_title_and_description_use_separate_runs_with_bold_only_on_title(self, budget_file):
+        """Si hay título+descripción, el título va en negrita y la descripción en run normal."""
+        em = ExcelManager()
+        partidas = [
+            {
+                "titulo": "PINTURA PAREDES.",
+                "descripcion": "Aplicación de pintura plástica mate en paredes.",
+                "cantidad": 10,
+                "unidad": "m2",
+                "precio_unitario": 8.5,
+            }
+        ]
+        em.insert_partidas_via_xml(budget_file, partidas)
+        sheet2 = _read_sheet2(budget_file)
+
+        # Primer run (título) con negrita
+        assert re.search(r'<rPr><b/><sz val="10"/><rFont val="Calibri"/></rPr>\s*<t>PINTURA PAREDES\.</t>', sheet2)
+        # Segundo run (descripción) sin negrita
+        assert re.search(
+            r'<r><rPr><sz val="10"/><rFont val="Calibri"/></rPr>\s*<t xml:space="preserve">&#10;Aplicación de pintura plástica mate en paredes\.</t></r>',
+            sheet2,
+        )
