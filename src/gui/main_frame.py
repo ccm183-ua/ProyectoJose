@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 
 from src.core import database as db_module
 from src.core.historical_context import request_historical_suggestions_for_context
+from src.core.partida_normalizer import normalize_partida_for_excel
 from src.core.services import BudgetService, DatabaseService
 from src.gui import theme
 from src.gui.historical_suggestions_dialog import (
@@ -419,16 +420,28 @@ class MainFrame(QMainWindow):
             from src.gui.historical_suggestions_dialog import HistoricalSuggestionsDialog
             from src.gui.ai_complete_historical_budget_dialog import AICompleteHistoricalBudgetDialog
             from src.gui.combined_partidas_review_dialog import CombinedPartidasReviewDialog
+            from src.gui.historical_selection_next_step_dialog import HistoricalSelectionNextStepDialog
 
             dlg = HistoricalSuggestionsDialog(self, historical_result, project_data=project_data)
             if dlg.exec() == 1:
                 selected = dlg.get_selected_partidas()
                 if selected:
-                    user_action = self._ask_historical_flow_action(len(selected))
-                    if user_action == "cancel":
+                    selected_normalized = [
+                        normalize_partida_for_excel(p, source="historical")
+                        for p in selected
+                    ]
+                    next_step = HistoricalSelectionNextStepDialog(self, selected_count=len(selected_normalized))
+                    if next_step.exec() != 1:
                         return
-                    if user_action == "historical_only":
-                        review = CombinedPartidasReviewDialog(self, historical_partidas=selected, ai_partidas=[])
+                    user_action = next_step.get_result()
+                    if user_action == HistoricalSelectionNextStepDialog.CANCEL:
+                        return
+                    if user_action == HistoricalSelectionNextStepDialog.CREATE_ONLY:
+                        review = CombinedPartidasReviewDialog(
+                            self,
+                            historical_partidas=selected_normalized,
+                            ai_partidas=[],
+                        )
                         if review.exec() != 1:
                             return
                         self._insert_final_partidas_once(
@@ -448,7 +461,15 @@ class MainFrame(QMainWindow):
                         return
                     completion_action = completion_dlg.get_action()
                     completion_result = completion_dlg.get_result()
-                    ai_partidas = completion_result.get("partidas", []) if completion_action == "ai_completion" else []
+                    ai_partidas_raw = (
+                        completion_result.get("partidas", [])
+                        if completion_action == "ai_completion"
+                        else []
+                    )
+                    ai_partidas = [
+                        normalize_partida_for_excel(p, source="ai_completion")
+                        for p in ai_partidas_raw
+                    ]
                     if completion_action == "ai_completion" and not ai_partidas:
                         QMessageBox.information(
                             self,
@@ -457,7 +478,7 @@ class MainFrame(QMainWindow):
                         )
                     review = CombinedPartidasReviewDialog(
                         self,
-                        historical_partidas=selected,
+                        historical_partidas=selected_normalized,
                         ai_partidas=ai_partidas,
                     )
                     if review.exec() != 1:
@@ -493,25 +514,6 @@ class MainFrame(QMainWindow):
             return
 
         self._offer_ai_partidas(excel_path, project_data)
-
-    def _ask_historical_flow_action(self, selected_count: int) -> str:
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Icon.Question)
-        box.setWindowTitle("Partidas históricas seleccionadas")
-        box.setText(f"Has seleccionado {selected_count} partidas históricas.")
-        box.setInformativeText("Elige cómo continuar.")
-        btn_historical = box.addButton("Crear con estas partidas", QMessageBox.ButtonRole.AcceptRole)
-        btn_complete = box.addButton("Completar con IA", QMessageBox.ButtonRole.ActionRole)
-        btn_cancel = box.addButton("Cancelar", QMessageBox.ButtonRole.RejectRole)
-        box.exec()
-        clicked = box.clickedButton()
-        if clicked == btn_historical:
-            return "historical_only"
-        if clicked == btn_complete:
-            return "complete_with_ai"
-        if clicked == btn_cancel:
-            return "cancel"
-        return "cancel"
 
     def _insert_final_partidas_once(self, excel_path: str, selected: list, project_data: dict):
         if selected:

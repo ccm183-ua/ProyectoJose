@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.core.partida_normalizer import normalize_partida_for_excel
 from src.gui import theme
 
 
@@ -60,7 +61,7 @@ class CombinedPartidasReviewDialog(QDialog):
             [
                 "Usar",
                 "Origen",
-                "Título/Concepto",
+                "Título",
                 "Descripción",
                 "Unidad",
                 "Cantidad",
@@ -110,7 +111,7 @@ class CombinedPartidasReviewDialog(QDialog):
         for i, row in enumerate(self._rows):
             partida = row["partida"]
             origin = row["origin"]
-            concepto = str(partida.get("concepto") or partida.get("titulo") or "").strip()
+            concepto = str(partida.get("titulo") or partida.get("concepto") or "").strip()
             descripcion = str(partida.get("descripcion", "")).strip()
             unidad = str(partida.get("unidad", "ud")).strip()
             cantidad = float(partida.get("cantidad", 1) or 1)
@@ -202,7 +203,8 @@ class CombinedPartidasReviewDialog(QDialog):
             partida["unidad"] = unidad
             partida["cantidad"] = cantidad
             partida["precio_unitario"] = precio
-            selected.append(partida)
+            normalized_source = "historical" if data["origin"] == "Histórica" else "ai_completion"
+            selected.append(normalize_partida_for_excel(partida, source=normalized_source))
 
         self._selected_partidas = selected
         self.accept()

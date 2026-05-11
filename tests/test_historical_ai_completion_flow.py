@@ -57,9 +57,9 @@ def test_historical_only_inserts_once(monkeypatch):
         pytest.skip("PySide6 no disponible en entorno de tests")
     from src.gui import historical_suggestions_dialog as hist_mod
     from src.gui import combined_partidas_review_dialog as review_mod
+    from src.gui import historical_selection_next_step_dialog as step_mod
 
     frame = _build_frame(monkeypatch)
-    frame._ask_historical_flow_action = lambda count: "historical_only"
 
     class HistDialog:
         def __init__(self, *args, **kwargs):
@@ -81,8 +81,23 @@ def test_historical_only_inserts_once(monkeypatch):
         def get_selected_partidas(self):
             return [{"concepto": "Hist 1", "cantidad": 1, "unidad": "ud", "precio_unitario": 10}]
 
+    class StepDialog:
+        CREATE_ONLY = "CREATE_ONLY"
+        COMPLETE_WITH_AI = "COMPLETE_WITH_AI"
+        CANCEL = "CANCEL"
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def exec(self):
+            return 1
+
+        def get_result(self):
+            return self.CREATE_ONLY
+
     monkeypatch.setattr(hist_mod, "HistoricalSuggestionsDialog", HistDialog)
     monkeypatch.setattr(review_mod, "CombinedPartidasReviewDialog", ReviewDialog)
+    monkeypatch.setattr(step_mod, "HistoricalSelectionNextStepDialog", StepDialog)
     frame._offer_partidas("budget.xlsx", {"cliente": "X"})
 
     assert len(frame._budget_svc.insert_calls) == 1
@@ -95,9 +110,9 @@ def test_historical_plus_ai_inserts_once_at_end(monkeypatch):
     from src.gui import historical_suggestions_dialog as hist_mod
     from src.gui import combined_partidas_review_dialog as review_mod
     from src.gui import ai_complete_historical_budget_dialog as complete_mod
+    from src.gui import historical_selection_next_step_dialog as step_mod
 
     frame = _build_frame(monkeypatch)
-    frame._ask_historical_flow_action = lambda count: "complete_with_ai"
 
     class HistDialog:
         def __init__(self, *args, **kwargs):
@@ -138,9 +153,24 @@ def test_historical_plus_ai_inserts_once_at_end(monkeypatch):
         def get_selected_partidas(self):
             return self._combined
 
+    class StepDialog:
+        CREATE_ONLY = "CREATE_ONLY"
+        COMPLETE_WITH_AI = "COMPLETE_WITH_AI"
+        CANCEL = "CANCEL"
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def exec(self):
+            return 1
+
+        def get_result(self):
+            return self.COMPLETE_WITH_AI
+
     monkeypatch.setattr(hist_mod, "HistoricalSuggestionsDialog", HistDialog)
     monkeypatch.setattr(complete_mod, "AICompleteHistoricalBudgetDialog", CompleteDialog)
     monkeypatch.setattr(review_mod, "CombinedPartidasReviewDialog", ReviewDialog)
+    monkeypatch.setattr(step_mod, "HistoricalSelectionNextStepDialog", StepDialog)
     frame._offer_partidas("budget.xlsx", {"cliente": "X"})
 
     assert len(frame._budget_svc.insert_calls) == 1
@@ -155,9 +185,9 @@ def test_ai_empty_keeps_historical(monkeypatch):
     from src.gui import historical_suggestions_dialog as hist_mod
     from src.gui import combined_partidas_review_dialog as review_mod
     from src.gui import ai_complete_historical_budget_dialog as complete_mod
+    from src.gui import historical_selection_next_step_dialog as step_mod
 
     frame = _build_frame(monkeypatch)
-    frame._ask_historical_flow_action = lambda count: "complete_with_ai"
 
     class HistDialog:
         def __init__(self, *args, **kwargs):
@@ -193,9 +223,24 @@ def test_ai_empty_keeps_historical(monkeypatch):
         def get_selected_partidas(self):
             return self._historical
 
+    class StepDialog:
+        CREATE_ONLY = "CREATE_ONLY"
+        COMPLETE_WITH_AI = "COMPLETE_WITH_AI"
+        CANCEL = "CANCEL"
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def exec(self):
+            return 1
+
+        def get_result(self):
+            return self.COMPLETE_WITH_AI
+
     monkeypatch.setattr(hist_mod, "HistoricalSuggestionsDialog", HistDialog)
     monkeypatch.setattr(complete_mod, "AICompleteHistoricalBudgetDialog", CompleteDialog)
     monkeypatch.setattr(review_mod, "CombinedPartidasReviewDialog", ReviewDialog)
+    monkeypatch.setattr(step_mod, "HistoricalSelectionNextStepDialog", StepDialog)
     frame._offer_partidas("budget.xlsx", {"cliente": "X"})
 
     assert len(frame._budget_svc.insert_calls) == 1
@@ -263,3 +308,20 @@ def test_combined_review_has_input_validations_in_source():
     assert "unidad vacía" in src
     assert "cantidad <= 0" in src
     assert "precio negativo" in src
+
+
+def test_next_step_dialog_has_compact_clear_buttons_in_source():
+    src = Path("src/gui/historical_selection_next_step_dialog.py").read_text(encoding="utf-8")
+    assert "Crear presupuesto" in src
+    assert "Completar con IA" in src
+    assert "Volver" in src
+    assert "CREATE_ONLY" in src
+    assert "COMPLETE_WITH_AI" in src
+    assert "CANCEL" in src
+
+
+def test_writer_uses_same_title_description_path_without_source_branching():
+    src = Path("src/core/excel_partidas_writer.py").read_text(encoding="utf-8")
+    assert "partida.get('titulo'" in src
+    assert "partida.get('descripcion'" in src
+    assert "partida.get('source'" not in src
