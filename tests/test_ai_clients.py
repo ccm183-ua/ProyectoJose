@@ -87,6 +87,18 @@ def test_deepseek_invalid_json_is_normalized_without_key():
     assert "sk-test-secret-abcdef" not in message
 
 
+def test_deepseek_transport_error_redacts_key():
+    key = "sk-test-secret-abcdef"
+
+    def fake_transport(url, headers, payload, timeout):
+        raise RuntimeError(f"fallo con {key}")
+
+    client = DeepSeekAIClient(key, transport=fake_transport)
+    with pytest.raises(RuntimeError) as exc:
+        client.generate_json(system_prompt="system", user_payload={})
+    assert key not in str(exc.value)
+
+
 def test_redact_secrets_removes_known_key_shapes():
     text = redact_secrets("fallo sk-1234567890abcdef y AIabcdefghijklmnopqrstuvwxyz")
     assert "sk-1234567890abcdef" not in text

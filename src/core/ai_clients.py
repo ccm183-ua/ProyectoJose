@@ -127,16 +127,29 @@ class GeminiAIClient(AIProviderClient):
             raise ValueError("No hay API key configurada.")
         try:
             from google import genai
+            from google.genai import types
         except ImportError as exc:
             raise ImportError("La librería 'google-genai' no está instalada. Ejecute: pip install google-genai") from exc
 
         if self._client is None:
             self._client = genai.Client(api_key=self._api_key)
 
-        response = self._client.models.generate_content(
-            model=self._configured_model,
-            contents=prompt,
+        config = types.GenerateContentConfig(
+            temperature=temperature,
+            max_output_tokens=max_tokens,
         )
+        try:
+            response = self._client.models.generate_content(
+                model=self._configured_model,
+                contents=prompt,
+                config=config,
+            )
+        except TypeError:
+            # Compatibilidad con versiones antiguas de google-genai que no aceptan config.
+            response = self._client.models.generate_content(
+                model=self._configured_model,
+                contents=prompt,
+            )
         self._last_model = self._configured_model
         return response.text if hasattr(response, "text") else str(response)
 
@@ -222,6 +235,8 @@ class DeepSeekAIClient(AIProviderClient):
             raise RuntimeError(_http_error_message(exc.code)) from exc
         except urllib.error.URLError as exc:
             raise RuntimeError(GENERIC_ERROR_MESSAGE) from exc
+        except Exception as exc:
+            raise RuntimeError(redact_secrets(str(exc)) or GENERIC_ERROR_MESSAGE) from exc
 
         choices = raw.get("choices") if isinstance(raw, dict) else None
         if not choices:

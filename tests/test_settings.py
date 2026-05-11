@@ -181,3 +181,28 @@ class TestAIProviderSettings:
         assert loaded.get_deepseek_model() == "deepseek-test"
         assert loaded.get_gemini_api_key() == "AI-test-key-not-real"
         assert loaded.get_deepseek_api_key() == "sk-test-key-not-real"
+
+    def test_env_vars_take_precedence_and_report_source(self, monkeypatch, temp_dir):
+        monkeypatch.setenv("CUBIAPP_GEMINI_KEY", "AI-env-key-not-real")
+        monkeypatch.setenv("CUBIAPP_DEEPSEEK_KEY", "sk-env-key-not-real")
+        s = Settings(config_dir=temp_dir)
+        s.save_gemini_api_key("AI-local-key-not-real")
+        s.save_deepseek_api_key("sk-local-key-not-real")
+
+        assert s.get_gemini_api_key() == "AI-env-key-not-real"
+        assert s.get_deepseek_api_key() == "sk-env-key-not-real"
+        assert s.get_local_gemini_api_key() == "AI-local-key-not-real"
+        assert s.get_local_deepseek_api_key() == "sk-local-key-not-real"
+        assert s.get_gemini_api_key_source() == "env"
+        assert s.get_deepseek_api_key_source() == "env"
+
+    def test_local_key_source_when_no_env(self, monkeypatch, temp_dir):
+        monkeypatch.delenv("CUBIAPP_GEMINI_KEY", raising=False)
+        monkeypatch.delenv("CUBIAPP_DEEPSEEK_KEY", raising=False)
+        s = Settings(config_dir=temp_dir)
+        assert s.get_gemini_api_key_source() == "missing"
+        assert s.get_deepseek_api_key_source() == "missing"
+        s.save_gemini_api_key("AI-local-key-not-real")
+        s.save_deepseek_api_key("sk-local-key-not-real")
+        assert s.get_gemini_api_key_source() == "local"
+        assert s.get_deepseek_api_key_source() == "local"

@@ -93,6 +93,17 @@ class Settings:
     def save_gemini_api_key(self, api_key: str) -> None:
         self._save_config_value("gemini_api_key", api_key.strip() if api_key else "")
 
+    def get_local_gemini_api_key(self) -> Optional[str]:
+        return self._get_config_secret("gemini_api_key")
+
+    def get_gemini_api_key_source(self) -> str:
+        env_key = os.environ.get(ENV_VAR_NAME)
+        if env_key and env_key.strip():
+            return "env"
+        if self.get_local_gemini_api_key():
+            return "local"
+        return "missing"
+
     def get_deepseek_api_key(self) -> Optional[str]:
         env_key = os.environ.get(DEEPSEEK_ENV_VAR_NAME)
         if env_key and env_key.strip():
@@ -101,6 +112,17 @@ class Settings:
 
     def save_deepseek_api_key(self, api_key: str) -> None:
         self._save_config_value("deepseek_api_key", api_key.strip() if api_key else "")
+
+    def get_local_deepseek_api_key(self) -> Optional[str]:
+        return self._get_config_secret("deepseek_api_key")
+
+    def get_deepseek_api_key_source(self) -> str:
+        env_key = os.environ.get(DEEPSEEK_ENV_VAR_NAME)
+        if env_key and env_key.strip():
+            return "env"
+        if self.get_local_deepseek_api_key():
+            return "local"
+        return "missing"
 
     def get_gemini_model(self) -> str:
         return self._get_config_text("gemini_model", DEFAULT_GEMINI_MODEL)
