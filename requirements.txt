@@ -15,5 +15,9 @@ pytest-cov==4.1.0
 # PDF Export (Windows COM automation)
 pywin32>=306; sys_platform == "win32"
 
+# Dictado por voz (opcional, pantalla generar partidas con IA)
+SpeechRecognition>=3.10.0
+PyAudio>=0.2.14
+
 # Utilidades
 setuptools==69.0.2

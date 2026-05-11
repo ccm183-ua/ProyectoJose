@@ -3,8 +3,9 @@ import pytest
 from src.core.speech_to_text_service import SpeechToTextService, SpeechToTextUnavailable
 
 
-def test_speech_to_text_stub_is_safe_when_unavailable():
-    service = SpeechToTextService()
-    assert service.is_available() is False
+def test_speech_to_text_transcribe_raises_when_unavailable():
+    svc = SpeechToTextService()
+    if svc.is_available():
+        pytest.skip("Hay microfono y dependencias STT; la prueba manual cubre dictado.")
     with pytest.raises(SpeechToTextUnavailable):
-        service.transcribe_once()
+        svc.transcribe_once()

@@ -27,7 +27,12 @@ from src.core.historical_context import (
     is_useful_historical_context,
 )
 from src.core.settings import AI_PROVIDER_DEEPSEEK, Settings
-from src.core.speech_to_text_service import SpeechToTextService, SpeechToTextUnavailable
+from src.core.speech_to_text_service import (
+    STT_INSTALL_HINT,
+    SpeechToTextService,
+    SpeechToTextUnavailable,
+    stt_import_error_message,
+)
 from src.gui import theme
 
 
@@ -116,8 +121,15 @@ class HistoricalSuggestionDescriptionDialog(QDialog):
         helper_actions = QHBoxLayout()
         self._btn_dictate = QPushButton("Dictar", self)
         self._btn_dictate.clicked.connect(self._on_dictate)
-        if not self._speech_service.is_available():
-            self._btn_dictate.setToolTip("Dictado no disponible en esta instalacion.")
+        if self._speech_service.is_available():
+            self._btn_dictate.setToolTip("Graba con el microfono y anade el texto al final de la descripcion.")
+        else:
+            self._btn_dictate.setEnabled(False)
+            detail = stt_import_error_message()
+            tip = STT_INSTALL_HINT.replace("\n", " ").strip()
+            if detail:
+                tip = f"{tip} | En este Python falta: {detail}"
+            self._btn_dictate.setToolTip(tip)
         helper_actions.addWidget(self._btn_dictate)
 
         self._btn_enhance = QPushButton("Mejorar con IA", self)
@@ -204,8 +216,10 @@ class HistoricalSuggestionDescriptionDialog(QDialog):
 
     def _on_dictate(self):
         if not self._speech_service.is_available():
-            QMessageBox.information(self, "Dictado", "Dictado no disponible en esta instalacion.")
+            QMessageBox.information(self, "Dictado no disponible", STT_INSTALL_HINT)
             return
+        self._btn_dictate.setEnabled(False)
+        self._btn_enhance.setEnabled(False)
         self._status_label.setText("Escuchando...")
         threading.Thread(target=self._run_speech_to_text, daemon=True).start()
 
@@ -220,6 +234,8 @@ class HistoricalSuggestionDescriptionDialog(QDialog):
 
     def _on_speech_done(self, text: str, error: str):
         self._status_label.setText("")
+        self._btn_dictate.setEnabled(self._speech_service.is_available())
+        self._update_enhance_button()
         if error:
             QMessageBox.information(self, "Dictado", error)
             return
