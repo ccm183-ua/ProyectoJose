@@ -35,7 +35,7 @@ from src.gui import theme
 from src.utils.budget_utils import RE_PROJECT_NUM, normalize_date
 from src.utils.helpers import run_in_background
 
-# ── Columnas del modo presupuestos ────────────────────────────────────
+# ── Columnas del modo presupuestos ─────────────────────────────────
 
 _COLUMNS = [
     ("Nº", 70),
@@ -53,7 +53,7 @@ _COLUMNS = [
     ("Calidad", 80),
 ]
 
-# ── Columnas del modo explorador ──────────────────────────────────────
+# ── Columnas del modo explorador ─────────────────────────────────
 
 _EXPLORER_COLUMNS = [
     ("Nombre", 320),
@@ -70,7 +70,7 @@ _SEARCH_KEYS = (
 # Rol de datos para almacenar la referencia al dict de datos original en los ítems
 _DATA_REF_ROLE = Qt.ItemDataRole.UserRole + 1
 
-# ── Orden personalizado de pestañas ───────────────────────────────────
+# ── Orden personalizado de pestañas ──────────────────────────────
 
 _TAB_ORDER = [
     "PTE. PRESUPUESTAR",
@@ -123,7 +123,7 @@ def _project_sort_key(numero: str) -> float:
     return -1.0
 
 
-# ── QTableWidgetItem con ordenación inteligente ───────────────────────
+# ── QTableWidgetItem con ordenación inteligente ─────────────────────
 
 class _SortableItem(QTableWidgetItem):
     """Item de tabla que permite ordenar correctamente por valor subyacente.
@@ -210,7 +210,7 @@ class BudgetDashboardFrame(QMainWindow):
         self._btn_toggle_mode.clicked.connect(self._on_toggle_mode)
         top_row.addWidget(self._btn_toggle_mode)
 
-        btn_refresh = QPushButton("\u27F3 Actualizar", header)
+        btn_refresh = QPushButton("⟳ Actualizar", header)
         btn_refresh.setFont(theme.font_base())
         btn_refresh.setFixedHeight(36)
         btn_refresh.setToolTip("Recargar presupuestos desde las carpetas")
@@ -254,8 +254,8 @@ class BudgetDashboardFrame(QMainWindow):
         tb_layout = QHBoxLayout(toolbar)
         tb_layout.setContentsMargins(theme.SPACE_LG, theme.SPACE_SM, theme.SPACE_LG, theme.SPACE_SM)
 
-        self._btn_open = self._tb_button(toolbar, "Abrir \u25BC", self._on_open_menu, primary=True)
-        self._btn_edit = self._tb_button(toolbar, "Editar \u25BC", self._on_edit_menu)
+        self._btn_open = self._tb_button(toolbar, "Abrir ▼", self._on_open_menu, primary=True)
+        self._btn_edit = self._tb_button(toolbar, "Editar ▼", self._on_edit_menu)
         self._btn_regen_fields = self._tb_button(
             toolbar, "Regenerar campos", self._on_regen_fields
         )
@@ -353,14 +353,14 @@ class BudgetDashboardFrame(QMainWindow):
         root_path = self._settings.get_default_path(Settings.PATH_OPEN_BUDGETS)
         if not root_path or not os.path.isdir(root_path):
             self._show_empty_state(
-                "La ruta de presupuestos existentes no est\u00e1 configurada.\n\n"
-                "Configura la ruta en Configuraci\u00f3n \u2192 Rutas por defecto."
+                "La ruta de presupuestos existentes no está configurada.\n\n"
+                "Configura la ruta en Configuración → Rutas por defecto."
             )
             return
 
         self._root_path = root_path
         self._subtitle.setText(root_path)
-        self._show_empty_state("Cargando presupuestos\u2026")
+        self._show_empty_state("Cargando presupuestos…")
         self._set_toolbar_enabled(False)
 
         def _scan():
@@ -622,7 +622,7 @@ class BudgetDashboardFrame(QMainWindow):
             has_warning = bool(motivo)
             nombre = proj.get("nombre_proyecto", "")
             if not has_excel or has_warning:
-                nombre = f"\u26A0 {nombre}"
+                nombre = f"⚠ {nombre}"
 
             numero = proj.get("numero", "")
             sort_key = _project_sort_key(numero)
@@ -633,7 +633,7 @@ class BudgetDashboardFrame(QMainWindow):
             table.setItem(i, 0, item_num)
 
             # Columna 1: Proyecto (sin prefijo numérico duplicado)
-            nombre_display = re.sub(r"^(\u26A0\s*)?\d+-\d+\s*", r"\1", nombre)
+            nombre_display = re.sub(r"^(⚠\s*)?\d+-\d+\s*", r"\1", nombre)
             table.setItem(i, 1, _SortableItem(nombre_display, sort_key))
             item_proyecto = table.item(i, 1)
             if item_proyecto and has_warning:
@@ -674,7 +674,7 @@ class BudgetDashboardFrame(QMainWindow):
                             .replace(".", ",")
                             .replace("X", ".")
                         )
-                        text = f"{f} \u20AC"
+                        text = f"{f} €"
                     except (ValueError, TypeError):
                         pass
                 item = _SortableItem(text, sort_val)
@@ -1134,7 +1134,7 @@ class BudgetDashboardFrame(QMainWindow):
 
         menu = QMenu(self)
         act_regen = menu.addAction("Regenerar todas las partidas (IA)")
-        act_add = menu.addAction("A\u00f1adir m\u00e1s partidas (IA)")
+        act_add = menu.addAction("Añadir más partidas (IA)")
         menu.addSeparator()
         act_pdf = menu.addAction("Exportar PDF")
         act_regen.triggered.connect(lambda: self._edit_regen_all(ruta))
@@ -1207,7 +1207,7 @@ class BudgetDashboardFrame(QMainWindow):
         if not exporter.is_available():
             QMessageBox.warning(
                 self, "Exportar PDF",
-                "Microsoft Excel no est\u00e1 disponible.\n"
+                "Microsoft Excel no está disponible.\n"
                 "Para exportar a PDF se necesita Excel instalado.",
             )
             return
@@ -1220,7 +1220,7 @@ class BudgetDashboardFrame(QMainWindow):
             if ok:
                 resp = QMessageBox.question(
                     self, "PDF exportado",
-                    f"PDF generado:\n{result}\n\n\u00bfDesea abrirlo?",
+                    f"PDF generado:\n{result}\n\n¿Desea abrirlo?",
                 )
                 if resp == QMessageBox.StandardButton.Yes:
                     self._open_file(result)
@@ -1352,11 +1352,55 @@ class BudgetDashboardFrame(QMainWindow):
                 if self._open_file(folder):
                     opened += 1
         if opened == 0:
-            QMessageBox.warning(self, "Error", "No se encontr\u00f3 ninguna carpeta válida.")
+            QMessageBox.warning(self, "Error", "No se encontró ninguna carpeta válida.")
 
     # ------------------------------------------------------------------
     # Edición
     # ------------------------------------------------------------------
+
+    def _datos_proyecto_from_budget(self, existing):
+        """Construye datos_proyecto a partir de la cabecera de un presupuesto leído."""
+        cab = (existing or {}).get("cabecera", {}) or {}
+        tipo = (cab.get("obra") or cab.get("tipo") or "").strip()
+        return {
+            "tipo": tipo,
+            "tipo_obra": tipo,
+            "cliente": (cab.get("cliente") or "").strip(),
+            "localidad": (cab.get("localidad") or "").strip(),
+            "calle": (cab.get("direccion") or "").strip(),
+        }
+
+    def _run_unified_partidas(self, datos_proyecto=None):
+        """Flujo unificado voz/texto -> orquestador -> revisión combinada.
+
+        Devuelve la lista de partidas seleccionadas (ya revisadas) o None si el
+        usuario canceló o no se generó nada. Reutiliza la misma maquinaria que
+        la creación de presupuestos.
+        """
+        from src.core.settings import Settings
+        from src.gui.voice_budget_dialog import VoiceBudgetDialog
+        from src.gui.combined_partidas_review_dialog import CombinedPartidasReviewDialog
+
+        datos = dict(datos_proyecto or {})
+        datos.setdefault("tipo_obra", datos.get("tipo", ""))
+
+        dlg = VoiceBudgetDialog(settings=Settings(), datos_proyecto=datos, parent=self)
+        if dlg.exec() != 1:
+            return None
+        result = dlg.get_result() or {}
+        partidas = result.get("partidas", []) or []
+        if not partidas:
+            return None
+
+        historicas = [p for p in partidas if p.get("fuente") == "historico"]
+        ia_estimadas = [p for p in partidas if p.get("fuente") != "historico"]
+        review = CombinedPartidasReviewDialog(
+            self, historical_partidas=historicas, ai_partidas=ia_estimadas,
+        )
+        if review.exec() != 1:
+            return None
+        selected = review.get_selected_partidas()
+        return selected or None
 
     def _edit_regen_all(self, ruta):
         confirm = QMessageBox.warning(
@@ -1368,78 +1412,42 @@ class BudgetDashboardFrame(QMainWindow):
         if confirm != QMessageBox.StandardButton.Yes:
             return
 
-        from src.gui.ai_budget_dialog import AIBudgetDialog
-        from src.gui.partidas_dialog import SuggestedPartidasDialog
         from src.core.services import BudgetService
 
-        ai_dlg = AIBudgetDialog(self)
-        if ai_dlg.exec() != 1:
-            return
-        result = ai_dlg.get_result()
-        if not result or not result.get("partidas"):
-            QMessageBox.information(self, "Aviso", "No se generaron partidas.")
-            return
-
-        partidas_dlg = SuggestedPartidasDialog(self, result)
-        if partidas_dlg.exec() != 1:
-            return
-        selected_partidas = partidas_dlg.get_selected_partidas()
+        svc = BudgetService()
+        datos = self._datos_proyecto_from_budget(svc.read_budget(ruta))
+        selected_partidas = self._run_unified_partidas(datos)
         if not selected_partidas:
             return
 
-        svc = BudgetService()
         if svc.insert_partidas(ruta, selected_partidas):
             svc.finalize_budget(ruta, estado=self._current_state() or "")
             QMessageBox.information(
-                self, "\u00c9xito", f"Partidas regeneradas ({len(selected_partidas)})."
+                self, "Éxito", f"Partidas regeneradas ({len(selected_partidas)})."
             )
             self._load_data()
         else:
             QMessageBox.critical(self, "Error", "Error al insertar partidas.")
 
     def _edit_add_partidas(self, ruta):
-        from src.gui.ai_budget_dialog import AIBudgetDialog
-        from src.gui.partidas_dialog import SuggestedPartidasDialog
         from src.core.services import BudgetService
 
         svc = BudgetService()
         existing = svc.read_budget(ruta)
-        existing_partidas = existing["partidas"] if existing else []
-
-        context = ""
-        if existing_partidas:
-            conceptos = [p["concepto"] for p in existing_partidas]
-            context = (
-                f"Ya existen {len(existing_partidas)} partidas: "
-                + ", ".join(conceptos[:10])
-                + (". " if len(conceptos) <= 10 else "... ")
-                + "Genera partidas ADICIONALES que complementen las existentes."
-            )
-
-        ai_dlg = AIBudgetDialog(self, context_extra=context)
-        if ai_dlg.exec() != 1:
-            return
-        result = ai_dlg.get_result()
-        if not result or not result.get("partidas"):
-            QMessageBox.information(self, "Aviso", "No se generaron partidas.")
-            return
-
-        partidas_dlg = SuggestedPartidasDialog(self, result)
-        if partidas_dlg.exec() != 1:
-            return
-        selected_partidas = partidas_dlg.get_selected_partidas()
+        datos = self._datos_proyecto_from_budget(existing)
+        selected_partidas = self._run_unified_partidas(datos)
         if not selected_partidas:
             return
 
         if svc.append_partidas(ruta, selected_partidas):
             svc.finalize_budget(ruta, estado=self._current_state() or "")
             QMessageBox.information(
-                self, "\u00c9xito",
-                f"{len(selected_partidas)} partidas a\u00f1adidas."
+                self, "Éxito",
+                f"{len(selected_partidas)} partidas añadidas."
             )
             self._load_data()
         else:
-            QMessageBox.critical(self, "Error", "Error al a\u00f1adir partidas.")
+            QMessageBox.critical(self, "Error", "Error al añadir partidas.")
 
     def _edit_regen_header_selected(self, selected_many: list[dict]):
         if not selected_many:
@@ -1523,7 +1531,7 @@ class BudgetDashboardFrame(QMainWindow):
                 admin_data=admin_data,
                 estado=self._current_state() or "",
             )
-            QMessageBox.information(self, "\u00c9xito", "Campos actualizados.")
+            QMessageBox.information(self, "Éxito", "Campos actualizados.")
             self._load_data()
         else:
             QMessageBox.critical(self, "Error", "Error al actualizar campos.")
