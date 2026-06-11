@@ -264,3 +264,62 @@ class PromptBuilder:
             "\nDevuelve exclusivamente las partidas complementarias en JSON válido con clave 'partidas'."
         )
         return "\n".join(lines)
+
+    def build_gap_prompt(
+        self,
+        tipo_obra: str,
+        descripcion: str,
+        gap_modules: List[str],
+        datos_proyecto: Optional[Dict] = None,
+        historical_context: Optional[Dict] = None,
+    ) -> str:
+        """
+        Construye un prompt para que la IA genere SOLO las partidas de los módulos gap.
+
+        Los módulos gap son los que no tienen cobertura histórica suficiente.
+        La IA no debe repetir los módulos ya cubiertos por el histórico.
+
+        Args:
+            tipo_obra: Tipo de obra.
+            descripcion: Descripción libre del cliente.
+            gap_modules: Módulos sin cobertura histórica.
+            datos_proyecto: Datos opcionales del proyecto.
+            historical_context: Contexto del HistoricalSuggestionService.
+
+        Returns:
+            Prompt completo listo para enviar a la IA.
+        """
+        parts: List[str] = [SYSTEM_PROMPT]
+
+        modules_str = "\n".join(f"  - {m.replace('_', ' ').title()}" for m in gap_modules)
+        parts.append(
+            "\n--- INSTRUCCIÓN ESPECÍFICA ---\n"
+            "El histórico de la empresa ya cubre otros módulos de esta obra.\n"
+            "Solo genera partidas para los siguientes módulos, que NO tienen cobertura histórica:\n"
+            f"{modules_str}\n"
+            "No incluyas partidas de ningún otro módulo aunque sean habituales.\n"
+            "--- FIN INSTRUCCIÓN ---"
+        )
+
+        parts.append(self._build_user_context(tipo_obra, descripcion, datos_proyecto))
+
+        if historical_context:
+            covered_modules = [
+                m["name"]
+                for m in (historical_context.get("detected_modules") or [])
+                if m["name"] not in gap_modules
+            ]
+            if covered_modules:
+                covered_str = "\n".join(
+                    f"  - {m.replace('_', ' ').title()}" for m in covered_modules
+                )
+                parts.append(
+                    "\n--- MÓDULOS YA CUBIERTOS POR HISTÓRICO (NO REPETIR) ---\n"
+                    f"{covered_str}\n"
+                    "--- FIN ---"
+                )
+
+        parts.append(
+            "\nGenera solo las partidas de los módulos indicados en formato JSON con clave 'partidas'."
+        )
+        return "\n".join(parts)

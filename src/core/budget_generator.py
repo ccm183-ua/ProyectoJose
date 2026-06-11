@@ -221,3 +221,47 @@ class BudgetGenerator:
             "source": "ai_completion",
             "mode": "complete_historical_selection",
         }
+
+    def generate_for_gap_modules(
+        self,
+        tipo_obra: str,
+        descripcion: str,
+        gap_modules: List[str],
+        datos_proyecto: Optional[Dict] = None,
+        historical_context: Optional[Dict] = None,
+        plantilla: Optional[Dict] = None,
+    ) -> Dict:
+        """
+        Genera partidas exclusivamente para los módulos sin cobertura histórica.
+
+        Llamado por BudgetOrchestrator cuando el histórico cubre parte de la obra
+        pero quedan módulos sin partidas de confianza suficiente.
+
+        Args:
+            tipo_obra: Tipo de obra del proyecto.
+            descripcion: Descripción libre del cliente.
+            gap_modules: Lista de módulos sin cobertura histórica.
+            datos_proyecto: Datos opcionales del proyecto.
+            historical_context: Resultado del HistoricalSuggestionService para contexto.
+            plantilla: Plantilla opcional de referencia.
+
+        Returns:
+            {'partidas': [...], 'error': str|None, 'source': str}
+        """
+        if not self._is_ai_available():
+            return {"partidas": [], "error": "No hay API key configurada.", "source": "error"}
+
+        if not gap_modules:
+            return {"partidas": [], "error": None, "source": "ia"}
+
+        prompt = self._prompt_builder.build_gap_prompt(
+            tipo_obra=tipo_obra,
+            descripcion=descripcion,
+            gap_modules=gap_modules,
+            datos_proyecto=datos_proyecto,
+            historical_context=historical_context,
+        )
+        partidas, error = self._generate_partidas_with_active_provider(prompt)
+        if partidas and not error:
+            return {"partidas": partidas, "error": None, "source": "ia"}
+        return self._fallback(plantilla, error)
