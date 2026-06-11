@@ -16,8 +16,16 @@ class HistoricalSuggestionService:
     MIN_FREQUENCY = 2
     MIN_CONFIDENCE = 0.2
 
-    def __init__(self, classifier: Optional[HistoricalPartidaClassifier] = None):
+    def __init__(
+        self,
+        classifier: Optional[HistoricalPartidaClassifier] = None,
+        enable_ai_fallback: bool = False,
+        settings=None,
+    ):
         self.classifier = classifier or HistoricalPartidaClassifier()
+        self._enable_ai_fallback = enable_ai_fallback
+        self._settings = settings
+        self._ai_classifier = None
 
     def suggest_for_project(self, project_data: Dict, user_description: str = "") -> Dict:
         self._ensure_historical_schema()
@@ -138,6 +146,14 @@ class HistoricalSuggestionService:
                         "source": "signals_fallback",
                     }
 
+        # Red de seguridad IA (opt-in): si ni reglas ni señales detectaron módulos,
+        # pedir a la IA que clasifique la descripción condensada del experto.
+        if not by_name and self._enable_ai_fallback:
+            for row in self._ai_detect_modules(text):
+                module_name = row["module"]
+                if module_name not in by_name:
+                    by_name[module_name] = row
+
         results = []
         for row in by_name.values():
             module_name = row["module"]
@@ -152,6 +168,19 @@ class HistoricalSuggestionService:
             )
         results.sort(key=lambda item: item["confidence"], reverse=True)
         return results
+
+    def _ai_detect_modules(self, text: str) -> List[Dict]:
+        """Clasificación de módulos por IA, perezosa y tolerante a fallos."""
+        try:
+            if self._ai_classifier is None:
+                from src.core.ai_module_classifier import AIModuleClassifier
+
+                self._ai_classifier = AIModuleClassifier(settings=self._settings)
+            if not self._ai_classifier.is_available():
+                return []
+            return self._ai_classifier.classify_text(text)
+        except Exception:
+            return []
 
     @staticmethod
     def _is_too_generic(module_names: List[str]) -> bool:
@@ -251,4 +280,3 @@ class HistoricalSuggestionService:
         """Garantiza que una base existente antigua tenga las tablas históricas."""
         conn = database.connect(read_only=False)
         conn.close()
-

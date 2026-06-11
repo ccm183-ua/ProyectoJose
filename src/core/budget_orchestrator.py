@@ -43,7 +43,10 @@ class BudgetOrchestrator:
 
     def __init__(self, settings: Optional[Settings] = None):
         self._settings = settings or Settings()
-        self._suggestion_service = HistoricalSuggestionService()
+        self._suggestion_service = HistoricalSuggestionService(
+            enable_ai_fallback=True,
+            settings=self._settings,
+        )
         self._generator = BudgetGenerator(settings=self._settings)
 
     def generate(

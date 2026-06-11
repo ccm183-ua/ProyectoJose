@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 
 from src.core.historical_budget_analyzer import HistoricalBudgetAnalyzer
 from src.core.historical_analysis_status import AnalysisStatus
+from src.core.settings import Settings
 from src.gui.historical_analysis_results_dialog import HistoricalAnalysisResultsDialog
 from src.gui import theme
 from src.utils.helpers import run_in_background
@@ -30,7 +31,12 @@ class HistoricalAnalysisDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Analizar presupuestos terminados")
         self._analyzer = HistoricalBudgetAnalyzer()
+        self._settings = Settings()
         self._build_ui()
+        # Precargar la última carpeta analizada para no tener que volver a buscarla.
+        last_folder = self._settings.get_default_path(Settings.PATH_HISTORICAL_FOLDER)
+        if last_folder:
+            self._folder_input.setText(last_folder)
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
@@ -119,6 +125,9 @@ class HistoricalAnalysisDialog(QDialog):
         if not folder:
             QMessageBox.information(self, "Carpeta requerida", "Selecciona una carpeta para analizar.")
             return
+
+        # Recordar la carpeta para el auto-análisis en el arranque.
+        self._settings.set_default_path(Settings.PATH_HISTORICAL_FOLDER, folder)
 
         self._run_btn.setEnabled(False)
         self._status_label.setText("Analizando...")

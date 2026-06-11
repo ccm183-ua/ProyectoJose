@@ -39,6 +39,40 @@ class MainFrame(QMainWindow):
         self._historical_memory_dashboard = None
         self._build_ui()
         self._center()
+        self._schedule_startup_historical_refresh()
+
+    def _schedule_startup_historical_refresh(self):
+        """Mantiene la memoria histórica al día al arrancar, en segundo plano.
+
+        - Si hay una carpeta de análisis recordada, hace un escaneo incremental
+          (los Excel sin cambios se omiten por mtime, así que es barato) que
+          además reconstruye los patrones de sugerencia.
+        - Si no hay carpeta configurada, al menos reconstruye los patrones a
+          partir de lo ya ingerido (cubre el caso de datos cacheados sin
+          patrones). Es silencioso y nunca interrumpe el arranque.
+        """
+        import logging
+        import os as _os
+
+        from src.core.settings import Settings
+        from src.utils.helpers import run_in_background
+
+        folder = Settings().get_default_path(Settings.PATH_HISTORICAL_FOLDER)
+
+        def _work():
+            if folder and _os.path.isdir(folder):
+                from src.core.historical_budget_analyzer import HistoricalBudgetAnalyzer
+                return HistoricalBudgetAnalyzer().analyze_folder(folder, recursive=True)
+            from src.core.historical_pattern_builder import HistoricalPatternBuilder
+            return HistoricalPatternBuilder().rebuild_patterns()
+
+        def _done(ok, payload):
+            if not ok:
+                logging.getLogger(__name__).debug(
+                    "Refresco histórico de arranque falló: %s", payload
+                )
+
+        run_in_background(_work, _done)
 
     def _center(self):
         screen = self.screen()
@@ -293,9 +327,9 @@ class MainFrame(QMainWindow):
             QMessageBox.critical(self, "Error", result.error)
             return
 
-        # Flujo completo: contexto memoria → sugerencias históricas → revisión combinada / IA complementaria
-        # (no solo el diálogo «Generar Partidas con IA» aislado).
-        self._offer_partidas(result.excel_path, project_data)
+        # Flujo unificado: descripción libre (voz o texto) → orquestador → revisión combinada.
+        # El flujo clásico (_offer_partidas) se mantiene como fallback automático.
+        self._offer_partidas_unified(result.excel_path, project_data)
         finalized = self._budget_svc.finalize_budget(
             result.excel_path,
             project_data=project_data,
@@ -308,7 +342,41 @@ class MainFrame(QMainWindow):
                 "Aviso",
                 "El presupuesto se creó, pero no se pudo guardar su detalle completo en la base de datos.",
             )
+        else:
+            # Bucle de retroalimentación: el presupuesto recién creado se incorpora
+            # al corpus histórico y se reconstruyen los patrones. Así las partidas
+            # confirmadas refuerzan su frecuencia para futuras sugerencias.
+            self._schedule_historical_feedback(result.excel_path)
         self._open_dashboard(refresh=True)
+
+    def _schedule_historical_feedback(self, excel_path):
+        """Ingiere en segundo plano un presupuesto finalizado en la memoria histórica.
+
+        Reutiliza el analizador existente (con salto por mtime y reconstrucción
+        de patrones incluida). Es silencioso: cualquier error se registra y se
+        ignora para no interrumpir el flujo del usuario.
+        """
+        import logging
+        import os as _os
+
+        from src.utils.helpers import run_in_background
+
+        if not excel_path or not _os.path.exists(excel_path):
+            return
+
+        def _work():
+            from src.core.historical_budget_analyzer import HistoricalBudgetAnalyzer
+            return HistoricalBudgetAnalyzer().analyze_files(
+                [excel_path], source_folder=_os.path.dirname(excel_path),
+            )
+
+        def _done(ok, payload):
+            if not ok:
+                logging.getLogger(__name__).debug(
+                    "Retroalimentación histórica falló para %s: %s", excel_path, payload
+                )
+
+        run_in_background(_work, _done)
 
     def _obtain_project_data(self):
         from src.gui.dialogs import obtain_project_data
@@ -413,6 +481,65 @@ class MainFrame(QMainWindow):
                 self, "Éxito",
                 f"Presupuesto creado (sin partidas):\n{excel_path}",
             )
+
+    def _offer_partidas_unified(self, excel_path, project_data):
+        """Punto de entrada único de creación de partidas con IA.
+
+        El cliente describe la obra en lenguaje natural (voz o texto). El
+        BudgetOrchestrator decide internamente qué viene del histórico
+        (precio real) y qué genera la IA, sin que el usuario elija camino.
+
+        Reutiliza toda la maquinaria existente de revisión e inserción.
+        Si el orquestador no devuelve nada, cae al flujo clásico como fallback.
+        """
+        from src.core.settings import Settings
+        from src.gui.voice_budget_dialog import VoiceBudgetDialog
+        from src.gui.combined_partidas_review_dialog import CombinedPartidasReviewDialog
+
+        # El orquestador espera 'tipo_obra'; la app lo guarda como 'tipo'.
+        datos = dict(project_data or {})
+        datos.setdefault("tipo_obra", (project_data or {}).get("tipo", ""))
+
+        dlg = VoiceBudgetDialog(
+            settings=Settings(),
+            datos_proyecto=datos,
+            parent=self,
+        )
+        if dlg.exec() != 1:
+            # El usuario cerró el diálogo unificado: presupuesto sin partidas IA.
+            QMessageBox.information(
+                self, "Éxito",
+                f"Presupuesto creado (sin partidas IA):\n{excel_path}",
+            )
+            return
+
+        result = dlg.get_result() or {}
+        partidas = result.get("partidas", []) or []
+
+        if not partidas:
+            # El orquestador no pudo generar nada: probar el flujo clásico.
+            self._offer_partidas(excel_path, project_data)
+            return
+
+        # Separar por fuente para que el diálogo de revisión etiquete bien el origen.
+        historicas = [p for p in partidas if p.get("fuente") == "historico"]
+        ia_estimadas = [p for p in partidas if p.get("fuente") != "historico"]
+
+        review = CombinedPartidasReviewDialog(
+            self,
+            historical_partidas=historicas,
+            ai_partidas=ia_estimadas,
+        )
+        if review.exec() != 1:
+            QMessageBox.information(
+                self, "Éxito",
+                f"Presupuesto creado (sin partidas):\n{excel_path}",
+            )
+            return
+
+        self._insert_final_partidas_once(
+            excel_path, review.get_selected_partidas(), project_data,
+        )
 
     def _offer_partidas(self, excel_path, project_data):
         confirmed_context = self._request_historical_context(project_data)

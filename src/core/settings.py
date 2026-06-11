@@ -32,8 +32,15 @@ class Settings:
     PATH_OPEN_BUDGETS = "ruta_abrir_presupuestos"
     PATH_RELATION_FILE = "ruta_relacion_presupuestos"
     PATH_DATABASE = "ruta_base_datos"
+    PATH_HISTORICAL_FOLDER = "ruta_analisis_historico"
 
-    _ALL_PATH_KEYS = (PATH_SAVE_BUDGETS, PATH_OPEN_BUDGETS, PATH_RELATION_FILE, PATH_DATABASE)
+    _ALL_PATH_KEYS = (
+        PATH_SAVE_BUDGETS,
+        PATH_OPEN_BUDGETS,
+        PATH_RELATION_FILE,
+        PATH_DATABASE,
+        PATH_HISTORICAL_FOLDER,
+    )
 
     def get_database_path(self) -> Optional[str]:
         return self.get_default_path(self.PATH_DATABASE)
