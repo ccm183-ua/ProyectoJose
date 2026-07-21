@@ -287,6 +287,7 @@ def init_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(_HISTORICAL_SCHEMA_SQL)
     conn.executescript(_CANONICAL_SCHEMA_SQL)
     conn.executescript(_AUDIT_SCHEMA_SQL)
+    conn.executescript(_PRICE_REFERENCE_SCHEMA_SQL)
     conn.commit()
 
     global _MIGRATION_IN_PROGRESS
@@ -774,6 +775,30 @@ CREATE TABLE IF NOT EXISTS audit_log (
 );
 CREATE INDEX IF NOT EXISTS idx_audit_log_event   ON audit_log(event_type);
 CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at);
+"""
+
+# H5: catalogo de precios de referencia (aditiva, sin subir CURRENT_SCHEMA_VERSION).
+_PRICE_REFERENCE_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS price_reference (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    uuid                  TEXT NOT NULL UNIQUE,
+    concepto              TEXT NOT NULL,
+    unidad                TEXT NOT NULL,
+    importe               REAL NOT NULL,
+    moneda                TEXT NOT NULL DEFAULT 'EUR',
+    impuestos_incluidos   INTEGER NOT NULL DEFAULT 0 CHECK (impuestos_incluidos IN (0,1)),
+    zona                  TEXT,
+    origen                TEXT NOT NULL CHECK (origen IN ('historical','manual')),
+    evidence_id           INTEGER REFERENCES evidence(id) ON DELETE SET NULL,
+    estado                TEXT NOT NULL DEFAULT 'proposed'
+                              CHECK (estado IN ('proposed','approved','rejected','expired')),
+    fecha                 TEXT NOT NULL,
+    vigente_hasta         TEXT NOT NULL,
+    created_at            TEXT NOT NULL,
+    updated_at            TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_price_reference_concepto ON price_reference(concepto, unidad);
+CREATE INDEX IF NOT EXISTS idx_price_reference_estado   ON price_reference(estado);
 """
 
 

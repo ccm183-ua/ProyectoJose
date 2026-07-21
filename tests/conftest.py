@@ -24,6 +24,15 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 # temporal de la sesión evita contaminar datos reales del usuario.
 os.environ.setdefault("CUBIAPP_BACKUP_DIR", tempfile.mkdtemp(prefix="cubiapp_test_backups_"))
 
+# Red de seguridad: si un test abre una conexión sin fijar su propio
+# CUBIAPP_DB_PATH (monkeypatch.setenv por test sigue teniendo prioridad),
+# que caiga en un fichero temporal de sesión en vez del datos.db real del
+# usuario (Documents/CubiApp/datos.db). Un test sin aislar esto ya migro y
+# creo tablas vacias en la BDD real de produccion durante esta sesion.
+os.environ.setdefault(
+    "CUBIAPP_DB_PATH", os.path.join(tempfile.mkdtemp(prefix="cubiapp_test_db_"), "datos.db")
+)
+
 try:
     from PySide6.QtWidgets import QApplication
 

@@ -117,6 +117,14 @@ from src.core.repositories.canonical_budget_repository import (
     list_documents,
     get_approval,
 )
+from src.core.repositories.price_reference_repository import (
+    create_price_reference,
+    get_price_reference,
+    list_price_references,
+    approve_price_reference,
+    reject_price_reference,
+    refresh_expired_price_references,
+)
 
 __all__ = [
     "FUZZY_MATCH_THRESHOLD",
@@ -214,4 +222,10 @@ __all__ = [
     "list_field_evidence",
     "list_documents",
     "get_approval",
+    "create_price_reference",
+    "get_price_reference",
+    "list_price_references",
+    "approve_price_reference",
+    "reject_price_reference",
+    "refresh_expired_price_references",
 ]
