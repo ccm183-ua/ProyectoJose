@@ -46,6 +46,7 @@ Thumbs.db
 # Proyecto específico
 *.xlsx
 !templates/budget_template.xlsx
+!templates/122-20 PLANTILLA PRESUPUESTO.xlsx
 test_outputs/
 *.db
 *.sqlite
