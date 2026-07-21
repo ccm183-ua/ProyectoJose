@@ -5,8 +5,11 @@ Maneja la API key de Gemini, rutas por defecto y otros ajustes de configuración
 Prioridad API key: variable de entorno > archivo local.
 """
 
+import hashlib
+import hmac
 import json
 import os
+import secrets
 import tempfile
 from typing import Dict, Optional
 
@@ -22,6 +25,29 @@ DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-flash"
 
 # Nombre del archivo de configuración local
 CONFIG_FILENAME = "cubiapp_config.json"
+
+# H4: identidad única autorizada para el backend privado.
+AUTHORIZED_EMAIL = os.environ.get("CUBIAPP_AUTH_EMAIL", "cayetanocanovas13@gmail.com")
+
+_PBKDF2_ALGO = "sha256"
+_PBKDF2_ITERATIONS = 600_000
+
+
+def hash_password(password: str) -> str:
+    """Deriva un hash `algo$iteraciones$salt_hex$hash_hex` (stdlib, sin dependencias)."""
+    salt = secrets.token_bytes(16)
+    derived = hashlib.pbkdf2_hmac(_PBKDF2_ALGO, password.encode("utf-8"), salt, _PBKDF2_ITERATIONS)
+    return f"{_PBKDF2_ALGO}${_PBKDF2_ITERATIONS}${salt.hex()}${derived.hex()}"
+
+
+def verify_password(password: str, stored: str) -> bool:
+    """Comprueba *password* contra un hash generado por :func:`hash_password`."""
+    try:
+        algo, iterations_str, salt_hex, hash_hex = stored.split("$")
+        derived = hashlib.pbkdf2_hmac(algo, password.encode("utf-8"), bytes.fromhex(salt_hex), int(iterations_str))
+        return hmac.compare_digest(derived.hex(), hash_hex)
+    except (ValueError, AttributeError):
+        return False
 
 
 class Settings:
@@ -142,6 +168,14 @@ class Settings:
 
     def save_deepseek_model(self, model: str) -> None:
         self._save_config_value("deepseek_model", (model or "").strip() or DEFAULT_DEEPSEEK_MODEL)
+
+    # ── Contraseña del backend privado (H4) ─────────────────────────
+
+    def get_password_hash(self) -> Optional[str]:
+        return self._get_config_secret("auth_password_hash")
+
+    def save_password_hash(self, password_hash: str) -> None:
+        self._save_config_value("auth_password_hash", password_hash)
 
     def has_active_ai_key(self) -> bool:
         if self.get_ai_provider() == AI_PROVIDER_DEEPSEEK:

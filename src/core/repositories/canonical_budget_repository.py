@@ -419,6 +419,74 @@ def link_field_evidence(budget_line_id: int, campo: str, evidence_id: int) -> Op
             return f"Error de base de datos: {e.args[0] if e.args else 'desconocido'}."
 
 
+def get_evidence(evidence_id: int) -> Optional[Dict]:
+    with database.get_connection() as conn:
+        row = conn.execute(
+            """SELECT id, uuid, tipo_fuente, referencia, fecha_consulta, modelo_herramienta,
+                      resumen, created_at
+               FROM evidence WHERE id=?""",
+            (evidence_id,),
+        ).fetchone()
+    if not row:
+        return None
+    return {
+        "id": row[0], "uuid": row[1], "tipo_fuente": row[2], "referencia": row[3],
+        "fecha_consulta": row[4], "modelo_herramienta": row[5], "resumen": row[6], "created_at": row[7],
+    }
+
+
+def list_field_evidence(budget_line_id: int) -> List[Dict]:
+    with database.get_connection() as conn:
+        rows = conn.execute(
+            """SELECT fe.id, fe.budget_line_id, fe.campo, fe.evidence_id, fe.created_at,
+                      e.tipo_fuente, e.referencia, e.fecha_consulta, e.modelo_herramienta, e.resumen
+               FROM field_evidence fe JOIN evidence e ON e.id = fe.evidence_id
+               WHERE fe.budget_line_id=? ORDER BY fe.id ASC""",
+            (budget_line_id,),
+        ).fetchall()
+    return [
+        {
+            "id": r[0], "budget_line_id": r[1], "campo": r[2], "evidence_id": r[3], "created_at": r[4],
+            "evidence": {
+                "tipo_fuente": r[5], "referencia": r[6], "fecha_consulta": r[7],
+                "modelo_herramienta": r[8], "resumen": r[9],
+            },
+        }
+        for r in rows
+    ]
+
+
+def list_documents(budget_version_id: int) -> List[Dict]:
+    with database.get_connection() as conn:
+        rows = conn.execute(
+            """SELECT id, budget_version_id, tipo, ruta, hash_sha256, tamano_bytes, created_at
+               FROM document WHERE budget_version_id=? ORDER BY created_at ASC, id ASC""",
+            (budget_version_id,),
+        ).fetchall()
+    return [
+        {
+            "id": r[0], "budget_version_id": r[1], "tipo": r[2], "ruta": r[3],
+            "hash_sha256": r[4], "tamano_bytes": r[5], "created_at": r[6],
+        }
+        for r in rows
+    ]
+
+
+def get_approval(budget_version_id: int) -> Optional[Dict]:
+    with database.get_connection() as conn:
+        row = conn.execute(
+            """SELECT id, budget_version_id, aprobado_por, aprobado_at, nota
+               FROM approval WHERE budget_version_id=?""",
+            (budget_version_id,),
+        ).fetchone()
+    if not row:
+        return None
+    return {
+        "id": row[0], "budget_version_id": row[1], "aprobado_por": row[2],
+        "aprobado_at": row[3], "nota": row[4],
+    }
+
+
 def register_document(
     budget_version_id: int,
     tipo: str,

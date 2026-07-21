@@ -112,6 +112,10 @@ from src.core.repositories.canonical_budget_repository import (
     record_evidence,
     link_field_evidence,
     register_document,
+    get_evidence,
+    list_field_evidence,
+    list_documents,
+    get_approval,
 )
 
 __all__ = [
@@ -206,4 +210,8 @@ __all__ = [
     "record_evidence",
     "link_field_evidence",
     "register_document",
+    "get_evidence",
+    "list_field_evidence",
+    "list_documents",
+    "get_approval",
 ]

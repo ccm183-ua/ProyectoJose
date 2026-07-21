@@ -13,7 +13,7 @@ import os
 import tempfile
 import pytest
 
-from src.core.settings import AI_PROVIDER_DEEPSEEK, AI_PROVIDER_GEMINI, Settings
+from src.core.settings import AI_PROVIDER_DEEPSEEK, AI_PROVIDER_GEMINI, Settings, hash_password, verify_password
 
 
 @pytest.fixture
@@ -206,3 +206,29 @@ class TestAIProviderSettings:
         s.save_deepseek_api_key("sk-local-key-not-real")
         assert s.get_gemini_api_key_source() == "local"
         assert s.get_deepseek_api_key_source() == "local"
+
+
+class TestPasswordHash:
+    """Tests para el hash de contraseña del backend privado (H4)."""
+
+    def test_verify_password_accepts_correct_password(self):
+        stored = hash_password("una-contrasena-segura")
+        assert verify_password("una-contrasena-segura", stored) is True
+
+    def test_verify_password_rejects_wrong_password(self):
+        stored = hash_password("una-contrasena-segura")
+        assert verify_password("otra-cosa", stored) is False
+
+    def test_hash_password_is_salted(self):
+        assert hash_password("misma-contrasena") != hash_password("misma-contrasena")
+
+    def test_verify_password_rejects_malformed_hash(self):
+        assert verify_password("cualquier-cosa", "no-es-un-hash-valido") is False
+
+    def test_settings_persists_password_hash(self, temp_dir):
+        s = Settings(config_dir=temp_dir)
+        assert s.get_password_hash() is None
+        s.save_password_hash(hash_password("una-contrasena-segura"))
+
+        reloaded = Settings(config_dir=temp_dir)
+        assert verify_password("una-contrasena-segura", reloaded.get_password_hash()) is True

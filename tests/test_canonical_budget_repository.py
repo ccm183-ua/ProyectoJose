@@ -9,10 +9,14 @@ from src.core.repositories.canonical_budget_repository import (
     approve_active_version,
     create_budget_with_first_version,
     get_active_version,
+    get_approval,
     get_budget,
     get_budget_by_legacy_id,
+    get_evidence,
     get_lines,
     link_field_evidence,
+    list_documents,
+    list_field_evidence,
     list_versions,
     record_evidence,
     register_document,
@@ -185,3 +189,42 @@ def test_record_evidence_rejects_unknown_tipo_fuente(db_env):
     evidence_id, err = record_evidence("no_existe")
     assert evidence_id is None
     assert "no valido" in err.lower()
+
+
+def test_traceability_read_functions(db_env):
+    budget_id, _ = create_budget_with_first_version("Obra con trazabilidad", _sample_lines())
+    version = get_active_version(budget_id)
+    lines = get_lines(version["id"])
+
+    evidence_id, _ = record_evidence("legacy_excel", referencia="C:/fake/obra.xlsx", resumen="Excel original")
+    link_field_evidence(lines[0]["id"], "precio", evidence_id)
+    register_document(version["id"], "excel_import", "C:/fake/obra.xlsx")
+    approve_active_version(budget_id, aprobado_por="cayetanocanovas13@gmail.com", nota="ok")
+
+    evidence = get_evidence(evidence_id)
+    assert evidence["tipo_fuente"] == "legacy_excel"
+    assert evidence["resumen"] == "Excel original"
+
+    field_evidence = list_field_evidence(lines[0]["id"])
+    assert len(field_evidence) == 1
+    assert field_evidence[0]["campo"] == "precio"
+    assert field_evidence[0]["evidence"]["tipo_fuente"] == "legacy_excel"
+
+    documents = list_documents(version["id"])
+    assert len(documents) == 1
+    assert documents[0]["tipo"] == "excel_import"
+
+    approval = get_approval(version["id"])
+    assert approval["aprobado_por"] == "cayetanocanovas13@gmail.com"
+    assert approval["nota"] == "ok"
+
+
+def test_traceability_read_functions_return_empty_or_none_when_absent(db_env):
+    budget_id, _ = create_budget_with_first_version("Obra sin trazabilidad", _sample_lines())
+    version = get_active_version(budget_id)
+    lines = get_lines(version["id"])
+
+    assert get_evidence(999999) is None
+    assert list_field_evidence(lines[0]["id"]) == []
+    assert list_documents(version["id"]) == []
+    assert get_approval(version["id"]) is None

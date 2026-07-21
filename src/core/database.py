@@ -286,6 +286,7 @@ def init_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(_SCHEMA_SQL)
     conn.executescript(_HISTORICAL_SCHEMA_SQL)
     conn.executescript(_CANONICAL_SCHEMA_SQL)
+    conn.executescript(_AUDIT_SCHEMA_SQL)
     conn.commit()
 
     global _MIGRATION_IN_PROGRESS
@@ -756,6 +757,23 @@ CREATE TABLE IF NOT EXISTS approval (
     aprobado_at        TEXT NOT NULL,
     nota               TEXT
 );
+"""
+
+# H4: registro de auditoria del backend privado (aditiva, sin subir CURRENT_SCHEMA_VERSION).
+_AUDIT_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS audit_log (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_type  TEXT NOT NULL CHECK (event_type IN (
+                    'login_success','login_failure','logout',
+                    'budget_created','version_created','version_approved',
+                    'export_excel','export_pdf','error')),
+    email       TEXT,
+    budget_id   INTEGER REFERENCES budget(id) ON DELETE SET NULL,
+    detail      TEXT,
+    created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_audit_log_event   ON audit_log(event_type);
+CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at);
 """
 
 
