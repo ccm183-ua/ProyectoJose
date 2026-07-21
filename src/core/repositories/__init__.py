@@ -56,6 +56,7 @@ from src.core.repositories.historial_repository import (
 )
 from src.core.repositories.presupuesto_cache_repository import (
     get_presupuesto_por_ruta,
+    get_presupuesto_por_id,
     get_presupuesto_detalle_por_ruta,
     get_presupuestos_por_estado,
     upsert_presupuesto,
@@ -99,6 +100,19 @@ from src.core.repositories.historical_repository import (
     replace_budget_issues,
     append_budget_issue,
 )
+from src.core.repositories.canonical_budget_repository import (
+    create_budget_with_first_version,
+    start_new_version,
+    approve_active_version,
+    get_budget,
+    get_budget_by_legacy_id,
+    get_active_version,
+    list_versions,
+    get_lines,
+    record_evidence,
+    link_field_evidence,
+    register_document,
+)
 
 __all__ = [
     "FUZZY_MATCH_THRESHOLD",
@@ -140,6 +154,7 @@ __all__ = [
     "eliminar_historial",
     "buscar_historial",
     "get_presupuesto_por_ruta",
+    "get_presupuesto_por_id",
     "get_presupuesto_detalle_por_ruta",
     "get_presupuestos_por_estado",
     "upsert_presupuesto",
@@ -180,4 +195,15 @@ __all__ = [
     "delete_historical_budgets_by_ids",
     "replace_budget_issues",
     "append_budget_issue",
+    "create_budget_with_first_version",
+    "start_new_version",
+    "approve_active_version",
+    "get_budget",
+    "get_budget_by_legacy_id",
+    "get_active_version",
+    "list_versions",
+    "get_lines",
+    "record_evidence",
+    "link_field_evidence",
+    "register_document",
 ]

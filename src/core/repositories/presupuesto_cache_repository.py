@@ -105,6 +105,19 @@ def get_presupuesto_por_ruta(ruta_excel: str) -> Optional[Dict]:
         return _row_to_presupuesto_cache(r)
 
 
+def get_presupuesto_por_id(presupuesto_id: int) -> Optional[Dict]:
+    """Busca un presupuesto en la cache por su id."""
+    with database.get_connection() as conn:
+        cur = conn.execute(
+            f"SELECT {_PRESUPUESTO_COLS} FROM presupuesto WHERE id = ?",
+            (presupuesto_id,),
+        )
+        r = cur.fetchone()
+        if not r:
+            return None
+        return _row_to_presupuesto_cache(r)
+
+
 def get_presupuesto_detalle_por_ruta(ruta_excel: str) -> Optional[Dict]:
     """Obtiene presupuesto + partidas por ruta_excel."""
     base = get_presupuesto_por_ruta(ruta_excel)

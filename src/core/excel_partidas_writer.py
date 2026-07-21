@@ -12,6 +12,7 @@ import tempfile
 import zipfile
 from xml.sax.saxutils import escape as xml_escape
 
+from src.core.budget_math import IVA_RATE, calcular_importe_linea, calcular_totales
 from src.core.excel_template_filler import (
     SHEET_12220,
     euros_en_letras,
@@ -28,9 +29,6 @@ from src.core.partida_normalizer import (
 )
 
 logger = logging.getLogger(__name__)
-
-# Tipo de IVA aplicable a presupuestos
-IVA_RATE = 0.10
 
 # --- Altura de fila de partida (descripción en hoja 122-20, merge C:F o solo C) ---
 DESC_DEFAULT_CHARS_PER_LINE_SINGLE_COL = 32
@@ -415,7 +413,7 @@ class PartidasWriter:
                     str(partida.get("concepto", "")), "", chars_per_line
                 )
 
-            total = round(cantidad * precio, 2)
+            total = calcular_importe_linea(cantidad, precio)
             data_row = (
                 f'<row r="{current_row}" spans="1:9" ht="{row_height}" customHeight="1">'
                 f'<c r="A{current_row}" s="31" t="inlineStr"><is><t>{num}</t></is></c>'
@@ -451,10 +449,10 @@ class PartidasWriter:
         last_data_row = current_row - 1
         subtotal_row_num = current_row
         subtotal_label = xml_escape("Total presupuesto parcial nº 1 ACTUACIONES.")
-        grand_total = sum(
-            round(float(p.get('cantidad', 1)) * float(p.get('precio_unitario', 0)), 2)
+        grand_total = round(sum(
+            calcular_importe_linea(p.get('cantidad', 1), p.get('precio_unitario', 0))
             for p in partidas
-        )
+        ), 2)
         subtotal_row = (
             f'<row r="{subtotal_row_num}" spans="1:9" customHeight="1">'
             f'<c r="A{subtotal_row_num}" s="39"/>'
@@ -502,8 +500,9 @@ class PartidasWriter:
         r47 = 47 + offset
         r49 = 49 + offset
         total_sin_iva = grand_total
-        iva_amount = round(total_sin_iva * IVA_RATE, 2)
-        total_con_iva = round(total_sin_iva + iva_amount, 2)
+        totales = calcular_totales([total_sin_iva])
+        iva_amount = totales["iva"]
+        total_con_iva = totales["total"]
 
         sheet_xml = self._update_formula_ref(
             sheet_xml, r43, 'I', f'I{subtotal_row_num}', total_sin_iva)

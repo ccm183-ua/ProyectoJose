@@ -118,3 +118,26 @@ def test_fresh_database_reaches_same_version_as_migrated_legacy_snapshot(
         fresh_version = database.get_schema_version(conn)
 
     assert fresh_version == legacy_version == database.CURRENT_SCHEMA_VERSION
+
+
+_CANONICAL_TABLES = (
+    "budget", "budget_version", "budget_line", "evidence", "field_evidence",
+    "document", "approval",
+)
+
+
+def test_canonical_schema_tables_exist_in_fresh_and_migrated_database(
+    legacy_db_env, tmp_path, monkeypatch,
+):
+    with database.get_connection() as conn:
+        legacy_cols = {t: _columns(conn, t) for t in _CANONICAL_TABLES}
+        assert database.get_schema_version(conn) == database.CURRENT_SCHEMA_VERSION
+
+    fresh_path = tmp_path / "fresh_canonical.db"
+    monkeypatch.setenv("CUBIAPP_DB_PATH", str(fresh_path))
+    with database.get_connection() as conn:
+        fresh_cols = {t: _columns(conn, t) for t in _CANONICAL_TABLES}
+
+    for table in _CANONICAL_TABLES:
+        assert legacy_cols[table], f"tabla {table} sin columnas en BDD migrada"
+        assert legacy_cols[table] == fresh_cols[table], f"columnas de {table} difieren"

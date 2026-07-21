@@ -8,6 +8,8 @@ import re
 import unicodedata
 from typing import Any, Dict, List, Tuple
 
+from src.core.budget_math import calcular_importe_linea
+
 
 def _to_float(value, default: float = 0.0) -> float:
     try:
@@ -302,7 +304,7 @@ def normalize_partida_for_excel(partida: Dict, source: str = "") -> Dict:
         else partida.get("precio_unitario"),
         0.0,
     )
-    total = round(cantidad * precio, 2)
+    total = calcular_importe_linea(cantidad, precio)
 
     if not title:
         title = (

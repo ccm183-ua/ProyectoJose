@@ -285,6 +285,7 @@ def init_schema(conn: sqlite3.Connection) -> None:
     """
     conn.executescript(_SCHEMA_SQL)
     conn.executescript(_HISTORICAL_SCHEMA_SQL)
+    conn.executescript(_CANONICAL_SCHEMA_SQL)
     conn.commit()
 
     global _MIGRATION_IN_PROGRESS
@@ -649,6 +650,111 @@ CREATE TABLE IF NOT EXISTS suggestion_template (
     num_presupuestos_base INTEGER NOT NULL DEFAULT 0,
     fecha_actualizacion TEXT,
     activo INTEGER NOT NULL DEFAULT 1
+);
+"""
+
+# Dominio canónico de presupuestos (H3). Aditivo, no toca presupuesto/
+# presupuesto_partida/historical_*. `presupuesto_legacy_id` es un enlace de
+# auditoría, nunca una dependencia de escritura: ninguna operación canónica
+# exige que la fila `presupuesto` exista.
+_CANONICAL_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS budget (
+    id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+    uuid                   TEXT NOT NULL UNIQUE,
+    nombre_proyecto        TEXT NOT NULL,
+    numero_proyecto        TEXT,
+    presupuesto_legacy_id  INTEGER REFERENCES presupuesto(id) ON DELETE SET NULL,
+    estado                 TEXT NOT NULL DEFAULT 'draft' CHECK (estado IN ('draft','approved')),
+    active_version_id      INTEGER REFERENCES budget_version(id) ON DELETE SET NULL,
+    created_at             TEXT NOT NULL,
+    updated_at             TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_budget_legacy  ON budget(presupuesto_legacy_id);
+CREATE INDEX IF NOT EXISTS idx_budget_numero  ON budget(numero_proyecto);
+CREATE INDEX IF NOT EXISTS idx_budget_estado  ON budget(estado);
+
+CREATE TABLE IF NOT EXISTS budget_version (
+    id                            INTEGER PRIMARY KEY AUTOINCREMENT,
+    budget_id                     INTEGER NOT NULL REFERENCES budget(id) ON DELETE CASCADE,
+    numero_version                INTEGER NOT NULL,
+    estado                        TEXT NOT NULL DEFAULT 'draft'
+                                      CHECK (estado IN ('draft','approved','superseded')),
+    origen                        TEXT NOT NULL DEFAULT 'import'
+                                      CHECK (origen IN ('import','manual_edit','ai_edit')),
+    subtotal                      REAL,
+    iva                           REAL,
+    iva_rate                      REAL NOT NULL DEFAULT 0.10,
+    total                         REAL,
+    superseded_by_version_id      INTEGER REFERENCES budget_version(id) ON DELETE SET NULL,
+    reconciliation_warnings_json  TEXT,
+    created_at                    TEXT NOT NULL,
+    approved_at                   TEXT,
+    superseded_at                 TEXT,
+    UNIQUE (budget_id, numero_version)
+);
+CREATE INDEX IF NOT EXISTS idx_budget_version_budget ON budget_version(budget_id, numero_version);
+CREATE INDEX IF NOT EXISTS idx_budget_version_estado ON budget_version(estado);
+
+CREATE TABLE IF NOT EXISTS budget_line (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    budget_version_id  INTEGER NOT NULL REFERENCES budget_version(id) ON DELETE CASCADE,
+    line_uid           TEXT NOT NULL,
+    orden              INTEGER NOT NULL,
+    numero             TEXT,
+    concepto           TEXT NOT NULL,
+    unidad             TEXT,
+    cantidad           REAL NOT NULL,
+    precio             REAL NOT NULL,
+    importe            REAL NOT NULL,
+    source             TEXT NOT NULL DEFAULT 'unknown',
+    created_at         TEXT NOT NULL,
+    UNIQUE (budget_version_id, orden)
+);
+CREATE INDEX IF NOT EXISTS idx_budget_line_version ON budget_line(budget_version_id, orden);
+CREATE INDEX IF NOT EXISTS idx_budget_line_uid     ON budget_line(line_uid);
+
+CREATE TABLE IF NOT EXISTS evidence (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    uuid                TEXT NOT NULL UNIQUE,
+    tipo_fuente         TEXT NOT NULL
+                            CHECK (tipo_fuente IN
+                                ('historical','catalog','ai_estimate','web','manual','legacy_excel')),
+    referencia          TEXT,
+    fecha_consulta      TEXT NOT NULL,
+    modelo_herramienta  TEXT,
+    resumen             TEXT,
+    created_at          TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_evidence_tipo ON evidence(tipo_fuente);
+
+CREATE TABLE IF NOT EXISTS field_evidence (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    budget_line_id  INTEGER NOT NULL REFERENCES budget_line(id) ON DELETE CASCADE,
+    campo           TEXT NOT NULL CHECK (campo IN ('precio','cantidad','concepto')),
+    evidence_id     INTEGER NOT NULL REFERENCES evidence(id) ON DELETE RESTRICT,
+    created_at      TEXT NOT NULL,
+    UNIQUE (budget_line_id, campo, evidence_id)
+);
+CREATE INDEX IF NOT EXISTS idx_field_evidence_line     ON field_evidence(budget_line_id);
+CREATE INDEX IF NOT EXISTS idx_field_evidence_evidence ON field_evidence(evidence_id);
+
+CREATE TABLE IF NOT EXISTS document (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    budget_version_id  INTEGER NOT NULL REFERENCES budget_version(id) ON DELETE CASCADE,
+    tipo               TEXT NOT NULL CHECK (tipo IN ('excel_import','excel_export','pdf_export')),
+    ruta               TEXT NOT NULL,
+    hash_sha256        TEXT,
+    tamano_bytes       INTEGER,
+    created_at         TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_document_version ON document(budget_version_id, tipo);
+
+CREATE TABLE IF NOT EXISTS approval (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    budget_version_id  INTEGER NOT NULL UNIQUE REFERENCES budget_version(id) ON DELETE CASCADE,
+    aprobado_por       TEXT NOT NULL,
+    aprobado_at        TEXT NOT NULL,
+    nota               TEXT
 );
 """
 

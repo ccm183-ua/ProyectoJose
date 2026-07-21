@@ -20,6 +20,7 @@ import re
 import zipfile
 from typing import Dict, List, Optional
 
+from src.core.budget_math import calcular_totales
 from src.core.xlsx_cell_utils import (
     extract_rows,
     get_cell_number,
@@ -36,9 +37,6 @@ _SHEET_PATH_RE = re.compile(r"^xl/worksheets/sheet(\d+)\.xml$")
 
 # Primera fila (1-indexed) que puede contener partidas en la plantilla 122-20
 PARTIDA_START_ROW = 17
-
-# Tipo de IVA por defecto para el cálculo de totales
-IVA_RATE = 0.10
 
 HEADER_CELLS = {
     "E5": "numero",
@@ -447,10 +445,7 @@ class BudgetReader:
     @staticmethod
     def _calculate_totals(partidas: List[Dict]) -> Dict:
         """Calcula subtotal, IVA y total a partir de las partidas (fallback)."""
-        subtotal = sum((p["importe"] for p in partidas), 0.0)
-        iva = round(subtotal * IVA_RATE, 2)
-        total = round(subtotal + iva, 2)
-        return {"subtotal": round(subtotal, 2), "iva": iva, "total": total}
+        return calcular_totales((p["importe"] for p in partidas))
 
     # ------------------------------------------------------------------
     # Lectura de total desde texto "Asciende..."
