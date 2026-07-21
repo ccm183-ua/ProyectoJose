@@ -267,6 +267,8 @@ class BudgetService:
             logger.error("No se pudo finalizar presupuesto %s: %s", file_path, err)
             return False
 
+        self._mirror_to_canonical_domain(payload, partidas, _id)
+
         db_repository.registrar_presupuesto({
             "nombre_proyecto": nombre_proyecto,
             "ruta_excel": file_path,
@@ -278,6 +280,27 @@ class BudgetService:
             "total_presupuesto": total,
         })
         return True
+
+    def _mirror_to_canonical_domain(self, payload: Dict, partidas: List[Dict], legacy_id: int) -> None:
+        """Importa el presupuesto recien finalizado al dominio canonico (H3)
+        en segundo plano. Nunca debe afectar al resultado de finalize_budget:
+        se registra cualquier fallo y se continua, nunca se propaga."""
+        try:
+            from src.core.canonical_budget_importer import import_from_cache_snapshot
+
+            result = import_from_cache_snapshot(
+                {**payload, "id": legacy_id, "es_finalizado": True}, partidas,
+            )
+            if not result.success:
+                logger.warning(
+                    "No se pudo reflejar en el dominio canonico presupuesto id=%s: %s",
+                    legacy_id, result.error,
+                )
+        except Exception:
+            logger.exception(
+                "Error inesperado reflejando en el dominio canonico presupuesto id=%s",
+                legacy_id,
+            )
 
     def read_budget(self, file_path: str, expected_numero: str = "") -> Optional[Dict]:
         """Lee los datos de un presupuesto."""
