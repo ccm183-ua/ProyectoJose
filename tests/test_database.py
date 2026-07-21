@@ -164,6 +164,57 @@ class TestInitSchema:
         assert len(cur.fetchall()) >= 5
 
 
+class TestExecutionModuleCatalog:
+    """Siembra del catálogo único de módulos de ejecución (H0.3)."""
+
+    def test_bdd_nueva_siembra_los_12_modulos_con_descripcion(self, conn):
+        from src.core.historical_partida_classifier import MODULE_RULES
+
+        rows = conn.execute("SELECT nombre, descripcion FROM execution_module").fetchall()
+        nombres = {row[0] for row in rows}
+        assert nombres == set(MODULE_RULES.keys())
+        assert all((row[1] or "").strip() for row in rows)
+
+    def test_bdd_inicializada_dos_veces_no_duplica_ni_reactiva_personalizacion(self, conn):
+        conn.execute(
+            "UPDATE execution_module SET activo=0, descripcion='Personalizado' WHERE nombre='fachada'"
+        )
+        conn.commit()
+
+        database.init_schema(conn)
+        database.init_schema(conn)
+
+        rows = conn.execute("SELECT activo, descripcion FROM execution_module WHERE nombre='fachada'").fetchall()
+        assert len(rows) == 1
+        assert rows[0][0] == 0
+        assert rows[0][1] == "Personalizado"
+
+    def test_bdd_antigua_sin_columna_descripcion_se_migra_y_se_siembra(self, db_env):
+        legacy_conn = sqlite3.connect(db_env)
+        legacy_conn.execute(
+            """CREATE TABLE execution_module (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nombre TEXT NOT NULL UNIQUE,
+                categoria TEXT,
+                activo INTEGER NOT NULL DEFAULT 1
+            )"""
+        )
+        legacy_conn.execute("INSERT INTO execution_module (nombre) VALUES ('albanileria')")
+        legacy_conn.commit()
+        legacy_conn.close()
+
+        conn = database.connect()
+        try:
+            columns = [row[1] for row in conn.execute("PRAGMA table_info(execution_module)").fetchall()]
+            assert "descripcion" in columns
+            row = conn.execute(
+                "SELECT descripcion FROM execution_module WHERE nombre='albanileria'"
+            ).fetchone()
+            assert (row[0] or "").strip()
+        finally:
+            conn.close()
+
+
 # ---------------------------------------------------------------------------
 # Restricciones NOT NULL
 # ---------------------------------------------------------------------------

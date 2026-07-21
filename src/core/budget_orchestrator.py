@@ -8,10 +8,10 @@ Pipeline completo — un único punto de entrada para el cliente:
        ↓
   2. Análisis de cobertura — módulos cubiertos vs. módulos gap
        ↓
-  3a. Partidas históricas con confianza suficiente → output directo (fuente='historico')
-  3b. Módulos sin cobertura → BudgetGenerator con IA (fuente='ia_estimado')
+  3a. Partidas históricas con confianza suficiente → output directo (source='historical')
+  3b. Módulos sin cobertura → BudgetGenerator con IA (source='ai_completion')
        ↓
-  4. Merge final con etiquetas de fuente por partida
+  4. Merge final con etiquetas de source por partida
 """
 
 import logging
@@ -36,9 +36,10 @@ class BudgetOrchestrator:
     decide internamente qué partidas vienen del histórico y cuáles genera la IA,
     sin que el usuario elija entre caminos.
 
-    Resultado siempre tiene campo 'fuente' por partida:
-      - 'historico'   → precio y concepto reales de obras anteriores
-      - 'ia_estimado' → generado por IA, requiere revisión rápida
+    Resultado siempre tiene campo 'source' por partida (mismo vocabulario que
+    normalize_partida_for_excel y el resto de servicios de IA):
+      - 'historical'    → precio y concepto reales de obras anteriores
+      - 'ai_completion' → generado por IA, requiere revisión rápida
     """
 
     def __init__(self, settings: Optional[Settings] = None):
@@ -65,7 +66,7 @@ class BudgetOrchestrator:
 
         Returns:
             {
-                'partidas': List[Dict],   # Cada partida tiene campo 'fuente'
+                'partidas': List[Dict],   # Cada partida tiene campo 'source'
                 'source': str,            # 'orquestado'|'historico'|'ia'|'error'
                 'error': str | None,
                 'cobertura': {
@@ -78,6 +79,30 @@ class BudgetOrchestrator:
                 }
             }
         """
+        try:
+            return self._generate(descripcion_libre, datos_proyecto, plantilla)
+        except Exception as exc:
+            logger.exception("Fallo inesperado generando presupuesto")
+            return {
+                "partidas": [],
+                "source": "error",
+                "error": f"Error inesperado al generar el presupuesto: {exc}",
+                "cobertura": {
+                    "modulos_historico": [],
+                    "modulos_ia": [],
+                    "partidas_historicas": 0,
+                    "partidas_ia": 0,
+                    "historical_confidence": 0.0,
+                    "failure_reason": "UNEXPECTED_ERROR",
+                },
+            }
+
+    def _generate(
+        self,
+        descripcion_libre: str,
+        datos_proyecto: Optional[Dict],
+        plantilla: Optional[Dict],
+    ) -> Dict:
         datos_proyecto = datos_proyecto or {}
 
         project_data_for_history = {
@@ -114,7 +139,7 @@ class BudgetOrchestrator:
             partidas_ia = ia_result.get("partidas", [])
             error_ia = ia_result.get("error")
             for p in partidas_ia:
-                p["fuente"] = "ia_estimado"
+                p["source"] = "ai_completion"
 
         # Paso 3b — sin histórico ni módulos detectados: IA completa como fallback
         elif not partidas_historicas:
@@ -136,7 +161,7 @@ class BudgetOrchestrator:
             partidas_ia = ia_result.get("partidas", [])
             error_ia = ia_result.get("error")
             for p in partidas_ia:
-                p["fuente"] = "ia_estimado"
+                p["source"] = "ai_completion"
 
         # Paso 4 — merge
         todas_partidas = partidas_historicas + partidas_ia
@@ -192,7 +217,7 @@ class BudgetOrchestrator:
                 and frecuencia >= HISTORICAL_FREQUENCY_THRESHOLD
             ):
                 partida = dict(p)
-                partida["fuente"] = "historico"
+                partida["source"] = "historical"
                 partidas_ok.append(partida)
                 modulo = p.get("module", "")
                 if modulo:

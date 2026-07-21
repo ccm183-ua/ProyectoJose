@@ -495,6 +495,7 @@ class MainFrame(QMainWindow):
         from src.core.settings import Settings
         from src.gui.voice_budget_dialog import VoiceBudgetDialog
         from src.gui.combined_partidas_review_dialog import CombinedPartidasReviewDialog
+        from src.core.services.budget_partidas_flow import MODE_CREATE, split_generated_partidas_for_review
 
         # El orquestador espera 'tipo_obra'; la app lo guarda como 'tipo'.
         datos = dict(project_data or {})
@@ -521,14 +522,13 @@ class MainFrame(QMainWindow):
             self._offer_partidas(excel_path, project_data)
             return
 
-        # Separar por fuente para que el diálogo de revisión etiquete bien el origen.
-        historicas = [p for p in partidas if p.get("fuente") == "historico"]
-        ia_estimadas = [p for p in partidas if p.get("fuente") != "historico"]
+        historicas, ia_estimadas = split_generated_partidas_for_review(partidas, MODE_CREATE)
 
         review = CombinedPartidasReviewDialog(
             self,
             historical_partidas=historicas,
             ai_partidas=ia_estimadas,
+            cobertura=result.get("cobertura"),
         )
         if review.exec() != 1:
             QMessageBox.information(
@@ -676,8 +676,10 @@ class MainFrame(QMainWindow):
         self._offer_ai_partidas(excel_path, project_data)
 
     def _insert_final_partidas_once(self, excel_path: str, selected: list, project_data: dict):
+        from src.core.services.budget_partidas_flow import MODE_CREATE, apply_reviewed_partidas
+
         if selected:
-            if self._budget_svc.insert_partidas(excel_path, selected, project_data):
+            if apply_reviewed_partidas(self._budget_svc, excel_path, selected, MODE_CREATE, project_data):
                 QMessageBox.information(
                     self,
                     "Éxito",

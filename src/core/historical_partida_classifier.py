@@ -120,6 +120,12 @@ MODULE_RULES = {
 }
 
 
+MODULE_DESCRIPTIONS = {
+    module_name: f"{module_name.replace('_', ' ').capitalize()}: {', '.join(keywords[:5])}."
+    for module_name, keywords in MODULE_RULES.items()
+}
+
+
 class HistoricalPartidaClassifier:
     """Clasificador por reglas basado en palabras clave normalizadas."""
 

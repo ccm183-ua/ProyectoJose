@@ -12,8 +12,8 @@ Flujo:
   BudgetOrchestrator.generate()
   [histórico + IA para huecos, automático]
        ↓
-  Resultado con etiqueta 'fuente' por partida
-  ('historico' → precio real | 'ia_estimado' → revisar rápido)
+  Resultado con etiqueta 'source' por partida
+  ('historical' → precio real | 'ai_completion' → revisar rápido)
 """
 
 import threading
@@ -60,6 +60,7 @@ class VoiceBudgetDialog(QDialog):
         self._orchestrator = BudgetOrchestrator(settings=self._settings)
         self._stt = SpeechToTextService()
         self._result: Optional[Dict] = None
+        self._closed = False
 
         self.setWindowTitle("Crear presupuesto")
         self.setMinimumWidth(520)
@@ -113,13 +114,6 @@ class VoiceBudgetDialog(QDialog):
         row_voice.addWidget(self._lbl_status, stretch=1)
         layout.addLayout(row_voice)
 
-        # Info de cobertura (se muestra tras generar)
-        self._lbl_cobertura = QLabel("")
-        self._lbl_cobertura.setWordWrap(True)
-        self._lbl_cobertura.setStyleSheet("font-size: 11px; color: #555;")
-        self._lbl_cobertura.hide()
-        layout.addWidget(self._lbl_cobertura)
-
         layout.addStretch()
 
         # Botones aceptar / cancelar
@@ -156,6 +150,8 @@ class VoiceBudgetDialog(QDialog):
             self._dictation_done.emit(f"__error__:{exc}")
 
     def _on_dictation_result(self, text: str):
+        if self._closed:
+            return
         try:
             self._dictation_done.disconnect(self._on_dictation_result)
         except RuntimeError:
@@ -179,7 +175,6 @@ class VoiceBudgetDialog(QDialog):
             return
         self._set_buttons_enabled(False)
         self._lbl_status.setText("Generando presupuesto…")
-        self._lbl_cobertura.hide()
         threading.Thread(
             target=self._run_generation,
             args=(descripcion,),
@@ -187,14 +182,24 @@ class VoiceBudgetDialog(QDialog):
         ).start()
 
     def _run_generation(self, descripcion: str):
-        result = self._orchestrator.generate(
-            descripcion_libre=descripcion,
-            datos_proyecto=self._datos_proyecto,
-            plantilla=self._plantilla,
-        )
+        try:
+            result = self._orchestrator.generate(
+                descripcion_libre=descripcion,
+                datos_proyecto=self._datos_proyecto,
+                plantilla=self._plantilla,
+            )
+        except Exception as exc:
+            result = {
+                "partidas": [],
+                "source": "error",
+                "error": f"Error inesperado al generar el presupuesto: {exc}",
+                "cobertura": {},
+            }
         self._generation_done.emit(result)
 
     def _on_generation_done(self, result: Dict):
+        if self._closed:
+            return
         self._set_buttons_enabled(True)
         self._lbl_status.setText("")
 
@@ -207,24 +212,17 @@ class VoiceBudgetDialog(QDialog):
             return
 
         self._result = result
-        cobertura = result.get("cobertura", {})
-        self._mostrar_cobertura(cobertura)
         self.accept()
 
-    def _mostrar_cobertura(self, cobertura: Dict):
-        n_hist = cobertura.get("partidas_historicas", 0)
-        n_ia = cobertura.get("partidas_ia", 0)
-        if n_hist and n_ia:
-            msg = (
-                f"✓ {n_hist} partidas del histórico (precios reales)  "
-                f"·  {n_ia} partidas estimadas por IA"
-            )
-        elif n_hist:
-            msg = f"✓ {n_hist} partidas del histórico (precios reales)"
-        else:
-            msg = f"✓ {n_ia} partidas generadas por IA"
-        self._lbl_cobertura.setText(msg)
-        self._lbl_cobertura.show()
+    # ── Cierre ────────────────────────────────────────────────────────────────
+
+    def reject(self):
+        self._closed = True
+        super().reject()
+
+    def accept(self):
+        self._closed = True
+        super().accept()
 
     # ── Resultado público ─────────────────────────────────────────────────────
 

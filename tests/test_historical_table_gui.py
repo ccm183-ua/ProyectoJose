@@ -16,14 +16,6 @@ except ImportError:
 pytestmark = pytest.mark.skipif(not _HAS_PYSIDE6, reason="PySide6 no disponible")
 
 
-@pytest.fixture(scope="module")
-def qapp():
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 def _suggestion_result():
     return {
         "partidas": [

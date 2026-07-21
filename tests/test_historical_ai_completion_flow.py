@@ -144,7 +144,7 @@ def test_historical_plus_ai_inserts_once_at_end(monkeypatch):
             }
 
     class ReviewDialog:
-        def __init__(self, parent, historical_partidas=None, ai_partidas=None):
+        def __init__(self, parent, historical_partidas=None, ai_partidas=None, **kwargs):
             self._combined = (historical_partidas or []) + (ai_partidas or [])
 
         def exec(self):
@@ -213,7 +213,7 @@ def test_ai_empty_keeps_historical(monkeypatch):
             return {"partidas": [], "source": "ai_completion", "mode": "complete_historical_selection"}
 
     class ReviewDialog:
-        def __init__(self, parent, historical_partidas=None, ai_partidas=None):
+        def __init__(self, parent, historical_partidas=None, ai_partidas=None, **kwargs):
             assert ai_partidas == []
             self._historical = historical_partidas or []
 

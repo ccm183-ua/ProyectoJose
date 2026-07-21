@@ -1,0 +1,26 @@
+name: Tests
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+jobs:
+  pytest:
+    # windows-latest: pywin32 y PyAudio instalan sin dependencias nativas
+    # adicionales aqui, y es el entorno realmente auditado por la app.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Ejecutar suite de tests
+        run: python -m pytest -q

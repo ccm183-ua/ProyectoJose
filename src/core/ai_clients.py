@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import time
 import urllib.error
@@ -19,9 +20,16 @@ from src.core.settings import (
 )
 
 
+logger = logging.getLogger(__name__)
+
 AUTH_ERROR_MESSAGE = "La API key no es válida o no tiene saldo/permisos suficientes."
 GENERIC_ERROR_MESSAGE = "Error al contactar con la IA."
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+
+# Modelos vigentes que documentan soporte del parámetro "thinking" (activado por
+# defecto en la API). Los alias legacy "deepseek-chat"/"deepseek-reasoner" no lo
+# documentan y se retiran el 2026-07-24; un slug desconocido tampoco lo envía.
+DEEPSEEK_THINKING_CAPABLE_MODELS = {"deepseek-v4-flash", "deepseek-v4-pro"}
 
 
 def mask_secret(secret: str) -> str:
@@ -46,6 +54,18 @@ def extract_json_from_markdown(text: str) -> str:
     clean = (text or "").strip()
     match = re.search(r"```(?:json)?\s*\n?(.*?)\n?\s*```", clean, re.DOTALL)
     return match.group(1).strip() if match else clean
+
+
+def _log_ai_call(provider: str, model: str, started_at: float, tokens: Optional[int] = None) -> None:
+    """Registra proveedor/modelo/latencia/tokens de una llamada de IA exitosa.
+
+    Nunca incluye la API key ni el texto del prompt/respuesta (privado).
+    """
+    latency_ms = int((time.monotonic() - started_at) * 1000)
+    logger.info(
+        "IA proveedor=%s modelo=%s latencia_ms=%d tokens=%s",
+        provider, model, latency_ms, tokens if tokens is not None else "n/d",
+    )
 
 
 class AIProviderClient(ABC):
@@ -84,14 +104,28 @@ class AIProviderClient(ABC):
         return (True, "Conexión correcta") if data.get("ok") is True else (False, "La IA no devolvió la respuesta esperada.")
 
 
+GEMINI_MAX_RETRIES_PER_MODEL = 1
+GEMINI_RETRY_DELAY_SECONDS = 10
+
+
 class GeminiAIClient(AIProviderClient):
     provider_name = "gemini"
 
-    def __init__(self, api_key: Optional[str], model: Optional[str] = None):
+    def __init__(
+        self,
+        api_key: Optional[str],
+        model: Optional[str] = None,
+        *,
+        fallback_models: Optional[list] = None,
+    ):
         self._api_key = api_key.strip() if api_key and api_key.strip() else None
         self._configured_model = (model or DEFAULT_GEMINI_MODEL).strip() or DEFAULT_GEMINI_MODEL
         self._last_model = self._configured_model
         self._client = None
+        # Modelos adicionales a probar si el configurado agota su cuota (429):
+        # cada modelo de Gemini tiene cuota independiente. Desactivado por
+        # defecto (p. ej. para "probar conexión" con un modelo concreto).
+        self._fallback_models = [m for m in (fallback_models or []) if m]
 
     @property
     def model_name(self) -> str:
@@ -138,20 +172,43 @@ class GeminiAIClient(AIProviderClient):
             temperature=temperature,
             max_output_tokens=max_tokens,
         )
-        try:
-            response = self._client.models.generate_content(
-                model=self._configured_model,
-                contents=prompt,
-                config=config,
-            )
-        except TypeError:
-            # Compatibilidad con versiones antiguas de google-genai que no aceptan config.
-            response = self._client.models.generate_content(
-                model=self._configured_model,
-                contents=prompt,
-            )
-        self._last_model = self._configured_model
-        return response.text if hasattr(response, "text") else str(response)
+
+        model_names = [self._configured_model] + [
+            m for m in self._fallback_models if m != self._configured_model
+        ]
+
+        last_error: Optional[Exception] = None
+        for model_name in model_names:
+            for attempt in range(GEMINI_MAX_RETRIES_PER_MODEL + 1):
+                t0 = time.monotonic()
+                try:
+                    try:
+                        response = self._client.models.generate_content(
+                            model=model_name, contents=prompt, config=config,
+                        )
+                    except TypeError:
+                        # Compatibilidad con versiones antiguas de google-genai
+                        # que no aceptan el parametro config.
+                        response = self._client.models.generate_content(
+                            model=model_name, contents=prompt,
+                        )
+                    self._last_model = model_name
+                    _log_ai_call(
+                        "gemini", model_name, t0,
+                        tokens=getattr(getattr(response, "usage_metadata", None), "total_token_count", None),
+                    )
+                    return response.text if hasattr(response, "text") else str(response)
+                except Exception as exc:
+                    last_error = exc
+                    error_str = str(exc)
+                    is_rate_limit = "429" in error_str or "RESOURCE_EXHAUSTED" in error_str
+                    if is_rate_limit and attempt < GEMINI_MAX_RETRIES_PER_MODEL:
+                        sleep_for_retry(GEMINI_RETRY_DELAY_SECONDS)
+                        continue
+                    if is_rate_limit:
+                        break  # cuota agotada para este modelo: probar el siguiente
+                    raise
+        raise last_error
 
 
 Transport = Callable[[str, Dict[str, str], Dict[str, Any], int], Dict[str, Any]]
@@ -203,7 +260,7 @@ class DeepSeekAIClient(AIProviderClient):
             "max_tokens": max_tokens,
             "response_format": {"type": "json_object"},
         }
-        if self._model == DEFAULT_DEEPSEEK_MODEL:
+        if self._model in DEEPSEEK_THINKING_CAPABLE_MODELS:
             payload["thinking"] = {"type": "disabled"}
         return payload
 
@@ -227,6 +284,7 @@ class DeepSeekAIClient(AIProviderClient):
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
         }
+        t0 = time.monotonic()
         try:
             raw = self._transport(f"{self._base_url}/chat/completions", headers, payload, self._timeout)
         except TimeoutError:
@@ -237,6 +295,11 @@ class DeepSeekAIClient(AIProviderClient):
             raise RuntimeError(GENERIC_ERROR_MESSAGE) from exc
         except Exception as exc:
             raise RuntimeError(redact_secrets(str(exc)) or GENERIC_ERROR_MESSAGE) from exc
+
+        _log_ai_call(
+            "deepseek", self._model, t0,
+            tokens=(raw.get("usage") or {}).get("total_tokens") if isinstance(raw, dict) else None,
+        )
 
         choices = raw.get("choices") if isinstance(raw, dict) else None
         if not choices:
@@ -271,7 +334,19 @@ def get_ai_client_from_settings(settings: Optional[Settings] = None) -> AIProvid
     return GeminiAIClient(settings.get_gemini_api_key(), settings.get_gemini_model())
 
 
+PROVIDER_UNAVAILABLE_MESSAGE = "El proveedor de IA no está disponible temporalmente. Inténtelo de nuevo en unos minutos."
+NO_API_KEY_MESSAGE = "No hay API key configurada. Configure su clave en Configuración > IA."
+
+
 def normalize_ai_error(exc: Exception) -> str:
+    """
+    Traduce cualquier excepción de un adapter de IA a una de las categorías
+    estables que puede mostrar la UI: configuración, autenticación, límite,
+    timeout, respuesta inválida o proveedor no disponible. Nunca incluye
+    claves ni texto privado completo (ver `redact_secrets`).
+    """
+    if isinstance(exc, ImportError):
+        return PROVIDER_UNAVAILABLE_MESSAGE
     text = redact_secrets(str(exc or ""))
     if any(token in text for token in ("401", "403", "API_KEY_INVALID", "PERMISSION_DENIED")):
         return AUTH_ERROR_MESSAGE
@@ -279,6 +354,8 @@ def normalize_ai_error(exc: Exception) -> str:
         return "Cuota temporal agotada en la API de IA. Espere un minuto e inténtelo de nuevo."
     if "timeout" in text.lower() or "tiempo de espera" in text.lower():
         return "Tiempo de espera agotado al contactar con la IA. Inténtelo de nuevo."
+    if any(token in text for token in ("502", "503", "504", "UNAVAILABLE", "DEADLINE_EXCEEDED")):
+        return PROVIDER_UNAVAILABLE_MESSAGE
     if "JSON" in text:
         return "La IA no devolvió JSON válido."
     return f"{GENERIC_ERROR_MESSAGE} {text[:160]}".strip()
@@ -290,7 +367,7 @@ def _http_error_message(status_code: int) -> str:
     if status_code == 429:
         return "Cuota temporal agotada en la API de IA. Espere un minuto e inténtelo de nuevo."
     if status_code >= 500:
-        return "El proveedor de IA no está disponible temporalmente."
+        return PROVIDER_UNAVAILABLE_MESSAGE
     return GENERIC_ERROR_MESSAGE
 
 

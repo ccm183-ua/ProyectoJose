@@ -49,6 +49,7 @@ Thumbs.db
 !templates/122-20 PLANTILLA PRESUPUESTO.xlsx
 test_outputs/
 *.db
+!tests/fixtures/legacy_schema_v0.db
 *.sqlite
 *.sqlite3
 

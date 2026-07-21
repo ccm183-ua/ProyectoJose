@@ -1370,16 +1370,25 @@ class BudgetDashboardFrame(QMainWindow):
             "calle": (cab.get("direccion") or "").strip(),
         }
 
-    def _run_unified_partidas(self, datos_proyecto=None):
+    def _run_unified_partidas(self, datos_proyecto=None, existing_partidas=None, mode="replace"):
         """Flujo unificado voz/texto -> orquestador -> revisión combinada.
 
         Devuelve la lista de partidas seleccionadas (ya revisadas) o None si el
         usuario canceló o no se generó nada. Reutiliza la misma maquinaria que
         la creación de presupuestos.
+
+        `mode` ("append"/"replace") decide, junto con `existing_partidas`, las
+        reglas de negocio comunes con main_frame (ver
+        `src.core.services.budget_partidas_flow`): en modo "append" las
+        candidatas que coincidan exactamente con una partida ya presente se
+        descartan antes de mostrar la revisión; las que coincidan en
+        concepto+unidad con precio distinto se marcan como posible duplicado
+        en vez de ocultarse.
         """
         from src.core.settings import Settings
         from src.gui.voice_budget_dialog import VoiceBudgetDialog
         from src.gui.combined_partidas_review_dialog import CombinedPartidasReviewDialog
+        from src.core.services.budget_partidas_flow import split_generated_partidas_for_review
 
         datos = dict(datos_proyecto or {})
         datos.setdefault("tipo_obra", datos.get("tipo", ""))
@@ -1392,10 +1401,17 @@ class BudgetDashboardFrame(QMainWindow):
         if not partidas:
             return None
 
-        historicas = [p for p in partidas if p.get("fuente") == "historico"]
-        ia_estimadas = [p for p in partidas if p.get("fuente") != "historico"]
+        historicas, ia_estimadas = split_generated_partidas_for_review(
+            partidas, mode, existing_partidas=existing_partidas
+        )
+        if not historicas and not ia_estimadas:
+            return None
+
         review = CombinedPartidasReviewDialog(
-            self, historical_partidas=historicas, ai_partidas=ia_estimadas,
+            self,
+            historical_partidas=historicas,
+            ai_partidas=ia_estimadas,
+            cobertura=result.get("cobertura"),
         )
         if review.exec() != 1:
             return None
@@ -1413,14 +1429,15 @@ class BudgetDashboardFrame(QMainWindow):
             return
 
         from src.core.services import BudgetService
+        from src.core.services.budget_partidas_flow import MODE_REPLACE, apply_reviewed_partidas
 
         svc = BudgetService()
         datos = self._datos_proyecto_from_budget(svc.read_budget(ruta))
-        selected_partidas = self._run_unified_partidas(datos)
+        selected_partidas = self._run_unified_partidas(datos, mode=MODE_REPLACE)
         if not selected_partidas:
             return
 
-        if svc.insert_partidas(ruta, selected_partidas):
+        if apply_reviewed_partidas(svc, ruta, selected_partidas, MODE_REPLACE):
             svc.finalize_budget(ruta, estado=self._current_state() or "")
             QMessageBox.information(
                 self, "Éxito", f"Partidas regeneradas ({len(selected_partidas)})."
@@ -1431,15 +1448,19 @@ class BudgetDashboardFrame(QMainWindow):
 
     def _edit_add_partidas(self, ruta):
         from src.core.services import BudgetService
+        from src.core.services.budget_partidas_flow import MODE_APPEND, apply_reviewed_partidas
 
         svc = BudgetService()
         existing = svc.read_budget(ruta)
         datos = self._datos_proyecto_from_budget(existing)
-        selected_partidas = self._run_unified_partidas(datos)
+        existing_partidas = (existing or {}).get("partidas", []) or []
+        selected_partidas = self._run_unified_partidas(
+            datos, existing_partidas=existing_partidas, mode=MODE_APPEND
+        )
         if not selected_partidas:
             return
 
-        if svc.append_partidas(ruta, selected_partidas):
+        if apply_reviewed_partidas(svc, ruta, selected_partidas, MODE_APPEND):
             svc.finalize_budget(ruta, estado=self._current_state() or "")
             QMessageBox.information(
                 self, "Éxito",

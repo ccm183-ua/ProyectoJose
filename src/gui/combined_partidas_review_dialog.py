@@ -28,18 +28,41 @@ class CombinedPartidasReviewDialog(QDialog):
         historical_partidas=None,
         ai_partidas=None,
         merge_duplicates_note: str = "",
+        cobertura=None,
     ):
         super().__init__(parent)
         self.setWindowTitle("Revisión final de partidas")
         self._historical_partidas = historical_partidas or []
         self._ai_partidas = ai_partidas or []
         self._merge_duplicates_note = (merge_duplicates_note or "").strip()
+        self._cobertura = cobertura or {}
         self._rows = []
         self._selected_partidas = []
         self._updating_totals = False
         self._build_rows()
         self._build_ui()
         self._populate()
+
+    def _coverage_summary_text(self) -> str:
+        """Resume la cobertura del orquestador en uno de cuatro estados.
+
+        No usa "precios reales" como sinónimo de histórico: una referencia
+        histórica es un precio de una obra anterior, no una vigencia garantizada.
+        """
+        n_hist = int(self._cobertura.get("partidas_historicas", 0) or 0)
+        n_ia = int(self._cobertura.get("partidas_ia", 0) or 0)
+        if n_hist and n_ia:
+            return (
+                f"Mezcla: {n_hist} de referencias históricas + {n_ia} estimadas por IA. "
+                "Revisa las estimadas antes de aceptar."
+            )
+        if n_hist:
+            return f"Todas las partidas ({n_hist}) provienen de referencias históricas."
+        if n_ia:
+            return f"Todas las partidas ({n_ia}) son estimaciones de IA. Revísalas antes de aceptar."
+        failure_reason = self._cobertura.get("failure_reason", "")
+        sufijo = f" ({failure_reason})" if failure_reason and failure_reason != "OK" else ""
+        return f"Resultado incompleto: no se ha generado cobertura.{sufijo}"
 
     def _build_rows(self):
         for partida in self._historical_partidas:
@@ -70,6 +93,11 @@ class CombinedPartidasReviewDialog(QDialog):
                 panel,
             )
         )
+        if self._cobertura:
+            cobertura_lbl = QLabel(self._coverage_summary_text(), panel)
+            cobertura_lbl.setWordWrap(True)
+            cobertura_lbl.setStyleSheet(f"color: {theme.TEXT_TERTIARY}; background: transparent;")
+            lay.addWidget(cobertura_lbl)
         if self._merge_duplicates_note:
             dup = QLabel(self._merge_duplicates_note, panel)
             dup.setWordWrap(True)

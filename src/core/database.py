@@ -192,6 +192,33 @@ def _migrate_presupuesto_v2(conn: sqlite3.Connection) -> None:
         conn.commit()
 
 
+def _migrate_execution_module_descripcion(conn: sqlite3.Connection) -> None:
+    """Añade la columna descripcion a execution_module si no existe (BDs anteriores al cambio)."""
+    cur = conn.execute("PRAGMA table_info(execution_module)")
+    columns = [row[1] for row in cur.fetchall()]
+    if "descripcion" not in columns:
+        conn.execute("ALTER TABLE execution_module ADD COLUMN descripcion TEXT")
+        conn.commit()
+
+
+def _seed_execution_modules(conn: sqlite3.Connection) -> None:
+    """Siembra el catálogo de módulos del clasificador. No reactiva ni sobrescribe
+    personalizaciones del usuario: solo crea nombres faltantes y completa
+    descripciones vacías conocidas."""
+    from src.core.historical_partida_classifier import MODULE_DESCRIPTIONS
+
+    for nombre, descripcion in MODULE_DESCRIPTIONS.items():
+        conn.execute(
+            "INSERT OR IGNORE INTO execution_module (nombre, descripcion) VALUES (?, ?)",
+            (nombre, descripcion),
+        )
+        conn.execute(
+            "UPDATE execution_module SET descripcion=? WHERE nombre=? AND (descripcion IS NULL OR descripcion='')",
+            (descripcion, nombre),
+        )
+    conn.commit()
+
+
 def _ensure_presupuesto_v2_indexes(conn: sqlite3.Connection) -> None:
     """Crea índices v2 de presupuesto de forma segura en BDs antiguas."""
     conn.execute(
@@ -203,21 +230,85 @@ def _ensure_presupuesto_v2_indexes(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+# Version explicita del esquema. Se incrementa al añadir una migracion nueva
+# a _MIGRATIONS; una BDD nueva se crea ya en esta version (las CREATE TABLE
+# de _SCHEMA_SQL/_HISTORICAL_SCHEMA_SQL incluyen todas las columnas).
+CURRENT_SCHEMA_VERSION = 1
+
+# Migraciones ordenadas e idempotentes (cada una comprueba su propio estado
+# antes de tocar nada). Se ejecutan en este orden porque el seed de módulos
+# depende de que la columna 'descripcion' ya exista.
+_MIGRATIONS = [
+    _migrate_administracion_nombre,
+    _migrate_comunidad_cif,
+    _migrate_presupuesto_v2,
+    _ensure_presupuesto_v2_indexes,
+    _migrate_execution_module_descripcion,
+    _seed_execution_modules,
+]
+
+
+def get_schema_version(conn: sqlite3.Connection) -> int:
+    """Version de esquema registrada en la BDD, o 0 si aun no se ha marcado."""
+    cur = conn.execute("SELECT version FROM schema_version WHERE id=1")
+    row = cur.fetchone()
+    return int(row[0]) if row else 0
+
+
+def _set_schema_version(conn: sqlite3.Connection, version: int) -> None:
+    conn.execute(
+        """INSERT INTO schema_version (id, version) VALUES (1, ?)
+           ON CONFLICT(id) DO UPDATE SET version=excluded.version""",
+        (version,),
+    )
+    conn.commit()
+
+
+# Guarda de reentrada: create_database_backup() registra un evento mediante
+# log_historical_memory_event(), que abre OTRA conexión y por tanto vuelve a
+# llamar a init_schema(). Sin esta guarda, esa conexión anidada vería la
+# version todavia sin marcar y dispararia otro backup recursivamente.
+_MIGRATION_IN_PROGRESS = False
+
+
 def init_schema(conn: sqlite3.Connection) -> None:
     """
     Crea las tablas si no existen. No modifica tablas ya existentes.
 
     Si el fichero fue reemplazado por otro .db que ya tiene estas tablas,
     no hace nada. Si fue reemplazado por un .db vacío, crea las tablas.
-    Ejecuta migraciones para añadir columnas nuevas a tablas existentes.
+
+    Ejecuta las migraciones pendientes hasta CURRENT_SCHEMA_VERSION solo si
+    la BDD no está ya en esa versión (evita repetir el escaneo de columnas en
+    cada conexión). Antes de migrar, respalda el fichero original: si algo
+    falla a mitad de la secuencia, ese backup es la copia recuperable.
     """
     conn.executescript(_SCHEMA_SQL)
     conn.executescript(_HISTORICAL_SCHEMA_SQL)
     conn.commit()
-    _migrate_administracion_nombre(conn)
-    _migrate_comunidad_cif(conn)
-    _migrate_presupuesto_v2(conn)
-    _ensure_presupuesto_v2_indexes(conn)
+
+    global _MIGRATION_IN_PROGRESS
+    current_version = get_schema_version(conn)
+    if current_version < CURRENT_SCHEMA_VERSION and not _MIGRATION_IN_PROGRESS:
+        _MIGRATION_IN_PROGRESS = True
+        try:
+            try:
+                from src.core.database_backup import create_database_backup
+
+                create_database_backup(
+                    f"before_migration_v{current_version}_to_v{CURRENT_SCHEMA_VERSION}"
+                )
+            except Exception:
+                # No bloquear el arranque si el backup falla (p.ej. disco lleno);
+                # las migraciones son idempotentes y se pueden reintentar.
+                pass
+
+            for migration in _MIGRATIONS:
+                migration(conn)
+            _set_schema_version(conn, CURRENT_SCHEMA_VERSION)
+        finally:
+            _MIGRATION_IN_PROGRESS = False
+
     _ensure_app_database_identity(conn)
 
 
@@ -360,6 +451,11 @@ CREATE INDEX IF NOT EXISTS idx_presupuesto_partida_numero
 
 # Memoria histórica, patrones y diagnósticos (repositorio historical_repository y paneles asociados).
 _HISTORICAL_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS schema_version (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    version INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS app_database_identity (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     database_uuid TEXT NOT NULL
@@ -393,6 +489,7 @@ CREATE TABLE IF NOT EXISTS execution_module (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     nombre TEXT NOT NULL UNIQUE,
     categoria TEXT,
+    descripcion TEXT,
     activo INTEGER NOT NULL DEFAULT 1
 );
 

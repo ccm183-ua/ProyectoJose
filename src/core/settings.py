@@ -18,7 +18,7 @@ DEEPSEEK_ENV_VAR_NAME = "CUBIAPP_DEEPSEEK_KEY"
 AI_PROVIDER_GEMINI = "GEMINI"
 AI_PROVIDER_DEEPSEEK = "DEEPSEEK"
 DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
-DEFAULT_DEEPSEEK_MODEL = "deepseek-chat"
+DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-flash"
 
 # Nombre del archivo de configuración local
 CONFIG_FILENAME = "cubiapp_config.json"

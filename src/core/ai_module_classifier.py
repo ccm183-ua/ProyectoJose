@@ -80,32 +80,26 @@ class AIModuleClassifier:
         )
         instruction = self._build_instruction(text, allowed)
 
-        if self._settings.get_ai_provider() == AI_PROVIDER_DEEPSEEK:
-            from src.core.ai_clients import DeepSeekAIClient
+        from src.core.ai_clients import DeepSeekAIClient, GeminiAIClient
 
+        if self._settings.get_ai_provider() == AI_PROVIDER_DEEPSEEK:
             client = DeepSeekAIClient(
                 self._settings.get_deepseek_api_key(),
                 self._settings.get_deepseek_model(),
             )
-            data = client.generate_json(
-                system_prompt=system_prompt,
-                user_payload={"instruccion": instruction},
-                temperature=0.0,
-                max_tokens=300,
+        else:
+            client = GeminiAIClient(
+                self._settings.get_gemini_api_key(),
+                self._settings.get_gemini_model(),
             )
-            return json.dumps(data, ensure_ascii=False)
 
-        from src.core.ai_service import AIService
-
-        service = AIService(
-            api_key=self._settings.get_gemini_api_key(),
-            model=self._settings.get_gemini_model(),
+        data = client.generate_json(
+            system_prompt=system_prompt,
+            user_payload={"instruccion": instruction},
+            temperature=0.0,
+            max_tokens=300,
         )
-        prompt = f"{system_prompt}\n\n{instruction}"
-        response_text, error, _ = service.generate_text(prompt)
-        if error:
-            raise RuntimeError(error)
-        return response_text
+        return json.dumps(data, ensure_ascii=False)
 
     @staticmethod
     def _build_instruction(text: str, allowed: List[str]) -> str:

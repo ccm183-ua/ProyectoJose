@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -11,6 +12,9 @@ from src.core import database
 
 
 def get_backup_dir() -> Path:
+    env_dir = os.environ.get("CUBIAPP_BACKUP_DIR")
+    if env_dir and os.path.isabs(env_dir):
+        return Path(env_dir)
     return Path.home() / "Documents" / "CubiApp" / "backups"
 
 

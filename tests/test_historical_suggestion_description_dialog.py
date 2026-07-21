@@ -1,15 +1,6 @@
-import os
-
 import pytest
 
 QtWidgets = pytest.importorskip("PySide6.QtWidgets")
-
-
-@pytest.fixture(scope="module")
-def qapp():
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-    return app
 
 
 def test_enhancement_result_does_not_auto_search(monkeypatch, qapp):

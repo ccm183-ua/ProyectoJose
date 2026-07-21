@@ -1,5 +1,5 @@
 @echo off
-REM cubiApp - App de escritorio (wxPython). Windows y Mac.
+REM cubiApp - App de escritorio (PySide6). Windows.
 
 cd /d "%~dp0"
 

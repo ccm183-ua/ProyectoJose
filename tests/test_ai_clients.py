@@ -1,4 +1,5 @@
 import json
+import pathlib
 import urllib.error
 
 import pytest
@@ -51,7 +52,37 @@ def test_deepseek_builds_payload_without_exposing_key():
     payload_dump = json.dumps(captured["payload"], ensure_ascii=False)
     assert "sk-test-secret-123456" not in payload_dump
     assert captured["payload"]["response_format"] == {"type": "json_object"}
-    assert captured["payload"]["thinking"] == {"type": "disabled"}
+
+
+@pytest.mark.parametrize(
+    "model,expected_thinking",
+    [
+        # Modelos vigentes: documentados con soporte de thinking (activado por
+        # defecto en la API); lo deshabilitamos para respuestas JSON rápidas y deterministas.
+        ("deepseek-v4-flash", {"type": "disabled"}),
+        ("deepseek-v4-pro", {"type": "disabled"}),
+        # Alias legacy sin parámetro thinking documentado (retirados 2026-07-24):
+        # no se envía el campo para no suponer una capacidad inexistente.
+        ("deepseek-chat", None),
+        ("deepseek-reasoner", None),
+        # Slug desconocido: payload común seguro, sin suponer capacidades.
+        ("modelo-futuro-no-documentado", None),
+    ],
+)
+def test_deepseek_thinking_field_depends_on_documented_model_capability(model, expected_thinking):
+    captured = {}
+
+    def fake_transport(url, headers, payload, timeout):
+        captured["payload"] = payload
+        return {"choices": [{"message": {"content": '{"ok": true}'}}]}
+
+    client = DeepSeekAIClient("sk-test-secret-123456", model, transport=fake_transport)
+    client.generate_json(system_prompt="system", user_payload={"x": 1})
+
+    if expected_thinking is None:
+        assert "thinking" not in captured["payload"]
+    else:
+        assert captured["payload"]["thinking"] == expected_thinking
 
 
 def test_gemini_client_normalizes_json_response():
@@ -109,3 +140,33 @@ def test_normalized_errors_do_not_expose_full_key():
     key = "sk-1234567890abcdef"
     message = normalize_ai_error(RuntimeError(f"fallo para {key}"))
     assert key not in message
+
+
+@pytest.mark.parametrize(
+    "exc,expected",
+    [
+        (ImportError("La libreria 'google-genai' no esta instalada."), "no está disponible"),
+        (RuntimeError("Error 503 Service Unavailable"), "no está disponible"),
+        (RuntimeError("502 Bad Gateway"), "no está disponible"),
+    ],
+)
+def test_normalize_ai_error_categorizes_provider_unavailable(exc, expected):
+    assert expected in normalize_ai_error(exc)
+
+
+@pytest.mark.parametrize(
+    "module_path",
+    [
+        "src/core/budget_generator.py",
+        "src/core/ai_module_classifier.py",
+        "src/core/ai_service.py",
+        "src/core/historical_budget_enrichment_service.py",
+    ],
+)
+def test_use_cases_do_not_import_provider_sdk_directly(module_path):
+    """H2.3: los casos de uso solo dependen de ai_clients, nunca del SDK de un proveedor."""
+    repo_root = pathlib.Path(__file__).resolve().parent.parent
+    source = (repo_root / module_path).read_text(encoding="utf-8")
+    assert "google.genai" not in source
+    assert "from google import genai" not in source
+    assert "import openai" not in source

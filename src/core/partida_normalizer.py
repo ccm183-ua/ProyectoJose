@@ -325,4 +325,5 @@ def normalize_partida_for_excel(partida: Dict, source: str = "") -> Dict:
         "source": normalized_source,
         "confidence": partida.get("confidence", ""),
         "historical_frequency": partida.get("historical_frequency", 0),
+        "reason": partida.get("reason", ""),
     }

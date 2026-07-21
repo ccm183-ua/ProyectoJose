@@ -263,3 +263,32 @@ def dedupe_merged_review_partidas(
         else:
             ai_out.append(p)
     return hist_out, ai_out, removed
+
+
+def exclude_existing_from_candidates(
+    candidates: List[Dict[str, Any]],
+    existing_partidas: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """
+    Filtra partidas candidatas (nuevas, para modo "añadir") frente a las que ya
+    están en el presupuesto. Coincidencia exacta (concepto normalizado + unidad
+    + precio) se descarta en silencio. Coincidencia de concepto + unidad con
+    precio distinto no se descarta: se marca como posible duplicado dudoso
+    (campo 'reason') para que la revisión la muestre en vez de ocultarla.
+    """
+    existing = existing_partidas or []
+    existing_exact_keys = {dedupe_key(p) for p in existing}
+    existing_concept_unit_keys = {dedupe_key(p)[:2] for p in existing}
+
+    kept: List[Dict[str, Any]] = []
+    for p in candidates or []:
+        key = dedupe_key(p)
+        if key in existing_exact_keys:
+            continue
+        item = dict(p)
+        if key[:2] in existing_concept_unit_keys:
+            item["reason"] = item.get("reason") or (
+                "Posible duplicado: ya existe una partida similar con otro precio."
+            )
+        kept.append(item)
+    return kept

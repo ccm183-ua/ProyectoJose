@@ -312,6 +312,13 @@ def delete_partidas_for_budget(historical_budget_id: int) -> Optional[str]:
 def insert_historical_partida(historical_budget_id: int, partida: Dict) -> Tuple[Optional[int], Optional[str]]:
     with database.get_connection() as conn:
         try:
+            orden = partida.get("orden")
+            if orden is None:
+                cur_orden = conn.execute(
+                    "SELECT COALESCE(MAX(orden), 0) + 1 FROM historical_partida WHERE historical_budget_id=?",
+                    (historical_budget_id,),
+                )
+                orden = cur_orden.fetchone()[0]
             cur = conn.execute(
                 """INSERT INTO historical_partida
                    (historical_budget_id, orden, codigo, titulo, descripcion, concepto_original,
@@ -319,7 +326,7 @@ def insert_historical_partida(historical_budget_id: int, partida: Dict) -> Tuple
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     historical_budget_id,
-                    partida.get("orden"),
+                    orden,
                     (partida.get("codigo") or "").strip() or None,
                     (partida.get("titulo") or "").strip() or None,
                     (partida.get("descripcion") or "").strip() or None,
