@@ -17,11 +17,14 @@ from src.core.repositories import (
 
 
 def _mark_atomic_primary(partida_id: int, module_name: str) -> None:
-    """Ficha derivada mínima (Fase 2) que _load_groups() exige desde la Tarea 9."""
+    """Ficha derivada mínima que _load_groups() exige: línea atómica con
+    módulo principal único y atributos completos (Fixes histórico
+    evidenciado, Tarea 2/7: is_price_eligible exige unit/action/element no
+    vacíos, no solo line_kind='atomic')."""
     err = upsert_partida_features(
         partida_id,
         {
-            "action": None, "element": None, "system": None, "unit": "",
+            "action": "repair", "element": "generic", "system": None, "unit": "ud",
             "material": None, "dimensions": (), "conditions": (),
             "line_kind": "atomic", "primary_module_id": module_name,
             "secondary_module_ids": (), "confidence": 0.9, "reasons": (),
