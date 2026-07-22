@@ -225,6 +225,28 @@ def _migrate_historical_budget_source_kind(conn: sqlite3.Connection) -> None:
         conn.commit()
 
 
+def _migrate_pattern_evidence_columns(conn: sqlite3.Connection) -> None:
+    """Añade estadísticas de evidencia a suggested_partida_pattern (BDs anteriores
+    al cambio). Los patrones existentes quedan con estos campos vacíos hasta la
+    siguiente reconstrucción (rebuild_patterns), que ahora agrupa solo por
+    módulo principal y líneas atómicas aprobadas."""
+    cur = conn.execute("PRAGMA table_info(suggested_partida_pattern)")
+    columns = {row[1] for row in cur.fetchall()}
+    column_defs = {
+        "distinct_budget_count": "INTEGER NOT NULL DEFAULT 0",
+        "price_spread_ratio": "REAL",
+        "latest_source_date": "TEXT",
+        "evidence_quality": "TEXT",
+    }
+    changed = False
+    for col_name, col_def in column_defs.items():
+        if col_name not in columns:
+            conn.execute(f"ALTER TABLE suggested_partida_pattern ADD COLUMN {col_name} {col_def}")
+            changed = True
+    if changed:
+        conn.commit()
+
+
 def _seed_execution_modules(conn: sqlite3.Connection) -> None:
     """Siembra el catálogo de módulos del clasificador. No reactiva ni sobrescribe
     personalizaciones del usuario: solo crea nombres faltantes y completa
@@ -257,7 +279,7 @@ def _ensure_presupuesto_v2_indexes(conn: sqlite3.Connection) -> None:
 # Version explicita del esquema. Se incrementa al añadir una migracion nueva
 # a _MIGRATIONS; una BDD nueva se crea ya en esta version (las CREATE TABLE
 # de _SCHEMA_SQL/_HISTORICAL_SCHEMA_SQL incluyen todas las columnas).
-CURRENT_SCHEMA_VERSION = 2
+CURRENT_SCHEMA_VERSION = 3
 
 # Migraciones ordenadas e idempotentes (cada una comprueba su propio estado
 # antes de tocar nada). Se ejecutan en este orden porque el seed de módulos
@@ -270,6 +292,7 @@ _MIGRATIONS = [
     _migrate_execution_module_descripcion,
     _seed_execution_modules,
     _migrate_historical_budget_source_kind,
+    _migrate_pattern_evidence_columns,
 ]
 
 
@@ -651,7 +674,11 @@ CREATE TABLE IF NOT EXISTS suggested_partida_pattern (
     confianza REAL,
     pattern_build_run TEXT,
     pattern_source TEXT,
-    activo INTEGER NOT NULL DEFAULT 1
+    activo INTEGER NOT NULL DEFAULT 1,
+    distinct_budget_count INTEGER NOT NULL DEFAULT 0,
+    price_spread_ratio REAL,
+    latest_source_date TEXT,
+    evidence_quality TEXT
 );
 
 CREATE TABLE IF NOT EXISTS suggested_partida_pattern_source (

@@ -2,12 +2,106 @@
 Servicio de sugerencias históricas para nuevos presupuestos.
 """
 
+import json
+from dataclasses import dataclass, replace
 from typing import Dict, List, Optional
 
 from src.core import database
+from src.core.historical_comparator import ComparisonResult, compare_partida_features
 from src.core.historical_partida_classifier import HistoricalPartidaClassifier
+from src.core.historical_partida_features import PartidaFeatures, extract_partida_features
 from src.core.repositories import get_suggestion_patterns_by_modules
 from src.core.work_type_normalizer import extract_work_signals, normalize_work_type
+
+# Prioridad de nivel al ordenar evidencia: exact primero, related/incompatible
+# al final (nunca deben usarse para sugerir precio).
+_LEVEL_RANK = {"exact": 0, "comparable": 1, "related": 2, "incompatible": 3}
+_PRICED_LEVELS = {"exact", "comparable"}
+
+
+@dataclass(frozen=True)
+class EvidenceCandidate:
+    partida_id: int
+    historical_budget_id: int
+    precio_unitario: float
+    source_date: str
+    comparison: ComparisonResult
+
+    def to_dict(self) -> Dict:
+        return {
+            "partida_id": self.partida_id,
+            "historical_budget_id": self.historical_budget_id,
+            "precio_unitario": self.precio_unitario,
+            "source_date": self.source_date,
+            "level": self.comparison.level,
+            "score": self.comparison.score,
+            "differences": list(self.comparison.differences),
+            "reasons": list(self.comparison.reasons),
+        }
+
+
+def _row_to_features(row) -> PartidaFeatures:
+    return PartidaFeatures(
+        action=row[4],
+        element=row[5],
+        system=row[6],
+        unit=row[7] or "",
+        material=row[8],
+        dimensions=tuple(json.loads(row[9])) if row[9] else (),
+        conditions=tuple(json.loads(row[10])) if row[10] else (),
+        line_kind=row[11] or "unknown",
+        primary_module_id=row[12],
+        secondary_module_ids=tuple(json.loads(row[13])) if row[13] else (),
+        confidence=float(row[14] or 0.0),
+        reasons=(),
+    )
+
+
+def find_comparable_evidence(request: PartidaFeatures) -> List[EvidenceCandidate]:
+    """Compara `request` contra toda la evidencia real (historical_partida +
+    su ficha derivada) del mismo módulo principal, en presupuestos aprobados.
+
+    A diferencia de los patrones agregados por texto (Tarea 9), aquí se
+    aplica el comparador determinista (Tarea 8) partida a partida, así que
+    una línea 'related' (compuesta) puede aparecer como antecedente sin
+    nunca colarse como precio exacto/comparable.
+    """
+    if not request.primary_module_id:
+        return []
+    with database.get_connection(read_only=True) as conn:
+        rows = conn.execute(
+            """SELECT hp.id, hp.historical_budget_id, hp.precio_unitario,
+                      COALESCE(hb.fecha_presupuesto, hb.fecha_analisis, ''),
+                      f.action, f.element, f.system, f.unit, f.material,
+                      f.dimensions_json, f.conditions_json, f.line_kind,
+                      f.primary_module_id, f.secondary_module_ids_json, f.confidence
+               FROM historical_partida hp
+               JOIN historical_partida_feature f ON f.partida_id = hp.id
+               JOIN historical_budget hb ON hb.id = hp.historical_budget_id
+               WHERE f.primary_module_id = ?
+                 AND hb.learning_status = 'INCLUDED'
+                 AND hb.analysis_status IN ('VALID', 'VALID_WITH_WARNINGS')
+                 AND hp.precio_unitario IS NOT NULL
+                 AND hp.precio_unitario > 0""",
+            (request.primary_module_id,),
+        ).fetchall()
+
+    candidates = [
+        EvidenceCandidate(
+            partida_id=int(row[0]),
+            historical_budget_id=int(row[1]),
+            precio_unitario=float(row[2]),
+            source_date=(row[3] or ""),
+            comparison=compare_partida_features(request, _row_to_features(row)),
+        )
+        for row in rows
+    ]
+    # Sort estable en pasadas de la clave menos significativa a la mas
+    # significativa: fecha reciente > mayor score > mejor nivel (exact primero).
+    candidates.sort(key=lambda c: c.source_date, reverse=True)
+    candidates.sort(key=lambda c: c.comparison.score, reverse=True)
+    candidates.sort(key=lambda c: _LEVEL_RANK.get(c.comparison.level, 99))
+    return candidates
 
 
 class HistoricalSuggestionService:
@@ -59,6 +153,22 @@ class HistoricalSuggestionService:
                 sum(m["confidence"] for m in detected_modules) / len(detected_modules), 2
             )
 
+        # Tarea 10: evidencia comparada por el comparador determinista (Tarea 8)
+        # contra la ficha derivada real, no solo texto normalizado. Aditivo:
+        # no sustituye 'partidas' (agregado por patrones, Tarea 9), solo añade
+        # trazabilidad por línea individual para el módulo principal detectado.
+        request_features = extract_partida_features(text, "", self.classifier.classify_text(text))
+        if request_features.line_kind == "composite":
+            # La exclusion de 'composite' del comparador es para no fiarse de
+            # una LINEA HISTORICA compuesta como precio limpio; una descripcion
+            # de proyecto libre que toca varias palabras clave a la vez no es
+            # una linea compuesta real, es una consulta amplia. No forzarla a
+            # 'related' aqui, o ninguna evidencia exact/comparable seria posible.
+            request_features = replace(request_features, line_kind="atomic")
+        evidence = find_comparable_evidence(request_features)
+        evidence_report = [c.to_dict() for c in evidence]
+        priced_evidence = [d for d in evidence_report if d["level"] in _PRICED_LEVELS]
+
         result = {
             "source": "historical",
             "confidence": confidence,
@@ -72,6 +182,8 @@ class HistoricalSuggestionService:
             "min_confidence": self.MIN_CONFIDENCE,
             "partidas": partidas,
             "stats": stats,
+            "evidence_report": evidence_report,
+            "priced_evidence": priced_evidence,
             "failure_reason": "OK",
         }
         if not module_names and self._has_generic_context_only(detected_signals):

@@ -11,7 +11,32 @@ from src.core.repositories import (
     get_or_create_execution_module,
     insert_historical_partida,
     upsert_historical_budget,
+    upsert_partida_features,
 )
+
+
+def _mark_atomic_primary(partida_id: int, module_name: str) -> None:
+    """Registra la ficha derivada mínima (Fase 2) que _load_groups() exige
+    desde la Tarea 9: línea atómica con módulo principal único."""
+    err = upsert_partida_features(
+        partida_id,
+        {
+            "action": None,
+            "element": None,
+            "system": None,
+            "unit": "",
+            "material": None,
+            "dimensions": (),
+            "conditions": (),
+            "line_kind": "atomic",
+            "primary_module_id": module_name,
+            "secondary_module_ids": (),
+            "confidence": 0.9,
+            "reasons": (),
+            "classifier_version": "test",
+        },
+    )
+    assert err is None
 
 
 class TestHistoricalPatternBuilder:
@@ -52,6 +77,7 @@ class TestHistoricalPatternBuilder:
             assert perr is None
             assign_err = assign_partida_module(partida_id, module_id, 0.9, "rules")
             assert assign_err is None
+            _mark_atomic_primary(partida_id, "sustitucion_bajante")
 
         result = HistoricalPatternBuilder().rebuild_patterns()
         assert result["patterns_inserted"] >= 1
@@ -129,6 +155,7 @@ class TestHistoricalPatternBuilder:
         )
         assert part_inc_err is None
         assert assign_partida_module(part_inc, module_id, 0.9, "rules") is None
+        _mark_atomic_primary(part_inc, "sustitucion_bajante")
 
         part_pen, part_pen_err = insert_historical_partida(
             pending_id,
@@ -144,6 +171,7 @@ class TestHistoricalPatternBuilder:
         )
         assert part_pen_err is None
         assert assign_partida_module(part_pen, module_id, 0.9, "rules") is None
+        _mark_atomic_primary(part_pen, "sustitucion_bajante")
 
         result = HistoricalPatternBuilder().rebuild_patterns()
         assert result["patterns_inserted"] >= 1
@@ -201,6 +229,7 @@ class TestHistoricalPatternBuilder:
         )
         assert perr is None
         assert assign_partida_module(partida_id, module_id, 0.9, "rules") is None
+        _mark_atomic_primary(partida_id, "albanileria")
 
         result = HistoricalPatternBuilder().rebuild_patterns()
         assert result["patterns_inserted"] == 0
@@ -249,6 +278,7 @@ class TestHistoricalPatternBuilder:
             assert perr is None
             partida_ids.append(int(partida_id))
             assert assign_partida_module(partida_id, module_id, 0.9, "rules") is None
+            _mark_atomic_primary(partida_id, "sustitucion_bajante")
 
         result1 = HistoricalPatternBuilder().rebuild_patterns()
         result2 = HistoricalPatternBuilder().rebuild_patterns()
@@ -340,6 +370,7 @@ class TestHistoricalPatternBuilder:
         )
         assert perr is None
         assert assign_partida_module(partida_id, module_id, 0.9, "rules") is None
+        _mark_atomic_primary(partida_id, "sustitucion_bajante")
 
         HistoricalPatternBuilder().rebuild_patterns()
         with database.get_connection(read_only=True) as conn:
@@ -381,3 +412,160 @@ class TestHistoricalPatternBuilder:
             )
         assert after_count == before_count
         assert failed_runs == 1
+
+
+class TestPrimaryModuleEvidence:
+    """Fase 3, Tarea 9: patrones solo desde evidencia primaria (línea atómica,
+    módulo principal único, presupuesto aprobado)."""
+
+    def test_partida_with_secondary_modules_only_generates_one_pattern(self, tmp_path, monkeypatch):
+        """Regresión del caso auditado: una partida asignada a varios módulos
+        (historical_partida_module, como hacía el clasificador antiguo) ya no
+        debe generar un patrón por cada etiqueta secundaria, solo por su
+        módulo principal (historical_partida_feature.primary_module_id)."""
+        monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "datos_primary_dedupe.db"))
+
+        budget_id, err = upsert_historical_budget(
+            {
+                "ruta_excel": str(tmp_path / "compuesta.xlsx"),
+                "ruta_carpeta": str(tmp_path),
+                "nombre_proyecto": "compuesta.xlsx",
+                "fecha_modificacion_excel": datetime.now().isoformat(),
+                "fecha_analisis": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "analisis_ok": True,
+                "analysis_status": "VALID",
+                "usable_for_learning": True,
+                "learning_status": "INCLUDED",
+            }
+        )
+        assert err is None
+
+        fachada_id, _ = get_or_create_execution_module("fachada")
+        demolicion_id, _ = get_or_create_execution_module("demolicion")
+        albanileria_id, _ = get_or_create_execution_module("albanileria")
+
+        partida_id, perr = insert_historical_partida(
+            budget_id,
+            {
+                "titulo": "Reparacion de fachada compuesta",
+                "concepto_original": "Reparacion de fachada compuesta",
+                "concepto_normalizado": "reparacion de fachada compuesta",
+                "unidad": "m2",
+                "precio_unitario": 45.0,
+                "cantidad": 1,
+                "total_linea": 45.0,
+            },
+        )
+        assert perr is None
+        # El clasificador (Tarea 6) asigna varias etiquetas: se conservan en
+        # historical_partida_module para consulta, pero ya no alimentan patrones.
+        assert assign_partida_module(partida_id, fachada_id, 0.8, "rules") is None
+        assert assign_partida_module(partida_id, demolicion_id, 0.6, "rules") is None
+        assert assign_partida_module(partida_id, albanileria_id, 0.55, "rules") is None
+        _mark_atomic_primary(partida_id, "fachada")
+
+        result = HistoricalPatternBuilder().rebuild_patterns()
+        assert result["patterns_inserted"] == 1
+
+        with database.get_connection(read_only=True) as conn:
+            total = conn.execute("SELECT COUNT(*) FROM suggested_partida_pattern").fetchone()[0]
+        assert total == 1
+
+    def test_composite_line_never_produces_a_pattern(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "datos_composite_excluded.db"))
+
+        budget_id, err = upsert_historical_budget(
+            {
+                "ruta_excel": str(tmp_path / "compuesta2.xlsx"),
+                "ruta_carpeta": str(tmp_path),
+                "nombre_proyecto": "compuesta2.xlsx",
+                "fecha_modificacion_excel": datetime.now().isoformat(),
+                "fecha_analisis": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "analisis_ok": True,
+                "analysis_status": "VALID",
+                "usable_for_learning": True,
+                "learning_status": "INCLUDED",
+            }
+        )
+        assert err is None
+        partida_id, perr = insert_historical_partida(
+            budget_id,
+            {
+                "titulo": "Linea compuesta",
+                "concepto_original": "Linea compuesta",
+                "concepto_normalizado": "linea compuesta",
+                "unidad": "m2",
+                "precio_unitario": 99.0,
+                "cantidad": 1,
+                "total_linea": 99.0,
+            },
+        )
+        assert perr is None
+        err = upsert_partida_features(
+            partida_id,
+            {
+                "action": "repair", "element": None, "system": None, "unit": "m2",
+                "material": None, "dimensions": (), "conditions": (),
+                "line_kind": "composite", "primary_module_id": "fachada",
+                "secondary_module_ids": ("demolicion",), "confidence": 0.6,
+                "reasons": (), "classifier_version": "test",
+            },
+        )
+        assert err is None
+
+        result = HistoricalPatternBuilder().rebuild_patterns()
+        assert result["patterns_inserted"] == 0
+
+    def test_pattern_records_distinct_budget_count_and_price_spread(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "datos_pattern_spread.db"))
+
+        module_id, module_err = get_or_create_execution_module("fachada")
+        assert module_err is None
+
+        prices_and_budgets = [(40.0, "b1.xlsx"), (60.0, "b2.xlsx")]
+        for price, name in prices_and_budgets:
+            budget_id, err = upsert_historical_budget(
+                {
+                    "ruta_excel": str(tmp_path / name),
+                    "ruta_carpeta": str(tmp_path),
+                    "nombre_proyecto": name,
+                    "fecha_modificacion_excel": datetime.now().isoformat(),
+                    "fecha_analisis": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "analisis_ok": True,
+                    "analysis_status": "VALID",
+                    "usable_for_learning": True,
+                    "learning_status": "INCLUDED",
+                }
+            )
+            assert err is None
+            partida_id, perr = insert_historical_partida(
+                budget_id,
+                {
+                    "titulo": "Revoco de fachada",
+                    "concepto_original": "Revoco de fachada",
+                    "concepto_normalizado": "revoco de fachada",
+                    "unidad": "m2",
+                    "precio_unitario": price,
+                    "cantidad": 1,
+                    "total_linea": price,
+                },
+            )
+            assert perr is None
+            assert assign_partida_module(partida_id, module_id, 0.8, "rules") is None
+            _mark_atomic_primary(partida_id, "fachada")
+
+        result = HistoricalPatternBuilder().rebuild_patterns()
+        assert result["patterns_inserted"] == 1
+
+        with database.get_connection(read_only=True) as conn:
+            row = conn.execute(
+                """SELECT precio_unitario_mediana, distinct_budget_count, price_spread_ratio, evidence_quality
+                   FROM suggested_partida_pattern
+                   WHERE module_id=? AND concepto_normalizado=?""",
+                (module_id, "revoco de fachada"),
+            ).fetchone()
+        assert row is not None
+        assert row[0] == 50.0
+        assert row[1] == 2
+        assert row[2] == 0.4
+        assert row[3] == "medium"

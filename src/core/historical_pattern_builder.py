@@ -13,9 +13,16 @@ from src.core.database_persistence import log_historical_memory_event
 
 
 class HistoricalPatternBuilder:
-    """Genera patrones en suggested_partida_pattern a partir del histórico."""
+    """Genera patrones en suggested_partida_pattern a partir del histórico.
 
-    BUILDER_VERSION = "historical_pattern_builder_v2"
+    Agrupa únicamente por módulo principal (historical_partida_feature.
+    primary_module_id) de líneas atómicas en presupuestos aprobados
+    (learning_status='INCLUDED'): una partida con varias etiquetas
+    secundarias ya no genera un patrón de precio por cada una (ver
+    docs/criterios-clasificacion-partidas.md).
+    """
+
+    BUILDER_VERSION = "historical_pattern_builder_v3"
     PATTERN_SOURCE = "historical_learning_included"
 
     def rebuild_patterns(self) -> Dict:
@@ -47,13 +54,32 @@ class HistoricalPatternBuilder:
                         continue
                     frecuencia = len(prices)
                     confianza = min(1.0, frecuencia / 10.0)
+                    mediana = float(median(prices))
+                    distinct_budget_count = len(
+                        {int(s["historical_budget_id"]) for s in group["sources"]}
+                    )
+                    price_spread_ratio = (
+                        round((max(prices) - min(prices)) / mediana, 2) if mediana > 0 else 0.0
+                    )
+                    latest_source_date = max(
+                        (s.get("source_date") or "" for s in group["sources"]), default=""
+                    )
+                    # ponytail: umbrales fijos (>=3 fuerte, ==2 media, 1 debil);
+                    # subir a ponderacion por dispersion si hace falta mas adelante.
+                    if distinct_budget_count >= 3:
+                        evidence_quality = "strong"
+                    elif distinct_budget_count == 2:
+                        evidence_quality = "medium"
+                    else:
+                        evidence_quality = "weak"
                     cur = conn.execute(
                         """INSERT INTO suggested_partida_pattern
                            (module_id, concepto_normalizado, titulo_sugerido, descripcion_sugerida,
                             unidad_habitual, precio_unitario_medio, precio_unitario_mediana,
                             precio_unitario_min, precio_unitario_max, frecuencia, confianza,
-                            pattern_build_run, pattern_source, activo)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)""",
+                            pattern_build_run, pattern_source, activo,
+                            distinct_budget_count, price_spread_ratio, latest_source_date, evidence_quality)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)""",
                         (
                             group["module_id"],
                             group["concepto_normalizado"],
@@ -61,13 +87,17 @@ class HistoricalPatternBuilder:
                             None,
                             group["unidad"],
                             round(sum(prices) / frecuencia, 2),
-                            round(float(median(prices)), 2),
+                            round(mediana, 2),
                             round(min(prices), 2),
                             round(max(prices), 2),
                             frecuencia,
                             round(confianza, 2),
                             build_run,
                             self.PATTERN_SOURCE,
+                            distinct_budget_count,
+                            price_spread_ratio,
+                            latest_source_date or None,
+                            evidence_quality,
                         ),
                     )
                     pattern_id = int(cur.lastrowid or 0)
@@ -145,32 +175,33 @@ class HistoricalPatternBuilder:
         }
 
     def _load_groups(self) -> List[Dict]:
+        """Carga evidencia primaria: solo líneas atómicas (una única acción/
+        elemento, sin etiquetas secundarias que compitan por el precio) de
+        presupuestos aprobados explícitamente, agrupadas por su módulo
+        principal — nunca por cada etiqueta secundaria."""
         with database.get_connection(read_only=True) as conn:
             cur = conn.execute(
-                """SELECT hpm.module_id,
+                """SELECT em.id,
                           hp.concepto_normalizado,
                           COALESCE(hp.unidad, ''),
                           COALESCE(hp.titulo, ''),
                           hp.precio_unitario,
                           hp.id,
                           hp.historical_budget_id,
-                          COALESCE(hp.total_linea, 0)
+                          COALESCE(hp.total_linea, 0),
+                          COALESCE(hb.fecha_presupuesto, hb.fecha_analisis, '')
                    FROM historical_partida hp
-                   JOIN historical_partida_module hpm ON hpm.partida_id = hp.id
+                   JOIN historical_partida_feature f ON f.partida_id = hp.id
                    JOIN historical_budget hb ON hb.id = hp.historical_budget_id
+                   JOIN execution_module em ON em.nombre = f.primary_module_id
                    WHERE hp.concepto_normalizado IS NOT NULL
                      AND hp.concepto_normalizado <> ''
                      AND hp.precio_unitario IS NOT NULL
                      AND hp.precio_unitario > 0
                      AND hb.analysis_status IN ('VALID', 'VALID_WITH_WARNINGS')
-                     AND (
-                         hb.learning_status = 'INCLUDED'
-                         OR (
-                             hb.learning_status IS NULL
-                             AND hb.usable_for_learning = 1
-                         )
-                     )
-                   ORDER BY hpm.module_id, hp.concepto_normalizado"""
+                     AND hb.learning_status = 'INCLUDED'
+                     AND f.line_kind = 'atomic'
+                   ORDER BY em.id, hp.concepto_normalizado"""
             )
             rows = cur.fetchall()
 
@@ -184,6 +215,7 @@ class HistoricalPatternBuilder:
             historical_partida_id = int(row[5])
             historical_budget_id = int(row[6])
             total_linea = float(row[7] or 0.0)
+            source_date = (row[8] or "").strip()
             key = (module_id, concepto, unidad)
             if key not in grouped:
                 grouped[key] = {
@@ -201,6 +233,7 @@ class HistoricalPatternBuilder:
                     "historical_budget_id": historical_budget_id,
                     "precio_unitario": precio,
                     "total_linea": total_linea,
+                    "source_date": source_date,
                 }
             )
         return list(grouped.values())

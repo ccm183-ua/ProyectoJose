@@ -12,7 +12,37 @@ from src.core.repositories import (
     get_or_create_execution_module,
     insert_historical_partida,
     upsert_historical_budget,
+    upsert_partida_features,
 )
+
+
+def _mark_atomic_primary(partida_id: int, module_name: str) -> None:
+    """Ficha derivada mínima (Fase 2) que _load_groups() exige desde la Tarea 9."""
+    err = upsert_partida_features(
+        partida_id,
+        {
+            "action": None, "element": None, "system": None, "unit": "",
+            "material": None, "dimensions": (), "conditions": (),
+            "line_kind": "atomic", "primary_module_id": module_name,
+            "secondary_module_ids": (), "confidence": 0.9, "reasons": (),
+            "classifier_version": "test",
+        },
+    )
+    assert err is None
+
+
+def _mark_features(partida_id: int, **overrides) -> None:
+    """Ficha derivada con campos concretos, para probar el comparador
+    (Fase 3, Tarea 10) contra evidencia real."""
+    base = {
+        "action": None, "element": None, "system": None, "unit": "",
+        "material": None, "dimensions": (), "conditions": (),
+        "line_kind": "atomic", "primary_module_id": None,
+        "secondary_module_ids": (), "confidence": 0.9, "reasons": (),
+        "classifier_version": "test",
+    }
+    base.update(overrides)
+    assert upsert_partida_features(partida_id, base) is None
 
 
 class TestHistoricalSuggestionService:
@@ -74,6 +104,7 @@ class TestHistoricalSuggestionService:
             )
             assert perr is None
             assert assign_partida_module(partida_id, module_id, 0.9, "rules") is None
+            _mark_atomic_primary(partida_id, "sustitucion_bajante")
 
         HistoricalPatternBuilder().rebuild_patterns()
 
@@ -209,3 +240,122 @@ class TestHistoricalSuggestionService:
         assert "demasiado general" in result["message"].lower()
         module_names = {m.get("name") for m in result.get("detected_modules", [])}
         assert "rehabilitacion" not in module_names
+
+
+class TestFindComparableEvidence:
+    """Fase 3, Tarea 10: aplicar el comparador (Tarea 8) a la evidencia real
+    del módulo principal, en vez de solo texto normalizado. La evidencia
+    'related' (líneas compuestas) nunca debe rellenar precio."""
+
+    def _seed_budget(self, tmp_path, name: str) -> int:
+        budget_id, err = upsert_historical_budget(
+            {
+                "ruta_excel": str(tmp_path / name),
+                "ruta_carpeta": str(tmp_path),
+                "nombre_proyecto": name,
+                "fecha_modificacion_excel": datetime.now().isoformat(),
+                "fecha_analisis": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "analisis_ok": True,
+                "analysis_status": "VALID",
+                "usable_for_learning": True,
+                "learning_status": "INCLUDED",
+            }
+        )
+        assert err is None
+        return budget_id
+
+    def test_exact_evidence_prices_the_suggestion(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "datos_evidence_exact.db"))
+        budget_id = self._seed_budget(tmp_path, "exacto.xlsx")
+
+        partida_id, perr = insert_historical_partida(
+            budget_id,
+            {
+                "concepto_original": "Reparacion revoco fachada mortero R4",
+                "unidad": "m2",
+                "precio_unitario": 50.0,
+                "cantidad": 1,
+                "total_linea": 50.0,
+            },
+        )
+        assert perr is None
+        _mark_features(
+            partida_id,
+            action="repair", element="facade_render", unit="m2", material="mortar_r4",
+            line_kind="atomic", primary_module_id="fachada",
+        )
+
+        result = HistoricalSuggestionService().suggest_for_project(
+            {"tipo": "Reparar revoco fachada con mortero R4"}
+        )
+
+        assert result["evidence_report"], "debe encontrar evidencia"
+        assert result["evidence_report"][0]["level"] == "exact"
+        assert result["evidence_report"][0]["precio_unitario"] == 50.0
+        assert all(item["level"] != "related" for item in result["priced_evidence"])
+
+    def test_composite_evidence_is_related_and_never_priced(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "datos_evidence_composite.db"))
+        budget_id = self._seed_budget(tmp_path, "compuesta.xlsx")
+
+        partida_id, perr = insert_historical_partida(
+            budget_id,
+            {
+                "concepto_original": "Picado y reparacion de fachada con mortero",
+                "unidad": "m2",
+                "precio_unitario": 999.0,
+                "cantidad": 1,
+                "total_linea": 999.0,
+            },
+        )
+        assert perr is None
+        _mark_features(
+            partida_id,
+            action="repair", element="facade_render", unit="m2", material="mortar_r4",
+            line_kind="composite", primary_module_id="fachada",
+            secondary_module_ids=("demolicion",),
+        )
+
+        result = HistoricalSuggestionService().suggest_for_project(
+            {"tipo": "Reparar revoco fachada con mortero R4"}
+        )
+
+        assert result["evidence_report"]
+        assert result["evidence_report"][0]["level"] == "related"
+        assert result["priced_evidence"] == []
+
+    def test_different_material_is_comparable_and_still_priced(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "datos_evidence_comparable.db"))
+        budget_id = self._seed_budget(tmp_path, "comparable.xlsx")
+
+        partida_id, perr = insert_historical_partida(
+            budget_id,
+            {
+                "concepto_original": "Reparacion revoco fachada mortero generico",
+                "unidad": "m2",
+                "precio_unitario": 40.0,
+                "cantidad": 1,
+                "total_linea": 40.0,
+            },
+        )
+        assert perr is None
+        _mark_features(
+            partida_id,
+            action="repair", element="facade_render", unit="m2", material="mortar",
+            line_kind="atomic", primary_module_id="fachada",
+        )
+
+        result = HistoricalSuggestionService().suggest_for_project(
+            {"tipo": "Reparar revoco fachada con mortero R4"}
+        )
+
+        assert result["evidence_report"][0]["level"] == "comparable"
+        assert result["priced_evidence"], "comparable tambien debe poder sugerir precio"
+
+    def test_no_primary_module_detected_returns_empty_evidence(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "datos_evidence_none.db"))
+        result = HistoricalSuggestionService().suggest_for_project(
+            {"tipo": "Texto sin ninguna palabra clave reconocible"}
+        )
+        assert result["evidence_report"] == []
+        assert result["priced_evidence"] == []

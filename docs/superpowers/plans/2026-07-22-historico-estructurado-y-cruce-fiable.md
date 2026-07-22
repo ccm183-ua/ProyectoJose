@@ -412,7 +412,7 @@ Expected: PASS; dos reconstrucciones dejan el mismo número de fichas.
 - `ComparisonResult(level: Literal["exact", "comparable", "related", "incompatible"], score: float, differences: tuple[str, ...], reasons: tuple[str, ...])`.
 - `compare_partida_features(request: PartidaFeatures, evidence: PartidaFeatures) -> ComparisonResult`.
 
-- [ ] **Step 1: Escribir matriz de seguridad**
+- [x] **Step 1: Escribir matriz de seguridad**
 
 ```python
 assert compare(request_m2_repair, evidence_m2_repair).level == "exact"
@@ -422,13 +422,13 @@ assert compare(request_mortar_r4, evidence_mortar_generic).level == "comparable"
 assert compare(request_facade, evidence_facade_with_scaffold).differences == ("condition:scaffold",)
 ```
 
-- [ ] **Step 2: Ejecutar los tests y confirmar fallo**
+- [x] **Step 2: Ejecutar los tests y confirmar fallo**
 
 Run: `pytest tests/test_historical_comparator.py -v`
 
 Expected: FAIL porque no existe el comparador.
 
-- [ ] **Step 3: Implementar reglas de exclusión antes de puntuación**
+- [x] **Step 3: Implementar reglas de exclusión antes de puntuación**
 
 ```python
 if request.unit != evidence.unit:
@@ -441,7 +441,7 @@ if request.line_kind == "composite" or evidence.line_kind == "composite":
 
 Después comparar elemento, sistema, material, dimensiones y condiciones. Solo igualdad de los campos críticos puede producir `exact`.
 
-- [ ] **Step 4: Ejecutar tests del comparador**
+- [x] **Step 4: Ejecutar tests del comparador**
 
 Run: `pytest tests/test_historical_comparator.py -v`
 
@@ -449,6 +449,21 @@ Expected: PASS.
 
 ### Task 9: Construir patrones por evidencia primaria y presupuestos distintos
 
+> **Estado (2026-07-22): implementado con una adaptación deliberada de la clave
+> de agrupación.** El plan agrupa por `(primary_module_id, action, element,
+> system, unit, material)`; se implementó agrupando por
+> `(primary_module_id, concepto_normalizado, unidad)` — la misma clave que ya
+> usaba `_load_groups()` antes de esta tarea — porque `system` siempre es
+> `None` y `dimensions` siempre `()` en esta fase (ver "Fuera de alcance" de
+> la Tarea 5): agrupar por la tupla completa colapsaría por `system=None` en
+> vez de por texto real, siendo menos preciso que el `concepto_normalizado`
+> existente. Revisar cuando la Tarea 5 amplíe `system`/`dimensions`.
+> Migración de esquema v3 añadida (`distinct_budget_count`,
+> `price_spread_ratio`, `latest_source_date`, `evidence_quality` en
+> `suggested_partida_pattern`). `count_patterns_for_primary_line` /
+> `find_pattern` del plan no se crearon como funciones de repositorio nuevas
+> (YAGNI): los tests consultan `suggested_partida_pattern` directamente por
+> SQL, igual que ya hacían los tests existentes de este módulo.
 
 **Files:**
 - Modify: `src/core/historical_pattern_builder.py`
@@ -459,7 +474,7 @@ Expected: PASS.
 - Patrón incluye `primary_module_id`, `distinct_budget_count`, `min_price`, `median_price`, `max_price`, `price_spread_ratio`, `latest_source_date`, `evidence_quality`.
 - `rebuild_patterns() -> PatternBuildResult`.
 
-- [ ] **Step 1: Escribir regresiones de duplicación y precio disperso**
+- [x] **Step 1: Escribir regresiones de duplicación y precio disperso**
 
 ```python
 result = builder.rebuild_patterns()
@@ -470,13 +485,13 @@ assert pattern["median_price"] == Decimal("50.00")
 assert pattern["price_spread_ratio"] == Decimal("0.40")
 ```
 
-- [ ] **Step 2: Ejecutar tests de patrones y confirmar fallo**
+- [x] **Step 2: Ejecutar tests de patrones y confirmar fallo**
 
 Run: `pytest tests/test_historical_pattern_builder.py -k "primary or distinct or spread" -v`
 
 Expected: FAIL porque los patrones actuales se crean por cada etiqueta.
 
-- [ ] **Step 3: Agrupar solo partidas aprobadas, atómicas y con módulo principal**
+- [x] **Step 3: Agrupar solo partidas aprobadas, atómicas y con módulo principal**
 
 ```sql
 WHERE hb.learning_status = 'INCLUDED'
@@ -488,7 +503,7 @@ GROUP BY f.primary_module_id, f.action, f.element, f.system, f.unit, f.material
 
 Usar `COUNT(DISTINCT hb.id)` para frecuencia. Calcular mediana en Python con `statistics.median` y dispersión `(max-min)/median` si mediana es positiva.
 
-- [ ] **Step 4: Ejecutar reconstrucción en una copia y medir la corrección**
+- [x] **Step 4: Ejecutar reconstrucción en una copia y medir la corrección**
 
 Ejecutado sobre una copia desechable de `Documents/CubiApp/datos.db` (117
 presupuestos, 254 partidas reales), no sobre la base activa. Resultado
@@ -516,8 +531,28 @@ observado 2026-07-22:
 - `EvidenceCandidate` contiene `pattern`, `comparison`, `source_budget_ids`, `source_dates`, `price_range`.
 - `suggest_for_project(...)` devuelve `evidence_report` además de `suggested_partidas`.
 
+> **Estado (2026-07-22): implementado de forma aditiva, sin renombrar el
+> contrato existente.** `suggest_for_project()` ya tenía consumidores reales
+> (GUI) sobre las claves `partidas`/`precio_unitario` (float); en vez de
+> renombrar a `suggested_partidas`/`precio` (string) como sugiere el ejemplo
+> del plan, se añadieron `evidence_report` y `priced_evidence` como claves
+> nuevas sin tocar las existentes. `find_comparable_evidence()` compara
+> contra partidas históricas reales (`historical_partida` + su ficha
+> derivada) módulo a módulo con el comparador de la Tarea 8, en vez de
+> contra `repository.find_patterns_by_primary_module()` (no existe: los
+> patrones de la Tarea 9 se agrupan por `concepto_normalizado`, no por
+> `action`/`element`/`material` — ver nota de alcance de la Tarea 9). Ajuste
+> necesario: la *request* de una descripción de proyecto libre puede
+> matchear varias palabras clave a la vez (p.ej. "mortero" dispara también
+> `albanileria`) y saldría `line_kind='composite'`; la regla de exclusión de
+> compuestas es para no fiarse de **evidencia** histórica compuesta como
+> precio limpio, no para descartar la consulta — se fuerza `line_kind` de la
+> request a `atomic` antes de comparar. Orden implementado: nivel (exact
+> primero) → score → fecha más reciente; no se implementó orden por
+> `distinct_budget_count`/dispersión (evidencia a nivel de partida
+> individual, no agregada — ver Tarea 9 para esas métricas a nivel patrón).
 
-- [ ] **Step 1: Escribir los casos exacto, comparable y relacionado**
+- [x] **Step 1: Escribir los casos exacto, comparable y relacionado**
 
 ```python
 suggestion = service.suggest_for_project(project, "Reparar revoco de fachada con mortero R4")
@@ -526,13 +561,13 @@ assert suggestion["suggested_partidas"][0]["precio"] == "50.00"
 assert all(item["level"] != "related" for item in suggestion["priced_evidence"])
 ```
 
-- [ ] **Step 2: Ejecutar tests y confirmar fallo**
+- [x] **Step 2: Ejecutar tests y confirmar fallo**
 
 Run: `pytest tests/test_historical_suggestion_service.py -k "evidence or comparable" -v`
 
 Expected: FAIL porque actualmente se devuelve el patrón por módulo y texto normalizado.
 
-- [ ] **Step 3: Aplicar el comparador a todos los candidatos del módulo principal**
+- [x] **Step 3: Aplicar el comparador a todos los candidatos del módulo principal**
 
 ```python
 candidates = repository.find_patterns_by_primary_module(request.primary_module_id)
@@ -542,7 +577,7 @@ priced = [item for item in evidence if item.comparison.level in {"exact", "compa
 
 Ordenar por nivel, número de presupuestos distintos, menor dispersión y fecha más reciente.
 
-- [ ] **Step 4: Ejecutar tests del servicio**
+- [x] **Step 4: Ejecutar tests del servicio**
 
 Run: `pytest tests/test_historical_suggestion_service.py -v`
 
