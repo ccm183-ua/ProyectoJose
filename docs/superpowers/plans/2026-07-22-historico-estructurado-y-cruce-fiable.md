@@ -265,7 +265,7 @@ Expected: PASS; importar dos veces el mismo fichero no duplica partidas ni fuent
 - `PartidaFeatures` dataclass: `action`, `element`, `system`, `unit`, `material`, `dimensions`, `conditions`, `line_kind`, `primary_module_id`, `secondary_module_ids`, `confidence`, `reasons`.
 - `extract_partida_features(concept: str, unit: str, modules: list[dict]) -> PartidaFeatures`.
 
-- [ ] **Step 1: Escribir ejemplos de aceptación concretos**
+- [x] **Step 1: Escribir ejemplos de aceptación concretos**
 
 ```python
 features = extract_partida_features("Picado y reparación de revoco en fachada con mortero R4", "m2", modules)
@@ -282,13 +282,13 @@ assert features.line_kind == "auxiliary"
 assert features.primary_module_id == "medios_auxiliares"
 ```
 
-- [ ] **Step 2: Ejecutar la prueba y confirmar fallo**
+- [x] **Step 2: Ejecutar la prueba y confirmar fallo**
 
 Run: `pytest tests/test_historical_partida_features.py -v`
 
 Expected: FAIL porque no existe el módulo.
 
-- [ ] **Step 3: Implementar vocabulario cerrado y razones**
+- [x] **Step 3: Implementar vocabulario cerrado y razones**
 
 ```python
 @dataclass(frozen=True)
@@ -309,7 +309,7 @@ class PartidaFeatures:
 
 Guardar sinónimos y condiciones críticas en el documento, y cargarlos en constantes Python; no usar LLM en esta fase.
 
-- [ ] **Step 4: Ejecutar pruebas unitarias**
+- [x] **Step 4: Ejecutar pruebas unitarias**
 
 Run: `pytest tests/test_historical_partida_features.py tests/test_historical_partida_classifier.py -v`
 
@@ -326,7 +326,7 @@ Expected: PASS.
 - `HistoricalPartidaClassifier.classify(partida: dict) -> dict` devuelve `primary_module`, `secondary_modules`, `confidence`, `reasons`.
 - Se mantiene una adaptación temporal `classify_text(text) -> list[dict]` para consumidores antiguos, ordenada con la principal primero.
 
-- [ ] **Step 1: Escribir el caso de regresión de una partida de siete etiquetas**
+- [x] **Step 1: Escribir el caso de regresión de una partida de siete etiquetas**
 
 ```python
 classification = classifier.classify({"concepto": composite_text, "unidad": "m2"})
@@ -335,13 +335,13 @@ assert len(classification["secondary_modules"]) == 6
 assert classification["primary_module"]["id"] not in {m["id"] for m in classification["secondary_modules"]}
 ```
 
-- [ ] **Step 2: Ejecutar el test y confirmar fallo**
+- [x] **Step 2: Ejecutar el test y confirmar fallo**
 
 Run: `pytest tests/test_historical_partida_classifier.py -k primary -v`
 
 Expected: FAIL porque el clasificador actual devuelve solo una lista plana.
 
-- [ ] **Step 3: Aplicar orden de decisión explícito**
+- [x] **Step 3: Aplicar orden de decisión explícito**
 
 ```python
 PRIMARY_PRIORITY = ("demolicion", "estructura", "fachada", "impermeabilizacion", "bajante", "albanileria", "pintura", "carpinteria", "cerrajeria", "medios_auxiliares")
@@ -350,7 +350,7 @@ primary = max(candidates, key=lambda c: (c["score"], -PRIMARY_PRIORITY.index(c["
 
 Para una línea compuesta, la acción y elemento principal deben pesar más que simples palabras presentes en tareas auxiliares.
 
-- [ ] **Step 4: Ejecutar clasificación existente y nueva**
+- [x] **Step 4: Ejecutar clasificación existente y nueva**
 
 Run: `pytest tests/test_historical_partida_classifier.py tests/test_ai_module_classifier.py -v`
 
@@ -368,7 +368,7 @@ Expected: PASS; la compatibilidad existente se mantiene.
 - `get_partida_features(partida_id: int) -> dict | None`.
 - `rebuild_partida_features(budget_ids: Iterable[int]) -> int`.
 
-- [ ] **Step 1: Escribir test de inmutabilidad del texto original**
+- [x] **Step 1: Escribir test de inmutabilidad del texto original**
 
 ```python
 before = repository.get_partida(partida_id)["concepto"]
@@ -377,13 +377,13 @@ assert repository.get_partida(partida_id)["concepto"] == before
 assert repository.get_partida_features(partida_id)["primary_module_id"] == "fachada"
 ```
 
-- [ ] **Step 2: Ejecutar el test y confirmar fallo**
+- [x] **Step 2: Ejecutar el test y confirmar fallo**
 
 Run: `pytest tests/test_historical_budget_analyzer.py -k feature -v`
 
 Expected: FAIL porque no hay ficha persistida.
 
-- [ ] **Step 3: Insertar/actualizar solo la tabla derivada**
+- [x] **Step 3: Insertar/actualizar solo la tabla derivada**
 
 ```sql
 INSERT INTO historical_partida_feature(partida_id, action, element, system, unit, material,
@@ -394,7 +394,7 @@ ON CONFLICT(partida_id) DO UPDATE SET action=excluded.action, element=excluded.e
     primary_module_id=excluded.primary_module_id, classifier_version=excluded.classifier_version;
 ```
 
-- [ ] **Step 4: Ejecutar pruebas y comprobar idempotencia**
+- [x] **Step 4: Ejecutar pruebas y comprobar idempotencia**
 
 Run: `pytest tests/test_historical_budget_analyzer.py -v`
 

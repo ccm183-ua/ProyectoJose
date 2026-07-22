@@ -126,12 +126,74 @@ MODULE_DESCRIPTIONS = {
 }
 
 
+
+# Orden de prioridad para desempatar entre candidatos con la misma confianza:
+# la acción/elemento principal de una linea compuesta debe pesar mas que
+# palabras sueltas de tareas auxiliares (p.ej. "picado" o "andamio" mencionados
+# de pasada). Los modulos no listados aqui van al final del desempate.
+PRIMARY_PRIORITY = (
+    "demolicion",
+    "estructura",
+    "fachada",
+    "impermeabilizacion",
+    "sustitucion_bajante",
+    "albanileria",
+    "alicatado",
+    "pintura",
+    "carpinteria",
+    "cerrajeria",
+    "gestion_residuos",
+    "medios_auxiliares",
+)
+
+
+def pick_primary_module(candidates: List[Dict]) -> Dict:
+    """Elige el módulo principal entre candidatos {module, confidence, ...}.
+
+    Desempata por PRIMARY_PRIORITY cuando dos módulos empatan en confianza.
+    Compartida por HistoricalPartidaClassifier.classify() y
+    historical_partida_features.extract_partida_features() para que ambos
+    elijan siempre el mismo módulo principal de una línea compuesta.
+    """
+    def priority_rank(module_name: str) -> int:
+        try:
+            return PRIMARY_PRIORITY.index(module_name)
+        except ValueError:
+            return len(PRIMARY_PRIORITY)
+
+    return max(candidates, key=lambda c: (c["confidence"], -priority_rank(c["module"])))
+
+
 class HistoricalPartidaClassifier:
     """Clasificador por reglas basado en palabras clave normalizadas."""
 
-    def classify(self, partida: Dict) -> List[Dict]:
+    def classify(self, partida: Dict) -> Dict:
+        """Clasifica una partida en un único módulo principal más etiquetas
+        secundarias, para que una línea compuesta no duplique su precio en
+        varios módulos (ver docs/criterios-clasificacion-partidas.md)."""
         text = self._compose_partida_text(partida)
-        return self.classify_text(text)
+        candidates = self.classify_text(text)
+        if not candidates:
+            return {
+                "primary_module": None,
+                "secondary_modules": [],
+                "confidence": 0.0,
+                "reasons": (),
+            }
+
+        primary = pick_primary_module(candidates)
+        secondary = [c for c in candidates if c["module"] != primary["module"]]
+        return {
+            "primary_module": {"id": primary["module"], "confidence": primary["confidence"]},
+            "secondary_modules": [
+                {"id": c["module"], "confidence": c["confidence"]} for c in secondary
+            ],
+            "confidence": primary["confidence"],
+            "reasons": (
+                f"primary_module='{primary['module']}' entre candidatos "
+                f"{[c['module'] for c in candidates]} (confianza + prioridad)",
+            ),
+        }
 
     def classify_text(self, text: str) -> List[Dict]:
         normalized = normalize_text(text)

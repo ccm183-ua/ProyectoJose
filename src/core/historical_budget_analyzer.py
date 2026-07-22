@@ -5,12 +5,14 @@ Analizador de presupuestos históricos para inteligencia offline.
 import os
 import re
 import json
+from dataclasses import asdict
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, Iterable, List, Optional
 
 from src.core.budget_reader import BudgetReader
 from src.core.budget_file_probe import BudgetFileProbe
 from src.core.historical_partida_classifier import HistoricalPartidaClassifier
+from src.core.historical_partida_features import extract_partida_features
 from src.core.historical_analysis_status import AnalysisStatus, IssueSeverity
 from src.core.historical_budget_quality import validate_budget_quality
 from src.core.repositories import (
@@ -27,6 +29,7 @@ from src.core.repositories import (
     rebuild_budget_module_summary,
     replace_budget_issues,
     upsert_historical_budget,
+    upsert_partida_features,
 )
 from src.core.work_type_normalizer import normalize_text, normalize_work_type
 
@@ -453,14 +456,12 @@ class HistoricalBudgetAnalyzer:
                     continue
 
                 if budget_payload["usable_for_learning"]:
-                    classifications = self.classifier.classify(
-                        {
-                            "titulo": concepto,
-                            "descripcion": "",
-                            "concepto": concepto,
-                            "capitulo": "",
-                        }
-                    )
+                    # classify() ahora devuelve un único módulo principal; aquí se
+                    # mantiene classify_text() (lista sin colapsar) porque esta
+                    # asignación en historical_partida_module es de solo
+                    # clasificación/consulta, no de construcción de patrones de
+                    # precio (eso lo restringe la Tarea 9 al módulo principal).
+                    classifications = self.classifier.classify_text(concepto)
                     for row in classifications:
                         module_id, module_err = get_or_create_execution_module(row.get("module", ""))
                         if module_err or not module_id:
@@ -537,7 +538,9 @@ class HistoricalBudgetAnalyzer:
             concepto = (partida.get("concepto_original") or partida.get("titulo") or "").strip()
             if not concepto:
                 continue
-            classifications = self.classifier.classify(
+            # Ver nota en analyze_budget(): esta asignación usa classify_text()
+            # (lista sin colapsar), no el módulo principal único de classify().
+            composed_text = self.classifier._compose_partida_text(
                 {
                     "titulo": partida.get("titulo") or concepto,
                     "descripcion": "",
@@ -545,6 +548,7 @@ class HistoricalBudgetAnalyzer:
                     "capitulo": partida.get("capitulo") or "",
                 }
             )
+            classifications = self.classifier.classify_text(composed_text)
             for row in classifications:
                 module_id, module_err = get_or_create_execution_module(row.get("module", ""))
                 if module_err or not module_id:
@@ -559,3 +563,30 @@ class HistoricalBudgetAnalyzer:
                     assigned += 1
         rebuild_budget_module_summary(historical_budget_id)
         return {"ok": True, "partidas": len(partidas), "assignments": assigned}
+
+    def rebuild_partida_features(self, budget_ids: Iterable[int]) -> int:
+        """Reconstruye la ficha derivada (historical_partida_feature) de las
+        partidas de los presupuestos indicados, sin tocar historical_partida
+        (el dato bruto). Idempotente: upsert por partida_id."""
+        count = 0
+        for budget_id in budget_ids:
+            for partida in get_historical_partidas_for_classification(budget_id):
+                concepto = (partida.get("concepto_original") or partida.get("titulo") or "").strip()
+                if not concepto:
+                    continue
+                composed_text = self.classifier._compose_partida_text(
+                    {
+                        "titulo": partida.get("titulo") or concepto,
+                        "descripcion": "",
+                        "concepto": concepto,
+                        "capitulo": partida.get("capitulo") or "",
+                    }
+                )
+                candidates = self.classifier.classify_text(composed_text)
+                features = extract_partida_features(concepto, partida.get("unidad", ""), candidates)
+                features_dict = asdict(features)
+                features_dict["classifier_version"] = self.CLASSIFIER_VERSION
+                err = upsert_partida_features(partida["id"], features_dict)
+                if not err:
+                    count += 1
+        return count

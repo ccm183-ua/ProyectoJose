@@ -8,7 +8,13 @@ from pathlib import Path
 
 from src.core.historical_budget_analyzer import HistoricalBudgetAnalyzer
 from src.core import database
-from src.core.repositories import get_historical_budget_by_path, upsert_historical_budget
+from src.core.repositories import (
+    get_historical_budget_by_path,
+    get_historical_partida,
+    get_partida_features,
+    insert_historical_partida,
+    upsert_historical_budget,
+)
 
 
 class TestHistoricalBudgetAnalyzer:
@@ -433,3 +439,76 @@ class TestHistoricalBudgetAnalyzer:
         assert stored["learning_status"] == "INCLUDED"
         assert stored["usable_for_learning"] is True
         assert stored["source_kind"] == "external_excel"
+
+
+class TestRebuildPartidaFeatures:
+    """Fase 2, Tarea 7: persistir la ficha derivada sin tocar el dato bruto."""
+
+    def test_rebuild_partida_features_persists_primary_module_without_touching_raw_text(
+        self, tmp_path, monkeypatch
+    ):
+        db_path = tmp_path / "datos_historical_features.db"
+        monkeypatch.setenv("CUBIAPP_DB_PATH", str(db_path))
+
+        budget_id, err = upsert_historical_budget(
+            {
+                "ruta_excel": str(tmp_path / "features.xlsx"),
+                "ruta_carpeta": str(tmp_path),
+                "nombre_proyecto": "features.xlsx",
+                "fecha_modificacion_excel": datetime.now().isoformat(),
+            }
+        )
+        assert err is None
+
+        partida_id, err = insert_historical_partida(
+            budget_id,
+            {
+                "concepto_original": "Picado y reparacion de fachada con grieta y mortero",
+                "unidad": "m2",
+            },
+        )
+        assert err is None
+
+        before = get_historical_partida(partida_id)["concepto_original"]
+
+        analyzer = HistoricalBudgetAnalyzer()
+        count = analyzer.rebuild_partida_features([budget_id])
+        assert count == 1
+
+        after = get_historical_partida(partida_id)["concepto_original"]
+        assert after == before
+
+        features = get_partida_features(partida_id)
+        assert features is not None
+        assert features["primary_module_id"] == "fachada"
+        assert features["unit"] == "m2"
+        assert features["classifier_version"] == HistoricalBudgetAnalyzer.CLASSIFIER_VERSION
+
+    def test_rebuild_partida_features_is_idempotent(self, tmp_path, monkeypatch):
+        db_path = tmp_path / "datos_historical_features_idempotent.db"
+        monkeypatch.setenv("CUBIAPP_DB_PATH", str(db_path))
+
+        budget_id, err = upsert_historical_budget(
+            {
+                "ruta_excel": str(tmp_path / "features_idem.xlsx"),
+                "ruta_carpeta": str(tmp_path),
+                "nombre_proyecto": "features_idem.xlsx",
+                "fecha_modificacion_excel": datetime.now().isoformat(),
+            }
+        )
+        assert err is None
+        partida_id, err = insert_historical_partida(
+            budget_id, {"concepto_original": "Instalacion de bajante PVC", "unidad": "ml"}
+        )
+        assert err is None
+
+        analyzer = HistoricalBudgetAnalyzer()
+        first_count = analyzer.rebuild_partida_features([budget_id])
+        second_count = analyzer.rebuild_partida_features([budget_id])
+        assert first_count == second_count == 1
+
+        with database.get_connection(read_only=True) as conn:
+            total = conn.execute(
+                "SELECT COUNT(*) FROM historical_partida_feature WHERE partida_id=?", (partida_id,)
+            ).fetchone()[0]
+        assert total == 1

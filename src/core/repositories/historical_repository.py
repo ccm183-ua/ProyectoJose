@@ -2,6 +2,7 @@
 Repositorio para análisis y sugerencias históricas de presupuestos.
 """
 
+import json
 import sqlite3
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
@@ -1165,7 +1166,8 @@ def list_historical_memory_dashboard_budgets(
 def get_historical_partidas_for_classification(historical_budget_id: int) -> List[Dict]:
     with database.get_connection(read_only=True) as conn:
         cur = conn.execute(
-            """SELECT id, COALESCE(concepto_original, ''), COALESCE(titulo, ''), COALESCE(capitulo, '')
+            """SELECT id, COALESCE(concepto_original, ''), COALESCE(titulo, ''),
+                      COALESCE(capitulo, ''), COALESCE(unidad, '')
                FROM historical_partida
                WHERE historical_budget_id=?
                ORDER BY orden ASC""",
@@ -1178,9 +1180,123 @@ def get_historical_partidas_for_classification(historical_budget_id: int) -> Lis
             "concepto_original": r[1] or "",
             "titulo": r[2] or "",
             "capitulo": r[3] or "",
+            "unidad": r[4] or "",
         }
         for r in rows
     ]
+
+
+def get_historical_partida(partida_id: int) -> Optional[Dict]:
+    with database.get_connection(read_only=True) as conn:
+        row = conn.execute(
+            """SELECT id, historical_budget_id, COALESCE(concepto_original, ''),
+                      COALESCE(titulo, ''), COALESCE(unidad, '')
+               FROM historical_partida WHERE id=?""",
+            (partida_id,),
+        ).fetchone()
+    if not row:
+        return None
+    return {
+        "id": int(row[0]),
+        "historical_budget_id": int(row[1]),
+        "concepto_original": row[2] or "",
+        "titulo": row[3] or "",
+        "unidad": row[4] or "",
+    }
+
+
+def upsert_partida_features(partida_id: int, features: Dict) -> Optional[str]:
+    """Inserta/actualiza solo la tabla derivada historical_partida_feature.
+
+    Nunca toca historical_partida (el dato bruto de la línea original).
+    ``features`` es el resultado de PartidaFeatures._asdict()-like dict con
+    las claves del dataclass (ver historical_partida_features.py).
+    """
+    with database.get_connection() as conn:
+        try:
+            now = _now_str()
+            conn.execute(
+                """INSERT INTO historical_partida_feature
+                   (partida_id, action, element, system, unit, material,
+                    dimensions_json, conditions_json, line_kind, primary_module_id,
+                    secondary_module_ids_json, confidence, reasons_json,
+                    classifier_version, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(partida_id) DO UPDATE SET
+                       action=excluded.action,
+                       element=excluded.element,
+                       system=excluded.system,
+                       unit=excluded.unit,
+                       material=excluded.material,
+                       dimensions_json=excluded.dimensions_json,
+                       conditions_json=excluded.conditions_json,
+                       line_kind=excluded.line_kind,
+                       primary_module_id=excluded.primary_module_id,
+                       secondary_module_ids_json=excluded.secondary_module_ids_json,
+                       confidence=excluded.confidence,
+                       reasons_json=excluded.reasons_json,
+                       classifier_version=excluded.classifier_version,
+                       updated_at=excluded.updated_at
+                """,
+                (
+                    partida_id,
+                    features.get("action"),
+                    features.get("element"),
+                    features.get("system"),
+                    features.get("unit") or None,
+                    features.get("material"),
+                    json.dumps(list(features.get("dimensions") or [])),
+                    json.dumps(list(features.get("conditions") or [])),
+                    features.get("line_kind"),
+                    features.get("primary_module_id"),
+                    json.dumps(list(features.get("secondary_module_ids") or [])),
+                    float(features.get("confidence") or 0.0),
+                    json.dumps(list(features.get("reasons") or [])),
+                    (features.get("classifier_version") or "").strip() or None,
+                    now,
+                    now,
+                ),
+            )
+            conn.commit()
+            return None
+        except sqlite3.IntegrityError as e:
+            conn.rollback()
+            return _mensaje_integridad(e)
+        except sqlite3.OperationalError as e:
+            conn.rollback()
+            return f"Error de base de datos: {e.args[0] if e.args else 'desconocido'}."
+
+
+def get_partida_features(partida_id: int) -> Optional[Dict]:
+    with database.get_connection(read_only=True) as conn:
+        row = conn.execute(
+            """SELECT partida_id, action, element, system, unit, material,
+                      dimensions_json, conditions_json, line_kind, primary_module_id,
+                      secondary_module_ids_json, confidence, reasons_json,
+                      classifier_version, created_at, updated_at
+               FROM historical_partida_feature WHERE partida_id=?""",
+            (partida_id,),
+        ).fetchone()
+    if not row:
+        return None
+    return {
+        "partida_id": int(row[0]),
+        "action": row[1],
+        "element": row[2],
+        "system": row[3],
+        "unit": row[4] or "",
+        "material": row[5],
+        "dimensions": json.loads(row[6]) if row[6] else [],
+        "conditions": json.loads(row[7]) if row[7] else [],
+        "line_kind": row[8],
+        "primary_module_id": row[9],
+        "secondary_module_ids": json.loads(row[10]) if row[10] else [],
+        "confidence": float(row[11] or 0.0),
+        "reasons": json.loads(row[12]) if row[12] else [],
+        "classifier_version": row[13] or "",
+        "created_at": row[14] or "",
+        "updated_at": row[15] or "",
+    }
 
 
 def clear_historical_partida_modules_for_budget(historical_budget_id: int) -> Optional[str]:
