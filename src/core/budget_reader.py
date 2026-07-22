@@ -15,6 +15,7 @@ Detección inteligente de hoja:
 
 import io
 import logging
+import math
 import os
 import re
 import zipfile
@@ -359,23 +360,40 @@ class BudgetReader:
                         precio = num
                         break
 
-            importe = None
+            raw_total = None
             for total_col in ("I", "M"):
                 if total_col in cells:
                     num = self._get_cell_number(cells[total_col], shared_strings)
                     if num is not None:
-                        importe = num
+                        raw_total = num
                         break
-            if importe is None:
-                importe = round(cantidad * precio, 2)
+            importe = raw_total if raw_total is not None else round(cantidad * precio, 2)
+
+            unidad_limpia = unidad.strip() if unidad else ""
+            issues = []
+            if not unidad_limpia:
+                issues.append("MISSING_UNIT")
+            if (
+                cantidad > 0
+                and precio > 0
+                and raw_total is not None
+                and raw_total > 0
+                and not math.isclose(cantidad * precio, raw_total, rel_tol=0.02, abs_tol=0.02)
+            ):
+                issues.append("LINE_TOTAL_MISMATCH")
 
             partidas.append({
                 "numero": a_val.strip(),
                 "concepto": c_val.strip(),
-                "unidad": unidad.strip() if unidad else "ud",
+                "unidad": unidad_limpia if unidad_limpia else "ud",
                 "cantidad": cantidad,
                 "precio": precio,
                 "importe": round(float(importe), 2),
+                "source_row": row_num,
+                "validation_issues": issues,
+                "raw_quantity": cantidad,
+                "raw_unit_price": precio,
+                "raw_total": raw_total,
             })
         return partidas
 

@@ -116,7 +116,7 @@ Incluir los resultados observados: 254 partidas, 33 sin módulo, 168 con más de
 - Produces por partida: `source_row: int`, `validation_issues: list[str]`, `raw_quantity`, `raw_unit_price`, `raw_total`.
 - `BudgetReader.read()` sigue devolviendo las mismas claves existentes y añade estas claves opcionales.
 
-- [ ] **Step 1: Añadir un Excel fixture con total incoherente y otro con unidad ausente**
+- [x] **Step 1: Añadir un Excel fixture con total incoherente y otro con unidad ausente**
 
 ```python
 assert partida["source_row"] == 17
@@ -124,13 +124,13 @@ assert "LINE_TOTAL_MISMATCH" in partida["validation_issues"]
 assert "MISSING_UNIT" in partida["validation_issues"]
 ```
 
-- [ ] **Step 2: Ejecutar el test de lectura y confirmar fallo**
+- [x] **Step 2: Ejecutar el test de lectura y confirmar fallo**
 
 Run: `pytest tests/test_budget_reader.py -k "source_row or validation_issues" -v`
 
 Expected: FAIL al no existir las claves.
 
-- [ ] **Step 3: Calcular incidencias locales en `_extract_partidas`**
+- [x] **Step 3: Calcular incidencias locales en `_extract_partidas`**
 
 ```python
 issues = []
@@ -142,7 +142,7 @@ if cantidad > 0 and precio > 0 and total > 0 and not math.isclose(cantidad * pre
 
 No descartar filas aquí: el analizador decidirá después si son elegibles.
 
-- [ ] **Step 4: Ejecutar los tests de lectura**
+- [x] **Step 4: Ejecutar los tests de lectura**
 
 Run: `pytest tests/test_budget_reader.py -v`
 
@@ -159,7 +159,7 @@ Expected: PASS.
 - Nuevos campos de `historical_budget`: `file_sha256 TEXT`, `source_kind TEXT NOT NULL DEFAULT 'external_excel'`, `learning_status TEXT NOT NULL DEFAULT 'PENDING_REVIEW'`, `approved_at TEXT`, `approved_by TEXT`.
 - Valores permitidos: `external_excel`, `own_final_budget`, `ai_draft`, `template`; y `INCLUDED`, `PENDING_REVIEW`, `EXCLUDED`.
 
-- [ ] **Step 1: Escribir pruebas de migración desde versión 1 e idempotencia**
+- [x] **Step 1: Escribir pruebas de migración desde versión 1 e idempotencia**
 
 ```python
 assert row["source_kind"] == "external_excel"
@@ -168,13 +168,13 @@ assert table_exists(conn, "historical_partida_feature")
 assert schema_version(conn) == CURRENT_SCHEMA_VERSION
 ```
 
-- [ ] **Step 2: Ejecutar las pruebas de migración y confirmar fallo**
+- [x] **Step 2: Ejecutar las pruebas de migración y confirmar fallo**
 
 Run: `pytest tests/test_database_migrations.py -k "historical_feature or schema_version" -v`
 
 Expected: FAIL porque la migración no existe.
 
-- [ ] **Step 3: Añadir migración incremental explícita**
+- [x] **Step 3: Añadir migración incremental explícita**
 
 ```python
 def migrate_v2(conn: sqlite3.Connection) -> None:
@@ -185,7 +185,7 @@ def migrate_v2(conn: sqlite3.Connection) -> None:
 
 La función debe comprobar columnas existentes con `PRAGMA table_info` antes de cada `ALTER TABLE`.
 
-- [ ] **Step 4: Ejecutar migraciones contra fixture legacy y una base ya migrada**
+- [x] **Step 4: Ejecutar migraciones contra fixture legacy y una base ya migrada**
 
 Run: `pytest tests/test_database_migrations.py -v`
 
@@ -193,6 +193,21 @@ Expected: PASS; una segunda apertura no produce excepción ni modifica registros
 
 ### Task 4: Impedir el aprendizaje implícito y detectar duplicados de archivo
 
+> **Estado (2026-07-22): alcance reducido implementado, decisión explícita del usuario.**
+> Se cortó el riesgo real (`_schedule_historical_feedback` en `main_frame.py` marcaba
+> como `INCLUDED` cualquier presupuesto propio finalizado que saliera `VALID`, sin
+> aprobación humana) sin implementar todavía el resto de la tarea:
+> - Hecho: `analyze_budget()`/`analyze_files()` aceptan `source_kind` (`external_excel`
+>   por defecto). `own_final_budget`, `ai_draft` y `template` fuerzan
+>   `learning_status='PENDING_REVIEW'` aunque el análisis sea `VALID`. El bucle de
+>   retroalimentación propio ahora pasa `source_kind='own_final_budget'`. El escaneo
+>   normal de histórico externo (`external_excel`) sigue auto-incluyendo `VALID` sin
+>   cambios. Persistencia de `source_kind`/`file_sha256`/`approved_at`/`approved_by`
+>   en `historical_repository.py` (columnas ya migradas en la Tarea 3).
+> - Pendiente: renombrar/adaptar la interfaz a `analyze_file`/`HistoricalAnalysisResult`,
+>   detección de duplicados por SHA-256 (`find_budget_by_sha256`), y
+>   `approve_budget_for_learning(budget_id, approved_by)` explícito (este último
+>   probablemente debe ir junto a la Tarea 12, que añade el botón de aprobación en la UI).
 
 **Files:**
 - Modify: `src/core/historical_budget_analyzer.py`

@@ -343,14 +343,17 @@ class MainFrame(QMainWindow):
                 "El presupuesto se creó, pero no se pudo guardar su detalle completo en la base de datos.",
             )
         else:
-            # Bucle de retroalimentación: el presupuesto recién creado se incorpora
-            # al corpus histórico y se reconstruyen los patrones. Así las partidas
-            # confirmadas refuerzan su frecuencia para futuras sugerencias.
+            # Bucle de retroalimentación: el presupuesto recién creado se registra
+            # en el histórico como 'own_final_budget', pendiente de revisión. No
+            # se auto-incluye en el aprendizaje aunque el análisis salga VALID:
+            # una partida completada por IA no debe convertirse en precio real
+            # sin aprobación humana explícita.
             self._schedule_historical_feedback(result.excel_path)
         self._open_dashboard(refresh=True)
 
     def _schedule_historical_feedback(self, excel_path):
-        """Ingiere en segundo plano un presupuesto finalizado en la memoria histórica.
+        """Registra en segundo plano un presupuesto finalizado como histórico
+        pendiente de revisión (source_kind='own_final_budget').
 
         Reutiliza el analizador existente (con salto por mtime y reconstrucción
         de patrones incluida). Es silencioso: cualquier error se registra y se
@@ -367,7 +370,9 @@ class MainFrame(QMainWindow):
         def _work():
             from src.core.historical_budget_analyzer import HistoricalBudgetAnalyzer
             return HistoricalBudgetAnalyzer().analyze_files(
-                [excel_path], source_folder=_os.path.dirname(excel_path),
+                [excel_path],
+                source_folder=_os.path.dirname(excel_path),
+                source_kind="own_final_budget",
             )
 
         def _done(ok, payload):

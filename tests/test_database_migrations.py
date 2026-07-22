@@ -126,6 +126,38 @@ _CANONICAL_TABLES = (
 )
 
 
+def test_historical_budget_gets_source_kind_and_feature_table_on_migration(legacy_db_env):
+    """Fase 1, Tarea 3: procedencia explícita y tabla de ficha derivada (v2)."""
+    with database.get_connection() as conn:
+        assert database.get_schema_version(conn) == database.CURRENT_SCHEMA_VERSION
+
+        hb_cols = _columns(conn, "historical_budget")
+        assert {"file_sha256", "source_kind", "approved_at", "approved_by"}.issubset(hb_cols)
+        assert conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='historical_partida_feature'"
+        ).fetchone() is not None
+
+        # Fila legacy preexistente: la columna nueva se rellena con el valor por
+        # defecto de procedencia (ALTER TABLE ADD COLUMN aplica el DEFAULT a filas
+        # ya existentes), sin tocar su learning_status ya decidido.
+        row = conn.execute(
+            "SELECT source_kind, learning_status FROM historical_budget WHERE id=1"
+        ).fetchone()
+        assert row[0] == "external_excel"
+        assert row[1] == "INCLUDED"
+
+
+def test_historical_partida_feature_table_has_expected_columns(legacy_db_env):
+    with database.get_connection() as conn:
+        cols = _columns(conn, "historical_partida_feature")
+    assert cols == {
+        "partida_id", "action", "element", "system", "unit", "material",
+        "dimensions_json", "conditions_json", "line_kind", "primary_module_id",
+        "secondary_module_ids_json", "confidence", "reasons_json",
+        "classifier_version", "created_at", "updated_at",
+    }
+
+
 def test_canonical_schema_tables_exist_in_fresh_and_migrated_database(
     legacy_db_env, tmp_path, monkeypatch,
 ):

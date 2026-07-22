@@ -351,4 +351,85 @@ class TestHistoricalBudgetAnalyzer:
         assert stored["analysis_status"] == "EXCLUDED_INCOMPLETE_DATA"
         assert stored["learning_status"] == "NOT_ELIGIBLE"
         assert stored["learning_status_source"] == "AUTO"
+
+    def _mock_valid_probe_and_reader(self, analyzer, monkeypatch):
+        monkeypatch.setattr(
+            analyzer.probe,
+            "probe",
+            lambda *_args, **_kwargs: {
+                "is_compatible": True,
+                "score": 24,
+                "header_score": 12,
+                "partida_score": 12,
+                "selected_sheet": "PTO",
+                "selected_sheet_index": 0,
+                "expected_numero": "001-26",
+                "detected_numero": "001-26",
+                "numero_matches": True,
+                "partidas_detectadas": 2,
+                "issues": [],
+            },
+        )
+        monkeypatch.setattr(
+            analyzer.reader,
+            "read",
+            lambda *_args, **_kwargs: {
+                "cabecera": {"numero": "001-26", "obra": "Reparacion bajante", "fecha": "2026-01-01", "cliente": "Test"},
+                "partidas": [
+                    {"numero": "1.1", "concepto": "Desmontaje bajante", "unidad": "ml", "cantidad": 1, "precio": 10, "importe": 10},
+                    {"numero": "1.2", "concepto": "Instalacion bajante", "unidad": "ml", "cantidad": 1, "precio": 15, "importe": 15},
+                ],
+                "subtotal": 25.0,
+                "total": 25.0,
+                "diagnostics": {"selected_sheet": "PTO", "selected_sheet_index": 0, "detected_numero": "001-26", "numero_matches": True},
+            },
+        )
+
+    def test_own_final_budget_source_kind_stays_pending_review_even_when_valid(self, tmp_path, monkeypatch):
+        """Fase 1, Tarea 4 (alcance reducido): el bucle de retroalimentación propio
+        (presupuestos recién finalizados por la app) nunca debe auto-incluirse en
+        la memoria de aprendizaje, aunque el análisis salga VALID."""
+        db_path = tmp_path / "datos_historical_own_final_budget.db"
+        monkeypatch.setenv("CUBIAPP_DB_PATH", str(db_path))
+        with database.get_connection() as _conn:
+            pass
+
+        excel_path = tmp_path / "001-26 propio_finalizado.xlsx"
+        excel_path.write_text("placeholder", encoding="utf-8")
+
+        analyzer = HistoricalBudgetAnalyzer()
+        self._mock_valid_probe_and_reader(analyzer, monkeypatch)
+
+        result = analyzer.analyze_budget(
+            str(excel_path), force_reanalyze=True, source_kind="own_final_budget"
+        )
+        assert result["status"] == "processed"
+
+        stored = get_historical_budget_by_path(str(excel_path))
+        assert stored["analysis_status"] == "VALID"
+        assert stored["learning_status"] == "PENDING_REVIEW"
         assert stored["usable_for_learning"] is False
+        assert stored["source_kind"] == "own_final_budget"
+
+    def test_external_excel_source_kind_still_auto_includes_when_valid(self, tmp_path, monkeypatch):
+        """El escaneo normal de un histórico externo real sigue auto-incluyendo
+        presupuestos VALID, sin cambios de comportamiento (source_kind por defecto)."""
+        db_path = tmp_path / "datos_historical_external_excel.db"
+        monkeypatch.setenv("CUBIAPP_DB_PATH", str(db_path))
+        with database.get_connection() as _conn:
+            pass
+
+        excel_path = tmp_path / "001-26 externo.xlsx"
+        excel_path.write_text("placeholder", encoding="utf-8")
+
+        analyzer = HistoricalBudgetAnalyzer()
+        self._mock_valid_probe_and_reader(analyzer, monkeypatch)
+
+        result = analyzer.analyze_budget(str(excel_path), force_reanalyze=True)
+        assert result["status"] == "processed"
+
+        stored = get_historical_budget_by_path(str(excel_path))
+        assert stored["analysis_status"] == "VALID"
+        assert stored["learning_status"] == "INCLUDED"
+        assert stored["usable_for_learning"] is True
+        assert stored["source_kind"] == "external_excel"

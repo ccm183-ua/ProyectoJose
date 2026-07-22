@@ -71,7 +71,8 @@ def get_historical_budget_by_path(ruta_excel: str) -> Optional[Dict]:
                       learning_status, learning_status_source, learning_decision_reason,
                       learning_decision_at, analyzer_version, probe_version, reader_version,
                       quality_rules_version, classifier_version, probe_diagnostics_json,
-                      header_score, partida_score, error
+                      header_score, partida_score, error,
+                      file_sha256, source_kind, approved_at, approved_by
                FROM historical_budget WHERE ruta_excel=?""",
             (ruta,),
         )
@@ -119,6 +120,10 @@ def get_historical_budget_by_path(ruta_excel: str) -> Optional[Dict]:
         "header_score": int(row[37] or 0),
         "partida_score": int(row[38] or 0),
         "error": row[39] or "",
+        "file_sha256": row[40] or "",
+        "source_kind": row[41] or "external_excel",
+        "approved_at": row[42] or "",
+        "approved_by": row[43] or "",
     }
 
 
@@ -134,7 +139,8 @@ def get_historical_budget(historical_budget_id: int) -> Optional[Dict]:
                       learning_status, learning_status_source, learning_decision_reason,
                       learning_decision_at, analyzer_version, probe_version, reader_version,
                       quality_rules_version, classifier_version, probe_diagnostics_json,
-                      header_score, partida_score, error
+                      header_score, partida_score, error,
+                      file_sha256, source_kind, approved_at, approved_by
                FROM historical_budget WHERE id=?""",
             (historical_budget_id,),
         )
@@ -182,6 +188,10 @@ def get_historical_budget(historical_budget_id: int) -> Optional[Dict]:
         "header_score": int(row[37] or 0),
         "partida_score": int(row[38] or 0),
         "error": row[39] or "",
+        "file_sha256": row[40] or "",
+        "source_kind": row[41] or "external_excel",
+        "approved_at": row[42] or "",
+        "approved_by": row[43] or "",
     }
 
 
@@ -202,8 +212,9 @@ def upsert_historical_budget(data: Dict) -> Tuple[Optional[int], Optional[str]]:
                     detected_numero, numero_matches, usable_for_learning, learning_status,
                     learning_status_source, learning_decision_reason, learning_decision_at,
                     analyzer_version, probe_version, reader_version, quality_rules_version,
-                    classifier_version, probe_diagnostics_json, header_score, partida_score, error)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    classifier_version, probe_diagnostics_json, header_score, partida_score, error,
+                    file_sha256, source_kind, approved_at, approved_by)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(ruta_excel) DO UPDATE SET
                        ruta_carpeta=excluded.ruta_carpeta,
                        numero_proyecto=excluded.numero_proyecto,
@@ -242,7 +253,11 @@ def upsert_historical_budget(data: Dict) -> Tuple[Optional[int], Optional[str]]:
                        probe_diagnostics_json=excluded.probe_diagnostics_json,
                        header_score=excluded.header_score,
                        partida_score=excluded.partida_score,
-                       error=excluded.error
+                       error=excluded.error,
+                       file_sha256=excluded.file_sha256,
+                       source_kind=excluded.source_kind,
+                       approved_at=excluded.approved_at,
+                       approved_by=excluded.approved_by
                 """,
                 (
                     ruta,
@@ -284,6 +299,10 @@ def upsert_historical_budget(data: Dict) -> Tuple[Optional[int], Optional[str]]:
                     int(data.get("header_score", 0)),
                     int(data.get("partida_score", 0)),
                     (data.get("error") or "").strip() or None,
+                    (data.get("file_sha256") or "").strip() or None,
+                    (data.get("source_kind") or "").strip() or "external_excel",
+                    (data.get("approved_at") or "").strip() or None,
+                    (data.get("approved_by") or "").strip() or None,
                 ),
             )
             conn.commit()

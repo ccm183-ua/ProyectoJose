@@ -201,6 +201,30 @@ def _migrate_execution_module_descripcion(conn: sqlite3.Connection) -> None:
         conn.commit()
 
 
+def _migrate_historical_budget_source_kind(conn: sqlite3.Connection) -> None:
+    """Añade procedencia/aprobación explícita a historical_budget (BDs anteriores al cambio).
+
+    ALTER TABLE ADD COLUMN ... DEFAULT aplica el valor por defecto también a las
+    filas ya existentes, así que las importaciones previas quedan marcadas como
+    'external_excel' sin tocar su learning_status ya decidido.
+    """
+    cur = conn.execute("PRAGMA table_info(historical_budget)")
+    columns = {row[1] for row in cur.fetchall()}
+    column_defs = {
+        "file_sha256": "TEXT",
+        "source_kind": "TEXT NOT NULL DEFAULT 'external_excel'",
+        "approved_at": "TEXT",
+        "approved_by": "TEXT",
+    }
+    changed = False
+    for col_name, col_def in column_defs.items():
+        if col_name not in columns:
+            conn.execute(f"ALTER TABLE historical_budget ADD COLUMN {col_name} {col_def}")
+            changed = True
+    if changed:
+        conn.commit()
+
+
 def _seed_execution_modules(conn: sqlite3.Connection) -> None:
     """Siembra el catálogo de módulos del clasificador. No reactiva ni sobrescribe
     personalizaciones del usuario: solo crea nombres faltantes y completa
@@ -233,7 +257,7 @@ def _ensure_presupuesto_v2_indexes(conn: sqlite3.Connection) -> None:
 # Version explicita del esquema. Se incrementa al añadir una migracion nueva
 # a _MIGRATIONS; una BDD nueva se crea ya en esta version (las CREATE TABLE
 # de _SCHEMA_SQL/_HISTORICAL_SCHEMA_SQL incluyen todas las columnas).
-CURRENT_SCHEMA_VERSION = 1
+CURRENT_SCHEMA_VERSION = 2
 
 # Migraciones ordenadas e idempotentes (cada una comprueba su propio estado
 # antes de tocar nada). Se ejecutan en este orden porque el seed de módulos
@@ -245,6 +269,7 @@ _MIGRATIONS = [
     _ensure_presupuesto_v2_indexes,
     _migrate_execution_module_descripcion,
     _seed_execution_modules,
+    _migrate_historical_budget_source_kind,
 ]
 
 
@@ -536,7 +561,11 @@ CREATE TABLE IF NOT EXISTS historical_budget (
     probe_diagnostics_json TEXT,
     header_score INTEGER NOT NULL DEFAULT 0,
     partida_score INTEGER NOT NULL DEFAULT 0,
-    error TEXT
+    error TEXT,
+    file_sha256 TEXT,
+    source_kind TEXT NOT NULL DEFAULT 'external_excel',
+    approved_at TEXT,
+    approved_by TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_historical_budget_run ON historical_budget(analysis_run_id);
 CREATE INDEX IF NOT EXISTS idx_historical_budget_status ON historical_budget(analysis_status);
@@ -641,6 +670,25 @@ CREATE TABLE IF NOT EXISTS historical_memory_event (
     message TEXT,
     metadata_json TEXT,
     created_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS historical_partida_feature (
+    partida_id INTEGER PRIMARY KEY REFERENCES historical_partida(id) ON DELETE CASCADE,
+    action TEXT,
+    element TEXT,
+    system TEXT,
+    unit TEXT,
+    material TEXT,
+    dimensions_json TEXT,
+    conditions_json TEXT,
+    line_kind TEXT,
+    primary_module_id TEXT,
+    secondary_module_ids_json TEXT,
+    confidence REAL,
+    reasons_json TEXT,
+    classifier_version TEXT,
+    created_at TEXT,
+    updated_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS suggestion_template (

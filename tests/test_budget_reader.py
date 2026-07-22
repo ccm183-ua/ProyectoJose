@@ -168,6 +168,58 @@ class TestBudgetReaderTotals:
         assert isinstance(result["total"], float)
 
 
+def _inline_cell(text):
+    return {"attrs": "", "inner": f"<is><t>{text}</t></is>"}
+
+
+class TestBudgetReaderPartidaValidationIssues:
+    """Incidencias locales calculadas por _extract_partidas (Fase 1, Tarea 2).
+
+    Usa filas construidas a mano en vez de un .xlsx real: _extract_partidas
+    ya trabaja sobre el dict {fila: {columna: celda}} que produce extract_rows,
+    así que no hace falta pasar por ExcelManager/TemplateManager para probar
+    su lógica de validación.
+    """
+
+    def test_missing_unit_and_line_total_mismatch_are_reported_without_dropping_row(self):
+        rows = {
+            17: {
+                "A": _inline_cell("1"),
+                "C": _inline_cell("Partida con incidencias"),
+                # sin "B": unidad ausente
+                "G": _inline_cell("2"),
+                "H": _inline_cell("10"),
+                "I": _inline_cell("25"),  # 2*10=20 != 25 -> LINE_TOTAL_MISMATCH
+            }
+        }
+        reader = BudgetReader()
+        partidas = reader._extract_partidas(rows, [])
+
+        assert len(partidas) == 1
+        partida = partidas[0]
+        assert partida["source_row"] == 17
+        assert "MISSING_UNIT" in partida["validation_issues"]
+        assert "LINE_TOTAL_MISMATCH" in partida["validation_issues"]
+        assert partida["raw_quantity"] == 2.0
+        assert partida["raw_unit_price"] == 10.0
+        assert partida["raw_total"] == 25.0
+
+    def test_consistent_row_has_no_validation_issues(self):
+        rows = {
+            17: {
+                "A": _inline_cell("1"),
+                "C": _inline_cell("Partida correcta"),
+                "B": _inline_cell("ml"),
+                "G": _inline_cell("2"),
+                "H": _inline_cell("10"),
+                "I": _inline_cell("20"),
+            }
+        }
+        reader = BudgetReader()
+        partida = reader._extract_partidas(rows, [])[0]
+        assert partida["validation_issues"] == []
+
+
 class TestBudgetReaderErrors:
     """Manejo de errores."""
 

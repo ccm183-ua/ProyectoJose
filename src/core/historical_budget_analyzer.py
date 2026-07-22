@@ -141,6 +141,7 @@ class HistoricalBudgetAnalyzer:
         excel_paths: List[str],
         source_folder: str = "",
         force_reanalyze: bool = False,
+        source_kind: str = "external_excel",
     ) -> Dict:
         if len(excel_paths or []) > 1:
             try:
@@ -184,6 +185,7 @@ class HistoricalBudgetAnalyzer:
                 path,
                 metadata={"analysis_run_id": run_id},
                 force_reanalyze=force_reanalyze,
+                source_kind=source_kind,
             )
             status = result.get("status")
             if status == "processed":
@@ -222,11 +224,16 @@ class HistoricalBudgetAnalyzer:
         )
         return summary
 
+    # source_kind que nunca deben auto-incluirse en la memoria de aprendizaje,
+    # aunque el analisis salga VALID: requieren aprobacion humana explicita.
+    _SOURCE_KINDS_REQUIRING_APPROVAL = ("own_final_budget", "ai_draft", "template")
+
     def analyze_budget(
         self,
         excel_path: str,
         metadata: Optional[Dict] = None,
         force_reanalyze: bool = False,
+        source_kind: str = "external_excel",
     ) -> Dict:
         metadata = metadata or {}
         mtime = _file_mtime_iso(excel_path)
@@ -295,6 +302,7 @@ class HistoricalBudgetAnalyzer:
                     "header_score": int(probe_result.get("header_score") or 0),
                     "partida_score": int(probe_result.get("partida_score") or 0),
                     "error": "",
+                    "source_kind": source_kind,
                 }
                 _apply_existing_manual_learning_decision(budget_payload, existing)
                 budget_id, budget_err = upsert_historical_budget(budget_payload)
@@ -370,6 +378,7 @@ class HistoricalBudgetAnalyzer:
                 "header_score": int(probe_result.get("header_score") or 0),
                 "partida_score": int(probe_result.get("partida_score") or 0),
                 "error": "",
+                "source_kind": source_kind,
             }
             quality = validate_budget_quality(read_result, expected_numero=expected_numero)
             issues.extend(quality.get("issues", []))
@@ -393,6 +402,21 @@ class HistoricalBudgetAnalyzer:
                 budget_payload["learning_status"] = "PENDING_REVIEW"
                 budget_payload["learning_status_source"] = "AUTO"
                 budget_payload["learning_decision_reason"] = "Requiere revision manual por avisos."
+                budget_payload["learning_decision_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            if (
+                source_kind in self._SOURCE_KINDS_REQUIRING_APPROVAL
+                and budget_payload["learning_status"] == "INCLUDED"
+            ):
+                # Nunca auto-incluir presupuestos propios/IA aunque el analisis
+                # economico salga VALID: solo una aprobacion humana explicita
+                # (fuera de este metodo) puede marcarlos como INCLUDED.
+                budget_payload["usable_for_learning"] = False
+                budget_payload["learning_status"] = "PENDING_REVIEW"
+                budget_payload["learning_status_source"] = "AUTO"
+                budget_payload["learning_decision_reason"] = (
+                    f"Origen '{source_kind}' requiere aprobacion explicita antes de aprender de el."
+                )
                 budget_payload["learning_decision_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
             all_warnings = [f"WARN:{w}" for w in warnings] + [f"SEVERE:{w}" for w in severe_warnings]
@@ -472,6 +496,7 @@ class HistoricalBudgetAnalyzer:
                 "learning_status": "NOT_ELIGIBLE",
                 "learning_status_source": "AUTO",
                 "learning_decision_reason": "Error de lectura durante el analisis.",
+                "source_kind": source_kind,
                 "learning_decision_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "analyzer_version": self.ANALYZER_VERSION,
                 "probe_version": self.PROBE_VERSION,
