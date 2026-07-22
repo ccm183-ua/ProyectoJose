@@ -12,12 +12,21 @@ from src.core.partida_normalizer import normalize_partida_for_excel
 
 
 class _FakeSuggestionService:
-    def __init__(self, partidas=None, detected_modules=None, confidence=0.8, failure_reason="OK", raises=None):
+    def __init__(
+        self,
+        partidas=None,
+        detected_modules=None,
+        confidence=0.8,
+        failure_reason="OK",
+        raises=None,
+        evidence_report=None,
+    ):
         self._partidas = partidas or []
         self._detected_modules = detected_modules or []
         self._confidence = confidence
         self._failure_reason = failure_reason
         self._raises = raises
+        self._evidence_report = evidence_report if evidence_report is not None else []
         self.calls = 0
 
     def suggest_for_project(self, project_data, user_description=""):
@@ -29,6 +38,7 @@ class _FakeSuggestionService:
             "detected_modules": self._detected_modules,
             "confidence": self._confidence,
             "failure_reason": self._failure_reason,
+            "evidence_report": self._evidence_report,
         }
 
 
@@ -228,6 +238,36 @@ def test_mixed_coverage_tags_source_per_partida_and_survives_excel_normalization
         normalized = normalize_partida_for_excel(p, source=p.get("source"))
         assert normalized["source"] != "unknown"
         assert normalized["source"] == p["source"]
+
+
+# Fase 4, Tarea 11 (alcance reducido): la trazabilidad de evidencia calculada
+# por el comparador (Tarea 8/10) llega hasta el resultado del orquestador, en
+# vez de perderse al usar solo el filtro de confianza/frecuencia agregado.
+def test_evidence_report_from_suggestion_service_is_passed_through():
+    evidence = [
+        {"level": "exact", "precio_unitario": 20.0, "partida_id": 1},
+        {"level": "related", "precio_unitario": 999.0, "partida_id": 2},
+    ]
+    suggestion_service = _FakeSuggestionService(
+        partidas=[_historical_partida()],
+        detected_modules=[{"name": "sustitucion_bajante", "confidence": 0.9}],
+        evidence_report=evidence,
+    )
+    orch = _make_orchestrator(suggestion_service, _FakeGenerator())
+
+    result = orch.generate("Sustituir bajante")
+
+    assert result["evidence_report"] == evidence
+
+
+def test_evidence_report_defaults_to_empty_list_when_suggestion_service_omits_it():
+    class _BareSuggestionService:
+        def suggest_for_project(self, project_data, user_description=""):
+            return {"partidas": [], "detected_modules": [], "confidence": 0.0, "failure_reason": "OK"}
+
+    orch = _make_orchestrator(_BareSuggestionService(), _FakeGenerator())
+    result = orch.generate("Obra sin descripcion")
+    assert result["evidence_report"] == []
 
 
 def test_only_historical_coverage_reports_historical_source():

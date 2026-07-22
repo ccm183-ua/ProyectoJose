@@ -919,6 +919,36 @@ def set_historical_budget_learning_status(
             return f"Error de base de datos: {e.args[0] if e.args else 'desconocido'}."
 
 
+def approve_budget_for_learning(historical_budget_id: int, approved_by: str) -> Optional[str]:
+    """Aprobación humana explícita: único camino legítimo para que un
+    presupuesto (own_final_budget/ai_draft/template incluidos) entre en la
+    memoria reutilizable, aunque su análisis técnico ya fuera VALID (ver
+    Tarea 4: analyze_budget() nunca auto-incluye esos orígenes)."""
+    approved_by_clean = (approved_by or "").strip()
+    if not approved_by_clean:
+        return "approved_by es obligatorio."
+    err = set_historical_budget_learning_status(
+        historical_budget_id,
+        learning_status="INCLUDED",
+        usable_for_learning=True,
+        decision_source="MANUAL",
+        decision_reason="Aprobado explícitamente por el usuario para memoria histórica.",
+    )
+    if err:
+        return err
+    with database.get_connection() as conn:
+        try:
+            conn.execute(
+                "UPDATE historical_budget SET approved_at=?, approved_by=? WHERE id=?",
+                (_now_str(), approved_by_clean, historical_budget_id),
+            )
+            conn.commit()
+            return None
+        except sqlite3.OperationalError as e:
+            conn.rollback()
+            return f"Error de base de datos: {e.args[0] if e.args else 'desconocido'}."
+
+
 def get_historical_learning_metrics(analysis_run_id: Optional[int] = None) -> Dict:
     with database.get_connection(read_only=True) as conn:
         if analysis_run_id:

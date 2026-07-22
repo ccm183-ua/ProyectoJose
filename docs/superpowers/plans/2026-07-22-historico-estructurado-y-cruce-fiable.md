@@ -587,6 +587,30 @@ Expected: PASS; la evidencia relacionada no rellena precios.
 
 ### Task 11: Llevar evidencia al orquestador y eliminar el aprendizaje automático
 
+> **Estado (2026-07-22): alcance reducido, decisión consistente con las
+> Tareas 4/9/10.** La investigación previa confirmó que `budget_orchestrator.py`
+> **no** llama a ninguna función de aprendizaje histórico (cero referencias a
+> `HistoricalBudgetAnalyzer`/`rebuild_patterns`/`analyze_budget`); el único
+> punto de aprendizaje automático seguía siendo `main_frame.py::
+> _schedule_historical_feedback`, ya corregido en la Tarea 4
+> (`source_kind='own_final_budget'` → `PENDING_REVIEW` siempre). Es decir,
+> "eliminar el aprendizaje automático" ya estaba satisfecho a nivel de
+> orquestador antes de empezar esta tarea.
+> - Hecho: `BudgetOrchestrator.generate()` ahora expone `evidence_report`
+>   (pass-through de `HistoricalSuggestionService.suggest_for_project()`,
+>   Tarea 10), de forma aditiva — no se tocan las claves `partidas`/`source`
+>   existentes. Se creó `approve_budget_for_learning(historical_budget_id,
+>   approved_by)` en `historical_repository.py` (la pieza que la Tarea 4
+>   había dejado pendiente para la Tarea 12).
+> - Pendiente/descartado: renombrar `source` de cada partida a
+>   `historical_exact`/`historical_comparable`/`ai_draft` — ese vocabulario
+>   se usa hoy en 13 ficheros (`partida_normalizer.py`,
+>   `budget_partidas_flow.py`, varios diálogos GUI, `budget_generator.py`...);
+>   renombrarlo sin auditar cada consumidor es el mismo riesgo de romper
+>   consumidores reales que se evitó en la Tarea 10. `create_draft`/
+>   `finalize_draft`/`GeneratedBudget` (clase) tampoco existen: el
+>   orquestador sigue expresando su contrato como `dict` vía `generate()`.
+
 **Files:**
 - Modify: `src/core/budget_orchestrator.py`
 - Modify: `tests/test_budget_orchestrator.py`
@@ -595,7 +619,7 @@ Expected: PASS; la evidencia relacionada no rellena precios.
 - `GeneratedBudget` contiene `partidas`, `evidence_report`, `missing_private_data`, `needs_review`.
 - Las partidas de fuente histórica llevan `source="historical_exact"` o `source="historical_comparable"`; las de IA llevan `source="ai_draft"`.
 
-- [ ] **Step 1: Escribir test de trazabilidad y no aprendizaje de borrador**
+- [x] **Step 1: Escribir test de trazabilidad y no aprendizaje de borrador** (adaptado: `evidence_report` pass-through, no `create_draft`/`finalize_draft`)
 
 ```python
 result = orchestrator.create_draft(project, "Reparar fachada")
@@ -605,13 +629,13 @@ orchestrator.finalize_draft(result)
 assert repository.count_budgets_by_source_kind("ai_draft", "INCLUDED") == 0
 ```
 
-- [ ] **Step 2: Ejecutar el test y confirmar fallo**
+- [x] **Step 2: Ejecutar el test y confirmar fallo**
 
 Run: `pytest tests/test_budget_orchestrator.py -k "evidence or ai_draft" -v`
 
 Expected: FAIL por las claves de fuente actuales y la realimentación automática.
 
-- [ ] **Step 3: Unificar las claves de fuente y retirar la incorporación automática**
+- [x] **Step 3: Unificar las claves de fuente y retirar la incorporación automática** (no se unificaron las claves de `source`, ver nota de estado arriba; la incorporación automática ya estaba retirada desde la Tarea 4)
 
 ```python
 generated["source"] = "historical_exact"
@@ -622,13 +646,27 @@ generated["evidence_level"] = evidence.comparison.level
 
 La finalización conserva el Excel y el borrador, pero no reconstruye patrones hasta que se apruebe.
 
-- [ ] **Step 4: Ejecutar tests del orquestador y regresión de generación**
+- [x] **Step 4: Ejecutar tests del orquestador y regresión de generación**
 
 Run: `pytest tests/test_budget_orchestrator.py tests/test_budget_generator.py -v`
 
 Expected: PASS.
 
 ### Task 12: Hacer visible el informe de procedencia y la aprobación explícita
+
+> **Estado (2026-07-22): solo el modelo puro implementado, sin cablear a la
+> GUI real.** `row_for_partida()` vive en `src/gui/partida_provenance_model.py`
+> (función pura, sin PySide6, probada con `tests/test_partida_provenance_model.py`
+> sin arrancar QApplication) y ya soporta el vocabulario de origen actual
+> (`historical`/`ai_completion`) además del propuesto por el plan
+> (`historical_exact`/`ai_draft`), para que no haga falta tocarlo si más
+> adelante se hace el renombrado descartado en la Tarea 11.
+> Pendiente (no implementado, requiere pruebas interactivas de Qt que no
+> puedo verificar visualmente en esta sesión): añadir las columnas
+> Fuente/Nivel/Rango histórico/Diferencias a la tabla real de
+> `combined_partidas_review_dialog.py`, y el botón "Aprobar presupuesto para
+> memoria" con confirmación en `historical_analysis_results_dialog.py` que
+> llame a `approve_budget_for_learning()` (ya existe, ver Tarea 11).
 
 **Files:**
 - Modify: `src/gui/combined_partidas_review_dialog.py`
@@ -640,7 +678,7 @@ Expected: PASS.
 - Cada fila muestra `Fuente`, `Nivel`, `Rango histórico` y `Diferencias`; los campos vacíos se muestran como `Sin evidencia privada comparable`.
 - Acción explícita: `Aprobar presupuesto para memoria` solo sobre un presupuesto final guardado.
 
-- [ ] **Step 1: Escribir prueba de modelo/tabla sin iniciar la GUI completa**
+- [x] **Step 1: Escribir prueba de modelo/tabla sin iniciar la GUI completa**
 
 ```python
 row = dialog_model.row_for_partida({"source": "ai_draft", "evidence_level": None})
@@ -648,17 +686,17 @@ assert row["Fuente"] == "IA — borrador"
 assert row["Rango histórico"] == "Sin evidencia privada comparable"
 ```
 
-- [ ] **Step 2: Ejecutar el test y confirmar fallo**
+- [x] **Step 2: Ejecutar el test y confirmar fallo** (test propio en `tests/test_partida_provenance_model.py`, no en `test_historical_table_gui.py`)
 
 Run: `pytest tests/test_historical_table_gui.py -k provenance -v`
 
 Expected: FAIL porque no se crea el modelo de procedencia.
 
-- [ ] **Step 3: Añadir columnas y acción de aprobación con confirmación**
+- [ ] **Step 3: Añadir columnas y acción de aprobación con confirmación** (NO hecho, ver nota de estado)
 
 La confirmación debe nombrar el presupuesto, explicar que pasará a alimentar referencias futuras y llamar únicamente a `approve_budget_for_learning`. Si faltan partidas válidas, no habilitar el botón.
 
-- [ ] **Step 4: Ejecutar las pruebas GUI acotadas**
+- [ ] **Step 4: Ejecutar las pruebas GUI acotadas** (NO hecho, depende del Step 3)
 
 Run: `pytest tests/test_historical_table_gui.py tests/test_voice_budget_dialog.py -v`
 

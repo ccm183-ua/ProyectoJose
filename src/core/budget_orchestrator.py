@@ -87,6 +87,7 @@ class BudgetOrchestrator:
                 "partidas": [],
                 "source": "error",
                 "error": f"Error inesperado al generar el presupuesto: {exc}",
+                "evidence_report": [],
                 "cobertura": {
                     "modulos_historico": [],
                     "modulos_ia": [],
@@ -179,6 +180,7 @@ class BudgetOrchestrator:
             "partidas": todas_partidas,
             "source": source,
             "error": error_ia if not todas_partidas else None,
+            "evidence_report": historical_result.get("evidence_report", []),
             "cobertura": {
                 "modulos_historico": modulos_cubiertos,
                 "modulos_ia": modulos_gap,
