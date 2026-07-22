@@ -706,6 +706,17 @@ Expected: PASS; no hay aprobación implícita al aceptar un borrador.
 
 ### Task 13: Añadir previsualización y reconstrucción reversible
 
+> **Estado (2026-07-22): implementado, con test dedicado en vez del fichero
+> del plan.** El test vive en `tests/test_rebuild_historical_patterns.py`
+> (no en `test_historical_integrity_diagnostics.py`, que es de otro módulo
+> ya existente sin relación) — mismo patrón que la Tarea 1 (script + test
+> propio). `--dry-run` usa sqlite3 nativo de solo lectura (nunca pasa por
+> `src.core.database`, que migraría el esquema al conectar); probado seguro
+> incluso sobre una base todavía en `schema_version=1` sin
+> `historical_partida_feature`. `--apply` no modificó la aplicación GUI
+> (`historical_analysis_results_dialog.py`): es un script de línea de
+> comandos independiente, consistente con el resto del hito.
+
 **Files:**
 - Create: `scripts/rebuild_historical_patterns.py`
 - Modify: `src/gui/historical_analysis_results_dialog.py`
@@ -715,7 +726,7 @@ Expected: PASS; no hay aprobación implícita al aceptar un borrador.
 - CLI: `python scripts/rebuild_historical_patterns.py --db PATH --dry-run` y `--apply`.
 - Antes de `--apply`, crear copia `PATH.bak-YYYYMMDD-HHMMSS` y abortar si la copia no tiene el mismo SHA-256.
 
-- [ ] **Step 1: Escribir test dry-run**
+- [x] **Step 1: Escribir test dry-run**
 
 ```python
 before = sha256_file(db_path)
@@ -725,13 +736,13 @@ assert sha256_file(db_path) == before
 assert "would_reclassify" in result.stdout
 ```
 
-- [ ] **Step 2: Ejecutar el test y confirmar fallo**
+- [x] **Step 2: Ejecutar el test y confirmar fallo**
 
 Run: `pytest tests/test_historical_integrity_diagnostics.py -k dry_run -v`
 
 Expected: FAIL porque el script no existe.
 
-- [ ] **Step 3: Implementar copia, transacción y resumen de cambios**
+- [x] **Step 3: Implementar copia, transacción y resumen de cambios**
 
 ```python
 if args.apply:
@@ -745,7 +756,7 @@ if args.apply:
 
 El resumen debe incluir: líneas sin clasificar, compuestas, pendientes de aprobación, patrones creados y patrones eliminados.
 
-- [ ] **Step 4: Ejecutar prueba y ensayo en una copia de `datos.db`**
+- [x] **Step 4: Ejecutar prueba y ensayo en una copia de `datos.db`**
 
 Run: `pytest tests/test_historical_integrity_diagnostics.py -v; Copy-Item "$env:USERPROFILE\Documents\CubiApp\datos.db" .\copia-datos.db; .\.venv\Scripts\python.exe scripts\rebuild_historical_patterns.py --db .\copia-datos.db --dry-run`
 
