@@ -825,6 +825,24 @@ Expected: se crea copia de seguridad, la auditoría posterior no tiene patrones 
 
 ### Task 15: Prueba de extremo a extremo y umbrales de salida
 
+> **Estado (2026-07-22): Steps 1-4 completos, adaptando el escenario al API
+> real (no `create_draft`/`finalize_draft`/`GeneratedBudget`, ver nota de
+> alcance de la Tarea 11). Step 5 (aceptación manual en la app) requiere
+> interacción humana con la GUI real — no ejecutable por mí.**
+> `tests/test_historical_budget_flow_e2e.py` prueba el flujo completo con
+> `BudgetOrchestrator.generate()` real (no fake) sobre
+> `HistoricalSuggestionService` real: Excel analizado VALID → aprobación
+> explícita (`approve_budget_for_learning`) → ficha derivada → patrones →
+> `generate()` encuentra evidencia `exact` para una descripción idéntica a
+> la aprobada, con `historical_budget_id` trazable → generar el borrador
+> repetidamente nunca crea presupuestos históricos nuevos (0 rutas de
+> aprendizaje automático dentro del orquestador, confirmado también sin
+> evidencia privada disponible). 111 tests de regresión relevantes en verde.
+> Step 4 verificado con datos reales sobre copia desechable: 40 patrones
+> activos, 0 con `distinct_budget_count` vacío, 0 fuentes de patrón mal
+> originadas (todas trazables a partidas `INCLUDED` + atómicas + con módulo
+> principal). Base real de producción verificada intacta tras el ensayo.
+
 **Files:**
 - Create: `tests/test_historical_budget_flow_e2e.py`
 - Modify: `docs/criterios-clasificacion-partidas.md`
@@ -832,7 +850,7 @@ Expected: se crea copia de seguridad, la auditoría posterior no tiene patrones 
 **Interfaces:**
 - Flujo probado: Excel válido → análisis → ficha → aprobación → patrón → solicitud → informe de evidencia → borrador → finalización sin aprendizaje automático.
 
-- [ ] **Step 1: Escribir el escenario completo**
+- [x] **Step 1: Escribir el escenario completo** (adaptado al API real, ver nota de estado)
 
 ```python
 def test_approved_atomic_history_can_price_a_matching_draft_but_ai_draft_is_not_learned(tmp_path):
@@ -844,19 +862,19 @@ def test_approved_atomic_history_can_price_a_matching_draft_but_ai_draft_is_not_
     assert repository.count_budgets_by_source_kind("ai_draft", "INCLUDED") == 0
 ```
 
-- [ ] **Step 2: Ejecutar la prueba y confirmar fallo antes de conectar todos los componentes**
+- [x] **Step 2: Ejecutar la prueba y confirmar fallo antes de conectar todos los componentes** (pasó a la primera: las tareas 2-14 ya estaban completas antes de escribir este test, no una violación de TDD sino el checkpoint final de integración)
 
 Run: `pytest tests/test_historical_budget_flow_e2e.py -v`
 
 Expected: FAIL hasta completar las tareas 2 a 14.
 
-- [ ] **Step 3: Ejecutar el conjunto de regresión relevante**
+- [x] **Step 3: Ejecutar el conjunto de regresión relevante**
 
 Run: `pytest tests/test_database_migrations.py tests/test_budget_reader.py tests/test_historical_budget_analyzer.py tests/test_historical_partida_features.py tests/test_historical_partida_classifier.py tests/test_historical_comparator.py tests/test_historical_pattern_builder.py tests/test_historical_suggestion_service.py tests/test_budget_orchestrator.py tests/test_historical_budget_flow_e2e.py -v`
 
 Expected: PASS.
 
-- [ ] **Step 4: Validar criterios de salida con datos reales en copia**
+- [x] **Step 4: Validar criterios de salida con datos reales en copia**
 
 Run: `.\.venv\Scripts\python.exe scripts\audit_historical_memory.py --db .\copia-datos.db; .\.venv\Scripts\python.exe scripts\rebuild_historical_patterns.py --db .\copia-datos.db --dry-run`
 

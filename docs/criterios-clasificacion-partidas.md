@@ -185,3 +185,26 @@ fachada 24, cerrajería 20...); dos hallazgos confirmados y corregidos:
   copias desechables. Migrar y reconstruir la base real requiere que el
   usuario decida explícitamente cuándo hacerlo.
 
+## Cierre del hito: criterios de salida verificados (Fase 6, Tarea 15 — 2026-07-22)
+
+`tests/test_historical_budget_flow_e2e.py` prueba el flujo completo con
+`BudgetOrchestrator.generate()` real: Excel analizado → aprobación explícita
+→ ficha derivada → patrones → evidencia `exact` trazable hasta el
+presupuesto fuente → generar el borrador repetidamente nunca crea
+presupuestos históricos nuevos. 111 tests de regresión relevantes en verde.
+
+Validado con datos reales sobre una copia desechable de `datos.db` (117
+presupuestos, 254 partidas): tras `rebuild_historical_patterns.py --apply`,
+**40 patrones activos**, 0 con `distinct_budget_count` vacío, **0 fuentes de
+patrón mal originadas** (todas trazables a partidas `INCLUDED` +
+`analysis_status` válido + `line_kind='atomic'` + `primary_module_id` no
+nulo). Base real de producción verificada intacta después de cada ensayo
+(`schema_version=1` sin tocar).
+
+Pendiente de aceptación manual (Step 5, requiere interacción humana con la
+aplicación real, no ejecutable de forma automática): comprobar en la app tres
+ejemplos — uno exacto, uno comparable con advertencia y uno sin evidencia
+privada — y confirmar que el informe de evidencia identifica las fuentes de
+los dos primeros y declara sin ambigüedad que el tercero requiere
+estimación/revisión.
+
