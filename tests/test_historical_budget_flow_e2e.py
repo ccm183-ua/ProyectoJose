@@ -63,8 +63,8 @@ def _import_and_approve_atomic_facade_budget(tmp_path) -> int:
     partida_id, perr = insert_historical_partida(
         budget_id,
         {
-            "concepto_original": "Revision de fachada con grieta",
-            "concepto_normalizado": "revision de fachada con grieta",
+            "concepto_original": "Reparacion de fachada con grieta",
+            "concepto_normalizado": "reparacion de fachada con grieta",
             "unidad": "m2",
             "precio_unitario": 50.0,
             "cantidad": 1,
@@ -109,7 +109,7 @@ def test_approved_atomic_history_prices_a_matching_draft_but_nothing_is_auto_lea
     orchestrator._suggestion_service = HistoricalSuggestionService()
     orchestrator._generator = _FakeGenerator()
 
-    result = orchestrator.generate("Revision de fachada con grieta")
+    result = orchestrator.generate("Reparacion de fachada con grieta")
 
     # La evidencia por linea (Tarea 10) encuentra la partida aprobada como
     # coincidencia exacta, con trazabilidad hasta el presupuesto fuente.
@@ -125,7 +125,9 @@ def test_approved_atomic_history_prices_a_matching_draft_but_nothing_is_auto_lea
     # punto de esta prueba es que la llamada a generate() en si misma nunca
     # aprende nada, tenga o no partidas de IA en el resultado.
     generate_partida_sources = {p.get("source") for p in result["partidas"]}
-    assert generate_partida_sources.issubset({"historical", "ai_completion"})
+    assert generate_partida_sources.issubset(
+        {"historical_exact", "historical_comparable", "ai_completion"}
+    )
 
     with database.get_connection(read_only=True) as conn:
         historical_budgets_after_one_call = conn.execute(
@@ -137,7 +139,7 @@ def test_approved_atomic_history_prices_a_matching_draft_but_nothing_is_auto_lea
     # borradores) tampoco debe crear presupuestos historicos nuevos: no hay
     # ninguna ruta de aprendizaje automatico dentro de BudgetOrchestrator.
     for _ in range(3):
-        orchestrator.generate("Revision de fachada con grieta")
+        orchestrator.generate("Reparacion de fachada con grieta")
 
     with database.get_connection(read_only=True) as conn:
         historical_budgets_after_repeated_calls = conn.execute(

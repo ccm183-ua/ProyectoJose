@@ -39,8 +39,13 @@ def split_generated_partidas_for_review(
     if mode == MODE_APPEND and existing_partidas:
         candidates = exclude_existing_from_candidates(candidates, existing_partidas)
 
-    historicas = [p for p in candidates if p.get("source") == "historical"]
-    ia_estimadas = [p for p in candidates if p.get("source") != "historical"]
+    # Fixes histórico evidenciado, Tarea 5: BudgetOrchestrator ya no emite
+    # solo 'historical' generico, emite 'historical_exact'/'historical_comparable'.
+    def _is_historical(source) -> bool:
+        return str(source or "").startswith("historical")
+
+    historicas = [p for p in candidates if _is_historical(p.get("source"))]
+    ia_estimadas = [p for p in candidates if not _is_historical(p.get("source"))]
     return historicas, ia_estimadas
 
 

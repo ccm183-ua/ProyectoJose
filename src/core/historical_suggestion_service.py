@@ -4,7 +4,7 @@ Servicio de sugerencias históricas para nuevos presupuestos.
 
 import json
 from dataclasses import dataclass, replace
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from src.core import database
 from src.core.historical_comparator import ComparisonResult, compare_partida_features
@@ -26,6 +26,10 @@ class EvidenceCandidate:
     precio_unitario: float
     source_date: str
     comparison: ComparisonResult
+    titulo: str = ""
+    concepto: str = ""
+    unidad: str = ""
+    module: str = ""
 
     def to_dict(self) -> Dict:
         return {
@@ -41,20 +45,53 @@ class EvidenceCandidate:
 
 
 def _row_to_features(row) -> PartidaFeatures:
+    action = row[4]
+    element = row[5]
+    unit = row[7] or ""
+    line_kind = row[11] or "unknown"
+    primary_module_id = row[12]
     return PartidaFeatures(
-        action=row[4],
-        element=row[5],
+        action=action,
+        element=element,
         system=row[6],
-        unit=row[7] or "",
+        unit=unit,
         material=row[8],
         dimensions=tuple(json.loads(row[9])) if row[9] else (),
         conditions=tuple(json.loads(row[10])) if row[10] else (),
-        line_kind=row[11] or "unknown",
-        primary_module_id=row[12],
+        line_kind=line_kind,
+        primary_module_id=primary_module_id,
         secondary_module_ids=tuple(json.loads(row[13])) if row[13] else (),
         confidence=float(row[14] or 0.0),
         reasons=(),
+        is_price_eligible=(
+            line_kind == "atomic"
+            and bool(unit)
+            and bool(action)
+            and bool(element)
+            and primary_module_id is not None
+        ),
     )
+
+
+def _infer_request_unit(request: PartidaFeatures, rows: List) -> PartidaFeatures:
+    """Si `request` no trae unidad (habitual en una descripción de proyecto
+    libre, que rara vez dice "m2"), la infiere de la evidencia disponible
+    para el mismo módulo/acción/elemento — solo si TODA esa evidencia
+    coincide en la misma unidad. No adivina si hay unidades distintas: eso
+    sería exactamente el "falso exacto" que corrige el comparador estricto
+    (Tarea 3 de fixes)."""
+    if request.unit:
+        return request
+    candidate_units = {
+        row[7]
+        for row in rows
+        if row[7]
+        and (not request.action or row[4] == request.action)
+        and (not request.element or row[5] == request.element)
+    }
+    if len(candidate_units) == 1:
+        return replace(request, unit=candidate_units.pop())
+    return request
 
 
 def find_comparable_evidence(request: PartidaFeatures) -> List[EvidenceCandidate]:
@@ -74,7 +111,8 @@ def find_comparable_evidence(request: PartidaFeatures) -> List[EvidenceCandidate
                       COALESCE(hb.fecha_presupuesto, hb.fecha_analisis, ''),
                       f.action, f.element, f.system, f.unit, f.material,
                       f.dimensions_json, f.conditions_json, f.line_kind,
-                      f.primary_module_id, f.secondary_module_ids_json, f.confidence
+                      f.primary_module_id, f.secondary_module_ids_json, f.confidence,
+                      COALESCE(hp.titulo, ''), COALESCE(hp.concepto_original, '')
                FROM historical_partida hp
                JOIN historical_partida_feature f ON f.partida_id = hp.id
                JOIN historical_budget hb ON hb.id = hp.historical_budget_id
@@ -86,6 +124,8 @@ def find_comparable_evidence(request: PartidaFeatures) -> List[EvidenceCandidate
             (request.primary_module_id,),
         ).fetchall()
 
+    request = _infer_request_unit(request, rows)
+
     candidates = [
         EvidenceCandidate(
             partida_id=int(row[0]),
@@ -93,6 +133,10 @@ def find_comparable_evidence(request: PartidaFeatures) -> List[EvidenceCandidate
             precio_unitario=float(row[2]),
             source_date=(row[3] or ""),
             comparison=compare_partida_features(request, _row_to_features(row)),
+            titulo=(row[15] or row[16] or ""),
+            concepto=(row[16] or ""),
+            unidad=(row[7] or ""),
+            module=(row[12] or ""),
         )
         for row in rows
     ]
@@ -102,6 +146,57 @@ def find_comparable_evidence(request: PartidaFeatures) -> List[EvidenceCandidate
     candidates.sort(key=lambda c: c.comparison.score, reverse=True)
     candidates.sort(key=lambda c: _LEVEL_RANK.get(c.comparison.level, 99))
     return candidates
+
+
+def _group_by_feature_signature(priced: List[EvidenceCandidate]) -> Dict[Tuple, List[EvidenceCandidate]]:
+    """Agrupa evidencia ya filtrada a exact/comparable por (material, system):
+    unidad/acción/elemento ya son idénticos para todo el grupo (así los dejó
+    el comparador al aceptarlos), la diferencia real entre sub-grupos está en
+    material/sistema."""
+    groups: Dict[Tuple, List[EvidenceCandidate]] = {}
+    for candidate in priced:
+        # comparison no expone material/system directamente; se reconstruyen
+        # de las diferencias reportadas para no repetir la consulta a BDD.
+        key = tuple(d for d in candidate.comparison.differences if not d.startswith("condition:"))
+        groups.setdefault(key, []).append(candidate)
+    return groups
+
+
+def _build_priced_partidas(priced: List[EvidenceCandidate]) -> List[Dict]:
+    """Fixes histórico evidenciado, Tarea 4: única fuente de partidas
+    históricas aplicables al borrador. Un patrón textual (Tarea 9) es solo
+    índice; esto es lo único que puede fijar `source='historical_exact'` o
+    `'historical_comparable'`."""
+    priced_partidas: List[Dict] = []
+    for _signature, group in _group_by_feature_signature(priced).items():
+        prices = sorted(item.precio_unitario for item in group)
+        n = len(prices)
+        median_price = prices[n // 2] if n % 2 else (prices[n // 2 - 1] + prices[n // 2]) / 2
+        best_level = "exact" if any(item.comparison.level == "exact" for item in group) else "comparable"
+        all_differences = sorted({d for item in group for d in item.comparison.differences})
+        # Representante para título/concepto/unidad: el primero del grupo, que
+        # ya llega ordenado (find_comparable_evidence) exact > score > fecha.
+        representative = group[0]
+        priced_partidas.append(
+            {
+                "source": f"historical_{best_level}",
+                "evidence_level": best_level,
+                "titulo": representative.titulo,
+                "concepto": representative.concepto,
+                "unidad": representative.unidad,
+                "cantidad": 1.0,
+                "module": representative.module,
+                "precio_unitario": round(median_price, 2),
+                "evidence_price_min": round(prices[0], 2),
+                "evidence_price_median": round(median_price, 2),
+                "evidence_price_max": round(prices[-1], 2),
+                "evidence_budget_ids": sorted({item.historical_budget_id for item in group}),
+                "evidence_partida_ids": sorted({item.partida_id for item in group}),
+                "evidence_differences": all_differences,
+            }
+        )
+    priced_partidas.sort(key=lambda p: _LEVEL_RANK.get(p["evidence_level"], 99))
+    return priced_partidas
 
 
 class HistoricalSuggestionService:
@@ -168,6 +263,12 @@ class HistoricalSuggestionService:
         evidence = find_comparable_evidence(request_features)
         evidence_report = [c.to_dict() for c in evidence]
         priced_evidence = [d for d in evidence_report if d["level"] in _PRICED_LEVELS]
+        # Tarea 4 (fixes): única fuente legítima de precio histórico aplicable
+        # al borrador. Los patrones textuales agregados ('partidas', Tarea 9)
+        # quedan como índice/candidato, nunca deciden precio por sí solos.
+        priced_partidas = _build_priced_partidas(
+            [c for c in evidence if c.comparison.level in _PRICED_LEVELS]
+        )
 
         result = {
             "source": "historical",
@@ -184,6 +285,7 @@ class HistoricalSuggestionService:
             "stats": stats,
             "evidence_report": evidence_report,
             "priced_evidence": priced_evidence,
+            "priced_partidas": priced_partidas,
             "failure_reason": "OK",
         }
         if not module_names and self._has_generic_context_only(detected_signals):

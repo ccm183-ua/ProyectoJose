@@ -37,7 +37,10 @@ def row_for_partida(partida: Dict) -> Dict[str, str]:
 
     nivel = _LEVEL_LABELS.get(level, _NO_EVIDENCE)
     if level in _PRICED_LEVELS:
-        rango = f"{float(partida.get('evidence_precio_unitario') or 0):.2f}"
+        precio_min = float(partida.get("evidence_price_min") or 0)
+        precio_median = float(partida.get("evidence_price_median") or 0)
+        precio_max = float(partida.get("evidence_price_max") or 0)
+        rango = f"{precio_min:.2f} – {precio_median:.2f} – {precio_max:.2f}"
     else:
         rango = _NO_EVIDENCE
 

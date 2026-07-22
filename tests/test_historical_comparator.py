@@ -27,6 +27,7 @@ def _features(**overrides) -> PartidaFeatures:
         secondary_module_ids=(),
         confidence=0.8,
         reasons=(),
+        is_price_eligible=True,
     )
     base.update(overrides)
     return PartidaFeatures(**base)
@@ -86,20 +87,65 @@ def test_request_composite_line_is_also_related():
     assert result.level == "related"
 
 
-def test_missing_action_on_either_side_does_not_force_incompatible():
-    """Una ficha sin acción detectada (vocabulario cerrado que no matcheo) no debe
-    excluir automáticamente la comparación: solo un choque real de acciones
-    conocidas descarta la evidencia."""
+def test_missing_action_on_either_side_is_related_not_incompatible():
+    """Fixes Tarea 3: una ficha sin acción detectada no es un choque real (no
+    'incompatible'), pero tampoco es evidencia limpia sin ese dato mínimo
+    (por eso 'related', no 'exact'/'comparable')."""
     request = _features(action=None)
     evidence = _features(action="repair")
     result = compare_partida_features(request, evidence)
-    assert result.level != "incompatible"
+    assert result.level == "related"
 
 
-def test_missing_unit_on_request_does_not_force_incompatible():
-    """Una request sin unidad concreta (descripcion libre a nivel de proyecto)
-    no debe descartar toda la evidencia por comparar '' contra 'm2'."""
+def test_missing_unit_on_request_is_related_not_incompatible():
+    """Fixes Tarea 3: una request sin unidad concreta (descripcion libre a
+    nivel de proyecto) no es un choque real, pero unidad es un atributo
+    mínimo obligatorio: sin ella, la evidencia queda 'related', nunca precio."""
     request = _features(unit="")
     evidence = _features(unit="m2")
     result = compare_partida_features(request, evidence)
-    assert result.level != "incompatible"
+    assert result.level == "related"
+
+
+class TestStrictPreconditions:
+    """Fixes histórico evidenciado, Tarea 3: el comparador no debe conceder
+    exact/comparable por AUSENCIA de datos, solo por igualdad/diferencia real
+    de datos conocidos. Contrato del diseño de reconducción: exact exige
+    unidad, acción y elemento conocidos e iguales."""
+
+    def test_two_completely_unknown_features_are_related_not_exact(self):
+        unknown = _features(action=None, element=None, unit="m2", material=None, is_price_eligible=False)
+        result = compare_partida_features(unknown, unknown)
+        assert result.level == "related"
+
+    def test_different_element_is_incompatible_not_comparable(self):
+        """Cambio de contrato: antes 'element' distinto producia 'comparable';
+        ahora element es un atributo CRITICO como unidad/accion."""
+        repair_facade = _features(element="facade_render")
+        repair_roof = _features(element="roof")
+        result = compare_partida_features(repair_facade, repair_roof)
+        assert result.level == "incompatible"
+
+    def test_same_critical_attributes_different_material_is_comparable(self):
+        repair_r4 = _features(material="mortar_r4")
+        repair_generic = _features(material="mortar")
+        result = compare_partida_features(repair_r4, repair_generic)
+        assert result.level == "comparable"
+        assert "material" in result.differences
+
+    def test_same_critical_attributes_different_dimensions_is_comparable(self):
+        repair_10cm = _features(dimensions=("10 cm",))
+        repair_15cm = _features(dimensions=("15 cm",))
+        result = compare_partida_features(repair_10cm, repair_15cm)
+        assert result.level == "comparable"
+        assert "dimensions" in result.differences
+
+    def test_identical_full_features_are_exact(self):
+        result = compare_partida_features(_features(), _features())
+        assert result.level == "exact"
+
+    def test_missing_element_on_evidence_is_related_not_exact(self):
+        request = _features(element="facade_render")
+        evidence = _features(element=None)
+        result = compare_partida_features(request, evidence)
+        assert result.level == "related"

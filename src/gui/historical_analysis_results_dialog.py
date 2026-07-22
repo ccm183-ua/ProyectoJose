@@ -29,6 +29,7 @@ from src.core.historical_budget_analyzer import HistoricalBudgetAnalyzer
 from src.core.historical_issue_catalog import historical_issue_label
 from src.core.repositories import (
     append_budget_issue,
+    approve_budget_for_learning,
     get_historical_learning_metrics,
     get_historical_budget_issues,
     get_historical_budget_partidas,
@@ -443,6 +444,7 @@ class HistoricalAnalysisResultsDialog(QDialog):
 
         actions = QHBoxLayout()
         btn_include = QPushButton("Marcar como apto manualmente", dlg)
+        btn_include.setEnabled(self._can_be_included_in_memory(data))
         btn_include.clicked.connect(lambda: self._include_selected(data, dlg))
         actions.addWidget(btn_include)
 
@@ -563,13 +565,10 @@ class HistoricalAnalysisResultsDialog(QDialog):
                 continue
 
             if decision:
-                err = set_historical_budget_learning_status(
-                    budget_id,
-                    "INCLUDED",
-                    True,
-                    decision_source="MANUAL",
-                    decision_reason="Incluido manualmente desde revision de memoria.",
-                )
+                # Fixes histórico evidenciado, Tarea 6: mismo camino único de
+                # aprobación que _include_selected (approve_budget_for_learning),
+                # no el genérico set_historical_budget_learning_status.
+                err = approve_budget_for_learning(budget_id, self._current_user())
                 if err:
                     QMessageBox.warning(self, "Aplicar decisiones", err)
                     continue
@@ -670,13 +669,23 @@ class HistoricalAnalysisResultsDialog(QDialog):
                 "No se puede marcar como apto: no hay partidas con precio unitario > 0.",
             )
             return
-        err = set_historical_budget_learning_status(
-            budget_id,
-            "INCLUDED",
-            True,
-            decision_source="MANUAL",
-            decision_reason="Marcado manualmente como apto para aprendizaje.",
+
+        # Fixes histórico evidenciado, Tarea 6: la confirmación nombra el
+        # archivo explícitamente (aprobar memoria histórica es irreversible
+        # en la práctica: sus partidas empiezan a sugerir precio a otros
+        # presupuestos), y la aprobación pasa por approve_budget_for_learning
+        # (Tarea 1), el único camino que registra quién aprobó y cuándo.
+        file_name = os.path.basename(data.get("ruta_excel", "")) or "este archivo"
+        resp = QMessageBox.question(
+            self,
+            "Confirmar aprobación para memoria histórica",
+            f"¿Aprobar '{file_name}' para memoria histórica reutilizable?\n"
+            "Sus partidas podrán sugerir precio en presupuestos futuros.",
         )
+        if resp != QMessageBox.StandardButton.Yes:
+            return
+
+        err = approve_budget_for_learning(budget_id, self._current_user())
         if err:
             QMessageBox.warning(self, "Marcar como apto", err)
             return
@@ -716,6 +725,13 @@ class HistoricalAnalysisResultsDialog(QDialog):
         QMessageBox.information(self, "Reanalizar", "Archivo reanalizado correctamente.")
         parent_dialog.accept()
         self._reload_rows()
+
+    @staticmethod
+    def _current_user() -> str:
+        try:
+            return os.getlogin()
+        except OSError:
+            return "usuario"
 
     @staticmethod
     def _can_be_included_in_memory(data: dict) -> bool:

@@ -20,6 +20,18 @@ class HistoricalPatternBuilder:
     (learning_status='INCLUDED'): una partida con varias etiquetas
     secundarias ya no genera un patrón de precio por cada una (ver
     docs/criterios-clasificacion-partidas.md).
+
+    Fixes histórico evidenciado, Tarea 7: además de line_kind='atomic', exige
+    unit/action/element no vacíos (mismos atributos mínimos que
+    PartidaFeatures.is_price_eligible, Tarea 2) — una línea atómica sin
+    acción reconocida por el vocabulario cerrado no debe generar patrón.
+
+    Contrato (fixes histórico evidenciado, Tarea 4): estos patrones son
+    ÍNDICE/ESTADÍSTICA de memoria, nunca la fuente de un precio aplicado a un
+    borrador. La única fuente legítima de precio histórico es
+    `HistoricalSuggestionService.suggest_for_project()['priced_partidas']`,
+    construida evidencia a evidencia con el comparador determinista
+    (`historical_comparator.compare_partida_features`), no por texto.
     """
 
     BUILDER_VERSION = "historical_pattern_builder_v3"
@@ -201,6 +213,9 @@ class HistoricalPatternBuilder:
                      AND hb.analysis_status IN ('VALID', 'VALID_WITH_WARNINGS')
                      AND hb.learning_status = 'INCLUDED'
                      AND f.line_kind = 'atomic'
+                     AND f.unit IS NOT NULL AND f.unit <> ''
+                     AND f.action IS NOT NULL AND f.action <> ''
+                     AND f.element IS NOT NULL AND f.element <> ''
                    ORDER BY em.id, hp.concepto_normalizado"""
             )
             rows = cur.fetchall()

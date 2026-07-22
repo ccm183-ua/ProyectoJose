@@ -15,16 +15,20 @@ from src.core.repositories import (
 )
 
 
-def _mark_atomic_primary(partida_id: int, module_name: str) -> None:
-    """Registra la ficha derivada mínima (Fase 2) que _load_groups() exige
-    desde la Tarea 9: línea atómica con módulo principal único."""
+def _mark_atomic_primary(
+    partida_id: int, module_name: str, action: str = "repair", element: str = "generic", unit: str = "ud"
+) -> None:
+    """Registra la ficha derivada mínima (Fase 2) que _load_groups() exige:
+    línea atómica con módulo principal único y atributos completos
+    (Fixes histórico evidenciado, Tarea 2/7: is_price_eligible exige
+    unit/action/element no vacíos, no solo line_kind='atomic')."""
     err = upsert_partida_features(
         partida_id,
         {
-            "action": None,
-            "element": None,
+            "action": action,
+            "element": element,
             "system": None,
-            "unit": "",
+            "unit": unit,
             "material": None,
             "dimensions": (),
             "conditions": (),

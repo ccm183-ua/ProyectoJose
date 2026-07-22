@@ -4,14 +4,23 @@ Orquestador unificado de creación de presupuestos con IA.
 Pipeline completo — un único punto de entrada para el cliente:
   descripción libre (voz o texto)
        ↓
-  1. HistoricalSuggestionService — busca partidas en el histórico
+  1. HistoricalSuggestionService — busca evidencia en el histórico
        ↓
   2. Análisis de cobertura — módulos cubiertos vs. módulos gap
        ↓
-  3a. Partidas históricas con confianza suficiente → output directo (source='historical')
-  3b. Módulos sin cobertura → BudgetGenerator con IA (source='ai_completion')
+  3a. Partidas con evidencia exact/comparable → output directo
+      (source='historical_exact'|'historical_comparable')
+  3b. Módulos sin evidencia apta → BudgetGenerator con IA (source='ai_completion')
        ↓
   4. Merge final con etiquetas de source por partida
+
+Fixes histórico evidenciado, Tarea 5: la cobertura histórica se decide
+EXCLUSIVAMENTE por `historical_result['priced_partidas']` (evidencia real,
+comparador determinista — ver historical_comparator.py), nunca por
+`historical_result['partidas']` (patrón textual agregado, Tarea 9): ese
+patrón es solo índice/candidato, nunca decide precio por sí solo. El umbral
+legado HISTORICAL_CONFIDENCE_THRESHOLD/HISTORICAL_FREQUENCY_THRESHOLD ya no
+se aplica aquí — la validez ya viene del nivel de evidencia del comparador.
 """
 
 import logging
@@ -22,10 +31,6 @@ from src.core.historical_suggestion_service import HistoricalSuggestionService
 from src.core.settings import Settings
 
 logger = logging.getLogger(__name__)
-
-# Partidas históricas que superen ambos umbrales van directas al presupuesto sin pasar por IA.
-HISTORICAL_CONFIDENCE_THRESHOLD = 0.60
-HISTORICAL_FREQUENCY_THRESHOLD = 2
 
 
 class BudgetOrchestrator:
@@ -38,8 +43,12 @@ class BudgetOrchestrator:
 
     Resultado siempre tiene campo 'source' por partida (mismo vocabulario que
     normalize_partida_for_excel y el resto de servicios de IA):
-      - 'historical'    → precio y concepto reales de obras anteriores
-      - 'ai_completion' → generado por IA, requiere revisión rápida
+      - 'historical_exact'      → evidencia privada exacta (unidad/acción/elemento
+                                   idénticos, sin diferencias) de obras anteriores.
+      - 'historical_comparable' → evidencia privada comparable (mismos atributos
+                                   críticos, alguna diferencia de material/sistema/
+                                   dimensión/condición) — se muestra con advertencia.
+      - 'ai_completion'         → generado por IA, requiere revisión rápida.
     """
 
     def __init__(self, settings: Optional[Settings] = None):
@@ -195,14 +204,20 @@ class BudgetOrchestrator:
         self, historical_result: Dict
     ) -> Tuple[List[Dict], List[str], List[str]]:
         """
-        Divide las partidas históricas en dos grupos:
-        - partidas_ok: confianza y frecuencia suficientes → van directas al presupuesto
-        - modulos_gap: módulos detectados sin cobertura suficiente → pasan a la IA
+        Divide la evidencia histórica en dos grupos:
+        - partidas_ok: partidas con evidencia exact/comparable → van directas al presupuesto
+        - modulos_gap: módulos detectados sin evidencia apta → pasan a la IA
+
+        Fixes histórico evidenciado, Tarea 5: la fuente única es
+        `historical_result['priced_partidas']` (evidencia real del comparador,
+        ver historical_comparator.py). El patrón textual agregado
+        (`historical_result['partidas']`) ya no decide cobertura ni precio —
+        es solo índice/candidato (Tarea 9).
 
         Returns:
             (partidas_ok, modulos_cubiertos, modulos_gap)
         """
-        all_historical = historical_result.get("partidas", []) or []
+        priced_partidas = historical_result.get("priced_partidas", []) or []
         detected_modules = {
             m["name"]
             for m in (historical_result.get("detected_modules") or [])
@@ -211,19 +226,15 @@ class BudgetOrchestrator:
         partidas_ok: List[Dict] = []
         modulos_con_partidas: set = set()
 
-        for p in all_historical:
-            confianza = float(p.get("confidence", 0.0) or 0.0)
-            frecuencia = int(p.get("historical_frequency", 0) or 0)
-            if (
-                confianza >= HISTORICAL_CONFIDENCE_THRESHOLD
-                and frecuencia >= HISTORICAL_FREQUENCY_THRESHOLD
-            ):
-                partida = dict(p)
-                partida["source"] = "historical"
-                partidas_ok.append(partida)
-                modulo = p.get("module", "")
-                if modulo:
-                    modulos_con_partidas.add(modulo)
+        for p in priced_partidas:
+            if p.get("evidence_level") not in ("exact", "comparable"):
+                continue
+            partida = dict(p)
+            partida["source"] = f"historical_{p['evidence_level']}"
+            partidas_ok.append(partida)
+            modulo = p.get("module", "")
+            if modulo:
+                modulos_con_partidas.add(modulo)
 
         modulos_gap = sorted(detected_modules - modulos_con_partidas)
         modulos_cubiertos = sorted(modulos_con_partidas)

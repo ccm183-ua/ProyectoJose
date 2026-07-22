@@ -173,3 +173,43 @@ def test_canonical_schema_tables_exist_in_fresh_and_migrated_database(
     for table in _CANONICAL_TABLES:
         assert legacy_cols[table], f"tabla {table} sin columnas en BDD migrada"
         assert legacy_cols[table] == fresh_cols[table], f"columnas de {table} difieren"
+
+
+def test_migration_v4_adds_unique_partial_index_on_file_sha256(legacy_db_env):
+    """Fixes Tarea 1: el mismo hash no puede ocupar dos presupuestos históricos
+    distintos (índice único parcial, NULL/'' no cuentan)."""
+    with database.get_connection() as conn:
+        assert database.get_schema_version(conn) == database.CURRENT_SCHEMA_VERSION
+        assert database.CURRENT_SCHEMA_VERSION >= 4
+
+        indexes = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name='historical_budget'"
+        ).fetchall()
+        assert any("file_sha256" in (sql or "") for (sql,) in indexes)
+
+        conn.execute(
+            "UPDATE historical_budget SET file_sha256='abc123' WHERE id=1"
+        )
+        conn.commit()
+        # Un segundo presupuesto con el mismo hash debe violar el indice unico.
+        import sqlite3
+
+        try:
+            conn.execute(
+                """INSERT INTO historical_budget (ruta_excel, fecha_modificacion_excel, file_sha256)
+                   VALUES ('otra_ruta.xlsx', '2026-01-01', 'abc123')"""
+            )
+            assert False, "debia violar el indice unico de file_sha256"
+        except sqlite3.IntegrityError:
+            conn.rollback()
+
+        # Dos presupuestos SIN hash (NULL) deben poder coexistir (indice parcial).
+        conn.execute(
+            """INSERT INTO historical_budget (ruta_excel, fecha_modificacion_excel, file_sha256)
+               VALUES ('sin_hash_1.xlsx', '2026-01-01', NULL)"""
+        )
+        conn.execute(
+            """INSERT INTO historical_budget (ruta_excel, fecha_modificacion_excel, file_sha256)
+               VALUES ('sin_hash_2.xlsx', '2026-01-01', NULL)"""
+        )
+        conn.commit()

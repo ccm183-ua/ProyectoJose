@@ -14,31 +14,36 @@ def test_ai_draft_without_evidence_shows_no_comparable_evidence():
     assert row["Diferencias"] == "—"
 
 
-def test_historical_exact_evidence_shows_level_and_price():
+def test_historical_exact_evidence_shows_level_and_price_range():
     row = row_for_partida(
         {
-            "source": "historical",
+            "source": "historical_exact",
             "evidence_level": "exact",
-            "evidence_precio_unitario": 50.0,
+            "evidence_price_min": 50.0,
+            "evidence_price_median": 50.0,
+            "evidence_price_max": 50.0,
             "evidence_differences": [],
         }
     )
     assert row["Fuente"] == "Histórico"
     assert row["Nivel"] == "Exacto"
-    assert row["Rango histórico"] == "50.00"
+    assert row["Rango histórico"] == "50.00 – 50.00 – 50.00"
     assert row["Diferencias"] == "—"
 
 
-def test_comparable_evidence_lists_differences():
+def test_comparable_evidence_lists_differences_and_price_range():
     row = row_for_partida(
         {
-            "source": "historical",
+            "source": "historical_comparable",
             "evidence_level": "comparable",
-            "evidence_precio_unitario": 40.0,
+            "evidence_price_min": 40.0,
+            "evidence_price_median": 50.0,
+            "evidence_price_max": 60.0,
             "evidence_differences": ["material", "condition:scaffolding"],
         }
     )
     assert row["Nivel"] == "Comparable"
+    assert row["Rango histórico"] == "40.00 – 50.00 – 60.00"
     assert row["Diferencias"] == "material, condition:scaffolding"
 
 
@@ -47,7 +52,9 @@ def test_related_evidence_never_shows_a_price():
         {
             "source": "historical",
             "evidence_level": "related",
-            "evidence_precio_unitario": 999.0,
+            "evidence_price_min": 999.0,
+            "evidence_price_median": 999.0,
+            "evidence_price_max": 999.0,
         }
     )
     assert row["Nivel"] == "Relacionado (sin precio)"

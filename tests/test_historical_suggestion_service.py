@@ -359,3 +359,125 @@ class TestFindComparableEvidence:
         )
         assert result["evidence_report"] == []
         assert result["priced_evidence"] == []
+
+
+class TestPricedPartidas:
+    """Fixes histórico evidenciado, Tarea 4: priced_partidas es la única
+    fuente legítima de precio histórico aplicable al borrador. Un patrón
+    textual (Tarea 9, clave 'partidas') puede seguir existiendo como índice,
+    pero sin evidencia apta priced_partidas debe quedar vacío."""
+
+    def _seed_budget(self, tmp_path, name: str) -> int:
+        budget_id, err = upsert_historical_budget(
+            {
+                "ruta_excel": str(tmp_path / name),
+                "ruta_carpeta": str(tmp_path),
+                "nombre_proyecto": name,
+                "fecha_modificacion_excel": datetime.now().isoformat(),
+                "fecha_analisis": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "analisis_ok": True,
+                "analysis_status": "VALID",
+                "usable_for_learning": True,
+                "learning_status": "INCLUDED",
+            }
+        )
+        assert err is None
+        return budget_id
+
+    def test_no_evidence_yields_empty_priced_partidas_even_if_pattern_exists(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "no_evidence.db"))
+        result = HistoricalSuggestionService().suggest_for_project({}, "Reparación de fachada")
+        assert result["priced_partidas"] == []
+
+    def test_exact_evidence_produces_a_priced_partida_with_source_and_ids(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "priced_exact.db"))
+        budget_id = self._seed_budget(tmp_path, "exacto.xlsx")
+        partida_id, perr = insert_historical_partida(
+            budget_id,
+            {
+                "concepto_original": "Reparacion revoco fachada mortero R4",
+                "unidad": "m2",
+                "precio_unitario": 50.0,
+                "cantidad": 1,
+                "total_linea": 50.0,
+            },
+        )
+        assert perr is None
+        _mark_features(
+            partida_id,
+            action="repair", element="facade_render", unit="m2", material="mortar_r4",
+            line_kind="atomic", primary_module_id="fachada",
+        )
+
+        result = HistoricalSuggestionService().suggest_for_project(
+            {}, "Reparación de revoco de fachada con mortero R4"
+        )
+
+        assert len(result["priced_partidas"]) == 1
+        priced = result["priced_partidas"][0]
+        assert priced["evidence_level"] == "exact"
+        assert priced["source"] == "historical_exact"
+        assert priced["precio_unitario"] == 50.0
+        assert priced["evidence_budget_ids"] == [budget_id]
+        assert priced["evidence_partida_ids"] == [partida_id]
+        assert priced["module"] == "fachada"
+        assert priced["unidad"] == "m2"
+        assert priced["concepto"] == "Reparacion revoco fachada mortero R4"
+
+    def test_related_evidence_never_appears_in_priced_partidas(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "priced_related.db"))
+        budget_id = self._seed_budget(tmp_path, "compuesta.xlsx")
+        partida_id, perr = insert_historical_partida(
+            budget_id,
+            {
+                "concepto_original": "Picado y reparacion de fachada con mortero",
+                "unidad": "m2",
+                "precio_unitario": 999.0,
+                "cantidad": 1,
+                "total_linea": 999.0,
+            },
+        )
+        assert perr is None
+        _mark_features(
+            partida_id,
+            action="repair", element="facade_render", unit="m2", material="mortar_r4",
+            line_kind="composite", primary_module_id="fachada",
+            secondary_module_ids=("demolicion",),
+        )
+
+        result = HistoricalSuggestionService().suggest_for_project(
+            {}, "Reparación de revoco de fachada con mortero R4"
+        )
+        assert result["priced_partidas"] == []
+
+    def test_two_exact_sources_are_grouped_with_median_and_both_ids(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "priced_grouped.db"))
+        budget_1 = self._seed_budget(tmp_path, "a.xlsx")
+        budget_2 = self._seed_budget(tmp_path, "b.xlsx")
+        partida_1, err1 = insert_historical_partida(
+            budget_1,
+            {"concepto_original": "Reparacion revoco fachada mortero R4", "unidad": "m2",
+             "precio_unitario": 40.0, "cantidad": 1, "total_linea": 40.0},
+        )
+        partida_2, err2 = insert_historical_partida(
+            budget_2,
+            {"concepto_original": "Reparacion revoco fachada mortero R4", "unidad": "m2",
+             "precio_unitario": 60.0, "cantidad": 1, "total_linea": 60.0},
+        )
+        assert err1 is None and err2 is None
+        for pid in (partida_1, partida_2):
+            _mark_features(
+                pid, action="repair", element="facade_render", unit="m2", material="mortar_r4",
+                line_kind="atomic", primary_module_id="fachada",
+            )
+
+        result = HistoricalSuggestionService().suggest_for_project(
+            {}, "Reparación de revoco de fachada con mortero R4"
+        )
+
+        assert len(result["priced_partidas"]) == 1
+        priced = result["priced_partidas"][0]
+        assert priced["precio_unitario"] == 50.0
+        assert priced["evidence_price_min"] == 40.0
+        assert priced["evidence_price_max"] == 60.0
+        assert sorted(priced["evidence_budget_ids"]) == sorted([budget_1, budget_2])

@@ -6,6 +6,7 @@ from datetime import datetime
 
 from src.core.repositories.historical_repository import (
     approve_budget_for_learning,
+    find_historical_budget_by_sha256,
     get_historical_budget,
     insert_historical_partida,
     upsert_historical_budget,
@@ -132,3 +133,35 @@ class TestApproveBudgetForLearning:
         approve_err = approve_budget_for_learning(budget_id, "SERGIO")
         assert approve_err is not None
         assert get_historical_budget(budget_id)["learning_status"] != "INCLUDED"
+
+
+class TestFindHistoricalBudgetBySha256:
+    """Fixes histórico evidenciado, Tarea 1."""
+
+    def test_finds_budget_by_matching_hash(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "sha_find.db"))
+        budget_id, err = upsert_historical_budget(
+            {
+                "ruta_excel": str(tmp_path / "x.xlsx"),
+                "ruta_carpeta": str(tmp_path),
+                "nombre_proyecto": "x.xlsx",
+                "fecha_modificacion_excel": datetime.now().isoformat(),
+                "file_sha256": "deadbeef",
+            }
+        )
+        assert err is None
+        found = find_historical_budget_by_sha256("deadbeef")
+        assert found is not None
+        assert found["id"] == budget_id
+
+    def test_returns_none_for_unknown_hash(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "sha_missing.db"))
+        from src.core import database
+
+        with database.get_connection() as _conn:
+            pass
+        assert find_historical_budget_by_sha256("no_existe") is None
+
+    def test_returns_none_for_empty_hash(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "sha_empty.db"))
+        assert find_historical_budget_by_sha256("") is None

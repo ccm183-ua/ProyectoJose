@@ -15,13 +15,18 @@ class _FakeSuggestionService:
     def __init__(
         self,
         partidas=None,
+        priced_partidas=None,
         detected_modules=None,
         confidence=0.8,
         failure_reason="OK",
         raises=None,
         evidence_report=None,
     ):
+        # 'partidas' = patron textual agregado (Tarea 9), solo indice: ya no
+        # decide cobertura. 'priced_partidas' = evidencia real del comparador
+        # (Tarea 4/5), unica fuente que _split_coverage puede usar.
         self._partidas = partidas or []
+        self._priced_partidas = priced_partidas or []
         self._detected_modules = detected_modules or []
         self._confidence = confidence
         self._failure_reason = failure_reason
@@ -35,6 +40,7 @@ class _FakeSuggestionService:
             raise self._raises
         return {
             "partidas": self._partidas,
+            "priced_partidas": self._priced_partidas,
             "detected_modules": self._detected_modules,
             "confidence": self._confidence,
             "failure_reason": self._failure_reason,
@@ -70,22 +76,27 @@ def _make_orchestrator(suggestion_service, generator):
     return orch
 
 
-def _historical_partida(module="sustitucion_bajante", confidence=0.9, frequency=5):
+def _historical_partida(module="sustitucion_bajante", evidence_level="exact", confidence=0.9, frequency=5):
+    """Forma de una entrada de `priced_partidas` (Tarea 4/5): evidencia real
+    del comparador, no el patron textual agregado. confidence/frequency se
+    conservan solo como metadatos informativos que el orquestador copia tal
+    cual (ya no se usan como umbral de cobertura)."""
     return {
         "titulo": "Sustitucion bajante",
         "concepto": "sustitucion bajante",
         "unidad": "ml",
         "precio_unitario": 20.0,
+        "evidence_level": evidence_level,
+        "module": module,
         "confidence": confidence,
         "historical_frequency": frequency,
-        "module": module,
     }
 
 
 # 1. Histórico cubre todos los módulos: cero llamadas al proveedor IA.
 def test_full_historical_coverage_makes_zero_ai_calls():
     suggestion_service = _FakeSuggestionService(
-        partidas=[_historical_partida()],
+        priced_partidas=[_historical_partida()],
         detected_modules=[{"name": "sustitucion_bajante", "confidence": 0.9}],
     )
     generator = _FakeGenerator()
@@ -95,13 +106,13 @@ def test_full_historical_coverage_makes_zero_ai_calls():
 
     assert generator.calls == []
     assert result["source"] == "historico"
-    assert [p["source"] for p in result["partidas"]] == ["historical"]
+    assert [p["source"] for p in result["partidas"]] == ["historical_exact"]
 
 
 # 2. Cobertura parcial: IA recibe solo los módulos gap, no los ya cubiertos.
 def test_partial_coverage_sends_only_gap_modules_to_ai():
     suggestion_service = _FakeSuggestionService(
-        partidas=[_historical_partida(module="sustitucion_bajante")],
+        priced_partidas=[_historical_partida(module="sustitucion_bajante")],
         detected_modules=[
             {"name": "sustitucion_bajante", "confidence": 0.9},
             {"name": "pintura", "confidence": 0.7},
@@ -120,7 +131,7 @@ def test_partial_coverage_sends_only_gap_modules_to_ai():
     assert kwargs["gap_modules"] == ["pintura"]
 
     sources = {p["source"] for p in result["partidas"]}
-    assert sources == {"historical", "ai_completion"}
+    assert sources == {"historical_exact", "ai_completion"}
     assert result["source"] == "orquestado"
 
 
@@ -184,7 +195,7 @@ def test_generator_exception_is_contained_as_error_result():
 # 6. Respuesta IA invalida (sin clave 'partidas') no rompe el merge.
 def test_malformed_ai_response_without_partidas_key_does_not_crash():
     suggestion_service = _FakeSuggestionService(
-        partidas=[_historical_partida(module="sustitucion_bajante")],
+        priced_partidas=[_historical_partida(module="sustitucion_bajante")],
         detected_modules=[
             {"name": "sustitucion_bajante", "confidence": 0.9},
             {"name": "pintura", "confidence": 0.7},
@@ -195,7 +206,7 @@ def test_malformed_ai_response_without_partidas_key_does_not_crash():
 
     result = orch.generate("Sustituir bajante y pintar fachada")
 
-    assert [p["source"] for p in result["partidas"]] == ["historical"]
+    assert [p["source"] for p in result["partidas"]] == ["historical_exact"]
     assert result["source"] == "historico"
 
 
@@ -215,7 +226,7 @@ def test_mixed_coverage_tags_source_per_partida_and_survives_excel_normalization
             "precio_unitario": 21.0,
         }
     ]
-    suggestion_service = _FakeSuggestionService(partidas=historical_partidas, detected_modules=detected_modules)
+    suggestion_service = _FakeSuggestionService(priced_partidas=historical_partidas, detected_modules=detected_modules)
     generator = _FakeGenerator(gap_result={"partidas": ia_partidas, "error": None})
     orch = _make_orchestrator(suggestion_service, generator)
 
@@ -226,10 +237,10 @@ def test_mixed_coverage_tags_source_per_partida_and_survives_excel_normalization
     assert len(partidas) == 2  # el duplicado conceptual no se elimina aqui
 
     sources = {p["source"] for p in partidas}
-    assert sources == {"historical", "ai_completion"}
+    assert sources == {"historical_exact", "ai_completion"}
     assert "fuente" not in partidas[0] and "fuente" not in partidas[1]
 
-    historical = next(p for p in partidas if p["source"] == "historical")
+    historical = next(p for p in partidas if p["source"] == "historical_exact")
     assert historical["confidence"] == 0.9
     assert historical["historical_frequency"] == 5
     assert historical["module"] == "sustitucion_bajante"
@@ -273,7 +284,7 @@ def test_evidence_report_defaults_to_empty_list_when_suggestion_service_omits_it
 def test_only_historical_coverage_reports_historical_source():
     orch = _make_orchestrator(
         _FakeSuggestionService(
-            partidas=[_historical_partida()],
+            priced_partidas=[_historical_partida()],
             detected_modules=[{"name": "sustitucion_bajante", "confidence": 0.9}],
         ),
         _FakeGenerator(),
@@ -283,4 +294,32 @@ def test_only_historical_coverage_reports_historical_source():
     assert result["source"] == "historico"
     partidas = result["partidas"]
     assert len(partidas) == 1
-    assert partidas[0]["source"] == "historical"
+    assert partidas[0]["source"] == "historical_exact"
+
+
+# Fixes histórico evidenciado, Tarea 5: elimina el bypass del orquestador
+# hacia los patrones textuales agregados. Antes de esta tarea, _split_coverage
+# leía historical_result['partidas'] (patrón agregado por texto, Tarea 9) y
+# un patrón con confianza/frecuencia altas bastaba para dar cobertura, aunque
+# no hubiera ninguna evidencia real exact/comparable del comparador. Ahora
+# solo priced_partidas (Tarea 4) puede otorgar cobertura histórica.
+def test_confident_legacy_pattern_without_priced_evidence_goes_to_ai_not_draft():
+    suggestion_service = _FakeSuggestionService(
+        partidas=[_historical_partida(confidence=0.99, frequency=50)],
+        priced_partidas=[],
+        detected_modules=[{"name": "sustitucion_bajante", "confidence": 0.9}],
+    )
+    generator = _FakeGenerator(
+        gap_result={
+            "partidas": [{"titulo": "Estimacion IA", "unidad": "ml", "precio_unitario": 22.0}],
+            "error": None,
+        }
+    )
+    orch = _make_orchestrator(suggestion_service, generator)
+
+    result = orch.generate("Sustituir bajante")
+
+    assert result["cobertura"]["modulos_historico"] == []
+    assert result["cobertura"]["modulos_ia"] == ["sustitucion_bajante"]
+    assert len(generator.calls) == 1
+    assert all(p["source"] == "ai_completion" for p in result["partidas"])

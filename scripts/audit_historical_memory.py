@@ -71,6 +71,31 @@ def build_audit_report(db_path: str) -> dict:
                  AND hb.learning_status = 'INCLUDED'""",
         )
 
+        # Fixes histórico evidenciado, Tarea 7: visibilidad de la misma
+        # categorización de elegibilidad que usa rebuild_historical_patterns
+        # (Tarea 2/4: is_price_eligible) y de duplicados por hash (Tarea 1),
+        # para decidir si conviene revisar antes de --apply.
+        lines_price_eligible = _fetchone(
+            conn,
+            """SELECT COUNT(*) FROM historical_partida_feature
+               WHERE line_kind='atomic'
+                 AND unit IS NOT NULL AND unit<>''
+                 AND action IS NOT NULL AND action<>''
+                 AND element IS NOT NULL AND element<>''
+                 AND primary_module_id IS NOT NULL AND primary_module_id<>''""",
+        )
+        lines_composite = _fetchone(
+            conn, "SELECT COUNT(*) FROM historical_partida_feature WHERE line_kind='composite'"
+        )
+        duplicate_file_hashes = _fetchone(
+            conn,
+            """SELECT COUNT(*) FROM (
+                   SELECT file_sha256 FROM historical_budget
+                   WHERE file_sha256 IS NOT NULL AND file_sha256 <> ''
+                   GROUP BY file_sha256 HAVING COUNT(*) > 1
+               )""",
+        )
+
     return {
         "lines_total": lines_total,
         "lines_unclassified": lines_unclassified,
@@ -84,6 +109,9 @@ def build_audit_report(db_path: str) -> dict:
         "budgets_included": budgets_included,
         "lines_non_positive_price": lines_non_positive_price,
         "lines_non_positive_price_in_included": lines_non_positive_price_in_included,
+        "lines_price_eligible": lines_price_eligible,
+        "lines_composite": lines_composite,
+        "duplicate_file_hashes": duplicate_file_hashes,
     }
 
 

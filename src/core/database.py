@@ -247,6 +247,19 @@ def _migrate_pattern_evidence_columns(conn: sqlite3.Connection) -> None:
         conn.commit()
 
 
+def _migrate_historical_budget_sha256_unique_index(conn: sqlite3.Connection) -> None:
+    """Índice único parcial: el mismo contenido de fichero (hash) no puede
+    ocupar dos presupuestos históricos distintos (fixes histórico evidenciado,
+    Tarea 1). NULL/'' se excluyen porque `file_sha256` no se calculaba antes
+    de esta migración y muchas filas existentes lo tienen vacío."""
+    conn.execute(
+        """CREATE UNIQUE INDEX IF NOT EXISTS idx_historical_budget_sha256_unique
+           ON historical_budget(file_sha256)
+           WHERE file_sha256 IS NOT NULL AND file_sha256 <> ''"""
+    )
+    conn.commit()
+
+
 def _seed_execution_modules(conn: sqlite3.Connection) -> None:
     """Siembra el catálogo de módulos del clasificador. No reactiva ni sobrescribe
     personalizaciones del usuario: solo crea nombres faltantes y completa
@@ -279,7 +292,7 @@ def _ensure_presupuesto_v2_indexes(conn: sqlite3.Connection) -> None:
 # Version explicita del esquema. Se incrementa al añadir una migracion nueva
 # a _MIGRATIONS; una BDD nueva se crea ya en esta version (las CREATE TABLE
 # de _SCHEMA_SQL/_HISTORICAL_SCHEMA_SQL incluyen todas las columnas).
-CURRENT_SCHEMA_VERSION = 3
+CURRENT_SCHEMA_VERSION = 4
 
 # Migraciones ordenadas e idempotentes (cada una comprueba su propio estado
 # antes de tocar nada). Se ejecutan en este orden porque el seed de módulos
@@ -293,6 +306,7 @@ _MIGRATIONS = [
     _seed_execution_modules,
     _migrate_historical_budget_source_kind,
     _migrate_pattern_evidence_columns,
+    _migrate_historical_budget_sha256_unique_index,
 ]
 
 

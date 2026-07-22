@@ -919,28 +919,59 @@ def set_historical_budget_learning_status(
             return f"Error de base de datos: {e.args[0] if e.args else 'desconocido'}."
 
 
+def find_historical_budget_by_sha256(file_sha256: str) -> Optional[Dict]:
+    digest = (file_sha256 or "").strip()
+    if not digest:
+        return None
+    with database.get_connection(read_only=True) as conn:
+        row = conn.execute(
+            "SELECT id FROM historical_budget WHERE file_sha256=?", (digest,)
+        ).fetchone()
+    if not row:
+        return None
+    return get_historical_budget(int(row[0]))
+
+
 def approve_budget_for_learning(historical_budget_id: int, approved_by: str) -> Optional[str]:
-    """Aprobación humana explícita: único camino legítimo para que un
-    presupuesto (own_final_budget/ai_draft/template incluidos) entre en la
-    memoria reutilizable, aunque su análisis técnico ya fuera VALID (ver
-    Tarea 4: analyze_budget() nunca auto-incluye esos orígenes)."""
+    """Aprobación humana explícita: único camino legítimo para que cualquier
+    presupuesto (external_excel/own_final_budget/ai_draft/template) entre en
+    la memoria reutilizable, aunque su análisis técnico ya fuera VALID (ver
+    Tarea 1 de fixes: todo origen nuevo empieza en PENDING_REVIEW).
+
+    Actualiza learning_status/usable_for_learning/approved_at/approved_by en
+    una única transacción: si algo falla, no queda un estado a medias con
+    solo alguno de los cuatro campos actualizado.
+    """
     approved_by_clean = (approved_by or "").strip()
     if not approved_by_clean:
         return "approved_by es obligatorio."
-    err = set_historical_budget_learning_status(
-        historical_budget_id,
-        learning_status="INCLUDED",
-        usable_for_learning=True,
-        decision_source="MANUAL",
-        decision_reason="Aprobado explícitamente por el usuario para memoria histórica.",
-    )
-    if err:
-        return err
     with database.get_connection() as conn:
         try:
+            row = conn.execute(
+                "SELECT analysis_status FROM historical_budget WHERE id=?",
+                (historical_budget_id,),
+            ).fetchone()
+            if not row:
+                return "No se encontró el presupuesto histórico indicado."
+            analysis_status = (row[0] or "").strip().upper()
+            if analysis_status not in ("VALID", "VALID_WITH_WARNINGS"):
+                return (
+                    "No se puede aprobar para memoria: el estado técnico del "
+                    f"presupuesto es {analysis_status or 'desconocido'}."
+                )
+            now = _now_str()
             conn.execute(
-                "UPDATE historical_budget SET approved_at=?, approved_by=? WHERE id=?",
-                (_now_str(), approved_by_clean, historical_budget_id),
+                """UPDATE historical_budget
+                   SET learning_status='INCLUDED',
+                       learning_status_source='MANUAL',
+                       learning_decision_reason='Aprobado explícitamente por el usuario para memoria histórica.',
+                       learning_decision_at=?,
+                       usable_for_learning=1,
+                       approved_at=?,
+                       approved_by=?,
+                       fecha_analisis=?
+                   WHERE id=?""",
+                (now, now, approved_by_clean, now, historical_budget_id),
             )
             conn.commit()
             return None

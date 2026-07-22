@@ -417,9 +417,11 @@ class TestHistoricalBudgetAnalyzer:
         assert stored["usable_for_learning"] is False
         assert stored["source_kind"] == "own_final_budget"
 
-    def test_external_excel_source_kind_still_auto_includes_when_valid(self, tmp_path, monkeypatch):
-        """El escaneo normal de un histórico externo real sigue auto-incluyendo
-        presupuestos VALID, sin cambios de comportamiento (source_kind por defecto)."""
+    def test_external_excel_source_kind_also_stays_pending_review_when_valid(self, tmp_path, monkeypatch):
+        """Fixes histórico evidenciado, Tarea 1: el contrato antiguo dejaba
+        auto-incluir un external_excel VALID sin revisión; ahora TODO origen
+        nuevo (sin excepción por source_kind) requiere aprobación explícita
+        vía approve_budget_for_learning() antes de ser INCLUDED."""
         db_path = tmp_path / "datos_historical_external_excel.db"
         monkeypatch.setenv("CUBIAPP_DB_PATH", str(db_path))
         with database.get_connection() as _conn:
@@ -436,8 +438,8 @@ class TestHistoricalBudgetAnalyzer:
 
         stored = get_historical_budget_by_path(str(excel_path))
         assert stored["analysis_status"] == "VALID"
-        assert stored["learning_status"] == "INCLUDED"
-        assert stored["usable_for_learning"] is True
+        assert stored["learning_status"] == "PENDING_REVIEW"
+        assert stored["usable_for_learning"] is False
         assert stored["source_kind"] == "external_excel"
 
 
@@ -512,3 +514,117 @@ class TestRebuildPartidaFeatures:
                 "SELECT COUNT(*) FROM historical_partida_feature WHERE partida_id=?", (partida_id,)
             ).fetchone()[0]
         assert total == 1
+
+
+class TestHashDeduplicationAndPendingApproval:
+    """Fixes histórico evidenciado, Tarea 1: mismo contenido no se duplica y
+    todo origen nuevo (cualquier source_kind) empieza en PENDING_REVIEW."""
+
+    def _mock_valid_probe_and_reader(self, analyzer, monkeypatch):
+        monkeypatch.setattr(
+            analyzer.probe,
+            "probe",
+            lambda *_args, **_kwargs: {
+                "is_compatible": True,
+                "score": 24,
+                "header_score": 12,
+                "partida_score": 12,
+                "selected_sheet": "PTO",
+                "selected_sheet_index": 0,
+                "expected_numero": "001-26",
+                "detected_numero": "001-26",
+                "numero_matches": True,
+                "partidas_detectadas": 2,
+                "issues": [],
+            },
+        )
+        monkeypatch.setattr(
+            analyzer.reader,
+            "read",
+            lambda *_args, **_kwargs: {
+                "cabecera": {"numero": "001-26", "obra": "Reparacion bajante", "fecha": "2026-01-01", "cliente": "Test"},
+                "partidas": [
+                    {"numero": "1.1", "concepto": "Desmontaje bajante", "unidad": "ml", "cantidad": 1, "precio": 10, "importe": 10},
+                    {"numero": "1.2", "concepto": "Instalacion bajante", "unidad": "ml", "cantidad": 1, "precio": 15, "importe": 15},
+                ],
+                "subtotal": 25.0,
+                "total": 25.0,
+                "diagnostics": {"selected_sheet": "PTO", "selected_sheet_index": 0, "detected_numero": "001-26", "numero_matches": True},
+            },
+        )
+
+    def test_same_content_in_two_paths_is_detected_as_duplicate(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "dedupe.db"))
+        with database.get_connection() as _conn:
+            pass
+
+
+        first_path = tmp_path / "001-26 original.xlsx"
+        first_path.write_bytes(b"contenido identico del excel")
+        second_path = tmp_path / "carpeta_copia" / "001-26 copia.xlsx"
+        second_path.parent.mkdir(parents=True, exist_ok=True)
+        second_path.write_bytes(b"contenido identico del excel")
+
+        analyzer = HistoricalBudgetAnalyzer()
+        self._mock_valid_probe_and_reader(analyzer, monkeypatch)
+
+        first = analyzer.analyze_budget(str(first_path), force_reanalyze=True)
+        assert first["status"] == "processed"
+
+        second = analyzer.analyze_budget(str(second_path), force_reanalyze=True)
+        assert second["status"] == "duplicate"
+        assert second["duplicate_of_budget_id"] == first["historical_budget_id"]
+
+        with database.get_connection(read_only=True) as conn:
+            total_budgets = conn.execute("SELECT COUNT(*) FROM historical_budget").fetchone()[0]
+            total_partidas = conn.execute("SELECT COUNT(*) FROM historical_partida").fetchone()[0]
+        assert total_budgets == 1
+        assert total_partidas == 2  # no se duplicaron las partidas del segundo intento
+
+    def test_different_content_same_module_is_not_flagged_as_duplicate(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "no_dedupe.db"))
+        with database.get_connection() as _conn:
+            pass
+
+
+        first_path = tmp_path / "001-26 a.xlsx"
+        first_path.write_bytes(b"contenido A")
+        second_path = tmp_path / "002-26 b.xlsx"
+        second_path.write_bytes(b"contenido B distinto")
+
+        analyzer = HistoricalBudgetAnalyzer()
+        self._mock_valid_probe_and_reader(analyzer, monkeypatch)
+
+        first = analyzer.analyze_budget(str(first_path), force_reanalyze=True)
+        second = analyzer.analyze_budget(str(second_path), force_reanalyze=True)
+        assert first["status"] == "processed"
+        assert second["status"] == "processed"
+
+        with database.get_connection(read_only=True) as conn:
+            total_budgets = conn.execute("SELECT COUNT(*) FROM historical_budget").fetchone()[0]
+        assert total_budgets == 2
+
+    def test_any_new_valid_budget_starts_pending_review_regardless_of_source_kind(self, tmp_path, monkeypatch):
+        """Contrato Tarea 1: ya no solo own_final_budget/ai_draft/template quedan
+        pendientes; TODO origen nuevo (incluido external_excel) requiere
+        aprobacion explicita, aunque el analisis salga VALID."""
+        monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "pending_default.db"))
+        with database.get_connection() as _conn:
+            pass
+
+
+        excel_path = tmp_path / "001-26 externo.xlsx"
+        excel_path.write_bytes(b"un excel externo cualquiera")
+
+        analyzer = HistoricalBudgetAnalyzer()
+        self._mock_valid_probe_and_reader(analyzer, monkeypatch)
+
+        result = analyzer.analyze_budget(str(excel_path), force_reanalyze=True)
+        assert result["status"] == "processed"
+
+        stored = get_historical_budget_by_path(str(excel_path))
+        assert stored["analysis_status"] == "VALID"
+        assert stored["learning_status"] == "PENDING_REVIEW"
+        assert stored["usable_for_learning"] is False
+        assert stored["source_kind"] == "external_excel"
+        assert stored["file_sha256"], "el hash debe quedar calculado y guardado"

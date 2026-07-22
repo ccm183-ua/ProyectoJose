@@ -41,8 +41,8 @@ def _seed_db(tmp_path, monkeypatch) -> Path:
     partida_id, perr = insert_historical_partida(
         budget_id,
         {
-            "concepto_original": "Revision de fachada con grieta",
-            "concepto_normalizado": "revision de fachada con grieta",
+            "concepto_original": "Reparacion de fachada con grieta",
+            "concepto_normalizado": "reparacion de fachada con grieta",
             "unidad": "m2",
             "precio_unitario": 30.0,
             "cantidad": 1,
@@ -116,6 +116,129 @@ def test_apply_creates_verified_backup_before_touching_original(tmp_path, monkey
     assert sha256_file(backup_path) == original_hash_before_apply
     assert summary["fichas_reconstruidas"] == 1
     assert summary["patrones_creados"] == 1
+
+
+def _seed_mixed_lines_db(tmp_path, monkeypatch) -> Path:
+    """Fixes histórico evidenciado, Tarea 7: tres partidas reales cuyas fichas
+    (Tarea 2, calculadas por el extractor real, no fabricadas a mano) caen en
+    las tres categorías de auditoría: atómica elegible, compuesta y
+    desconocida/incompleta."""
+    db_path = tmp_path / "mixed.db"
+    monkeypatch.setenv("CUBIAPP_DB_PATH", str(db_path))
+    from src.core.historical_budget_analyzer import HistoricalBudgetAnalyzer
+    from src.core.repositories import insert_historical_partida, upsert_historical_budget
+
+    budget_id, err = upsert_historical_budget(
+        {
+            "ruta_excel": str(tmp_path / "mixed.xlsx"),
+            "ruta_carpeta": str(tmp_path),
+            "nombre_proyecto": "mixed.xlsx",
+            "fecha_modificacion_excel": datetime.now().isoformat(),
+            "analysis_status": "VALID",
+            "usable_for_learning": True,
+            "learning_status": "INCLUDED",
+        }
+    )
+    assert err is None
+    for concepto, unidad, precio in (
+        ("Reparacion de fachada con grieta", "m2", 30.0),
+        ("Demolicion de bajante y reparacion de cubierta", "ud", 80.0),
+        ("Trabajos varios de mantenimiento", "ud", 15.0),
+    ):
+        _pid, perr = insert_historical_partida(
+            budget_id,
+            {
+                "concepto_original": concepto,
+                "concepto_normalizado": concepto.lower(),
+                "unidad": unidad,
+                "precio_unitario": precio,
+                "cantidad": 1,
+                "total_linea": precio,
+            },
+        )
+        assert perr is None
+    HistoricalBudgetAnalyzer().rebuild_partida_features([budget_id])
+    return db_path
+
+
+def test_dry_run_reports_eligibility_categories_and_pattern_forecast(tmp_path, monkeypatch, capsys):
+    db_path = _seed_mixed_lines_db(tmp_path, monkeypatch)
+    before_hash = sha256_file(db_path)
+
+    exit_code = main(["--db", str(db_path), "--dry-run"])
+
+    assert exit_code == 0
+    assert sha256_file(db_path) == before_hash
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["eligible_atomic"] == 1
+    assert summary["composite"] == 1
+    assert summary["unknown_or_incomplete"] == 1
+    assert summary["pending_review"] == 0
+    assert summary["duplicate_hashes"] == 0
+    assert summary["patterns_after_rebuild"] == 1
+
+
+def test_dry_run_reports_duplicate_hashes_without_touching_file(tmp_path, capsys):
+    """Un DB de producción anterior a la Tarea 1 (sin el índice único de
+    file_sha256) puede tener duplicados reales; el audit debe detectarlos
+    con SQL crudo de solo lectura, sin pasar por el índice único (que ni
+    existe en este esquema simulado)."""
+    db_path = tmp_path / "dup.db"
+    conn = sqlite3.connect(db_path)
+    conn.executescript(
+        """
+        CREATE TABLE historical_budget (id INTEGER PRIMARY KEY, learning_status TEXT, file_sha256 TEXT);
+        CREATE TABLE historical_partida (id INTEGER PRIMARY KEY);
+        CREATE TABLE suggested_partida_pattern (id INTEGER PRIMARY KEY);
+        """
+    )
+    same_hash = "a" * 64
+    conn.execute(
+        "INSERT INTO historical_budget (id, learning_status, file_sha256) VALUES (1, 'INCLUDED', ?)", (same_hash,)
+    )
+    conn.execute(
+        "INSERT INTO historical_budget (id, learning_status, file_sha256) VALUES (2, 'INCLUDED', ?)", (same_hash,)
+    )
+    conn.commit()
+    conn.close()
+    before = sha256_file(db_path)
+
+    exit_code = main(["--db", str(db_path), "--dry-run"])
+
+    assert exit_code == 0
+    assert sha256_file(db_path) == before
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["duplicate_hashes"] == 1
+
+
+def test_apply_aborts_without_touching_file_when_duplicate_hashes_found(tmp_path, capsys):
+    db_path = tmp_path / "dup_apply.db"
+    conn = sqlite3.connect(db_path)
+    conn.executescript(
+        """
+        CREATE TABLE historical_budget (id INTEGER PRIMARY KEY, learning_status TEXT, file_sha256 TEXT);
+        CREATE TABLE historical_partida (id INTEGER PRIMARY KEY);
+        CREATE TABLE suggested_partida_pattern (id INTEGER PRIMARY KEY);
+        """
+    )
+    same_hash = "b" * 64
+    conn.execute(
+        "INSERT INTO historical_budget (id, learning_status, file_sha256) VALUES (1, 'INCLUDED', ?)", (same_hash,)
+    )
+    conn.execute(
+        "INSERT INTO historical_budget (id, learning_status, file_sha256) VALUES (2, 'INCLUDED', ?)", (same_hash,)
+    )
+    conn.commit()
+    conn.close()
+    before = sha256_file(db_path)
+
+    exit_code = main(["--db", str(db_path), "--apply"])
+
+    assert exit_code == 1
+    assert sha256_file(db_path) == before
+    out = json.loads(capsys.readouterr().out)
+    assert "duplicad" in out["error"].lower()
+    assert list(tmp_path.glob("*.bak-*")) == []
 
 
 def test_apply_rebuilds_patterns_from_primary_evidence(tmp_path, monkeypatch, capsys):

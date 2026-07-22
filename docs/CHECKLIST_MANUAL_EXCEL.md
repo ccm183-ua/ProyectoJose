@@ -15,10 +15,11 @@
   set CUBIAPP_BACKUP_DIR=C:\ruta\temporal\backups
   run.bat
   ```
-- Para probar el flujo con IA sin gastar cuota real, siembra un patrón histórico
-  con frecuencia/confianza suficiente para el módulo que vayas a describir (ver
-  `HISTORICAL_CONFIDENCE_THRESHOLD`/`HISTORICAL_FREQUENCY_THRESHOLD` en
-  `src/core/budget_orchestrator.py`), o configura una API key real de prueba.
+- Para probar el flujo con IA sin gastar cuota real, siembra un presupuesto
+  histórico aprobado (`learning_status='INCLUDED'`) con al menos una partida
+  con evidencia `exact` o `comparable` para el módulo que vayas a describir
+  (ver `priced_partidas` en `src/core/historical_suggestion_service.py`), o
+  configura una API key real de prueba.
 
 ## Pasos (H1 / Gate E1)
 

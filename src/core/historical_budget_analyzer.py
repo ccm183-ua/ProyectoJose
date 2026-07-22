@@ -2,6 +2,7 @@
 Analizador de presupuestos históricos para inteligencia offline.
 """
 
+import hashlib
 import os
 import re
 import json
@@ -20,6 +21,7 @@ from src.core.repositories import (
     clear_historical_partida_modules_for_budget,
     create_analysis_run,
     delete_partidas_for_budget,
+    find_historical_budget_by_sha256,
     finish_analysis_run,
     get_historical_budget_by_path,
     get_historical_partidas_for_classification,
@@ -32,6 +34,14 @@ from src.core.repositories import (
     upsert_partida_features,
 )
 from src.core.work_type_normalizer import normalize_text, normalize_work_type
+
+
+def sha256_file(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as stream:
+        for chunk in iter(lambda: stream.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _file_mtime_iso(path: str) -> Optional[str]:
@@ -227,10 +237,6 @@ class HistoricalBudgetAnalyzer:
         )
         return summary
 
-    # source_kind que nunca deben auto-incluirse en la memoria de aprendizaje,
-    # aunque el analisis salga VALID: requieren aprobacion humana explicita.
-    _SOURCE_KINDS_REQUIRING_APPROVAL = ("own_final_budget", "ai_draft", "template")
-
     def analyze_budget(
         self,
         excel_path: str,
@@ -255,6 +261,24 @@ class HistoricalBudgetAnalyzer:
                 "excel_path": excel_path,
                 "analysis_status": AnalysisStatus.SKIPPED_UNCHANGED,
             }
+
+        try:
+            file_hash = sha256_file(excel_path)
+        except OSError:
+            file_hash = ""
+
+        if file_hash:
+            duplicate = find_historical_budget_by_sha256(file_hash)
+            existing_id = existing.get("id") if existing else None
+            if duplicate and duplicate.get("id") != existing_id:
+                # Mismo contenido ya importado bajo otra ruta: no se tocan
+                # partidas ni patrones, se devuelve la referencia al original.
+                return {
+                    "status": "duplicate",
+                    "excel_path": excel_path,
+                    "duplicate_of_budget_id": duplicate["id"],
+                    "analysis_status": duplicate.get("analysis_status", ""),
+                }
 
         probe_diagnostics_json = ""
         try:
@@ -306,6 +330,7 @@ class HistoricalBudgetAnalyzer:
                     "partida_score": int(probe_result.get("partida_score") or 0),
                     "error": "",
                     "source_kind": source_kind,
+                    "file_sha256": file_hash or None,
                 }
                 _apply_existing_manual_learning_decision(budget_payload, existing)
                 budget_id, budget_err = upsert_historical_budget(budget_payload)
@@ -367,10 +392,13 @@ class HistoricalBudgetAnalyzer:
                 "expected_numero": expected_numero,
                 "detected_numero": detected_numero,
                 "numero_matches": numero_matches,
-                "usable_for_learning": True,
-                "learning_status": "INCLUDED",
+                # Contrato (fixes histórico evidenciado, Tarea 1): TODO origen
+                # nuevo empieza PENDING_REVIEW, sin excepción por source_kind.
+                # Solo approve_budget_for_learning() puede pasar a INCLUDED.
+                "usable_for_learning": False,
+                "learning_status": "PENDING_REVIEW",
                 "learning_status_source": "AUTO",
-                "learning_decision_reason": "Presupuesto valido para aprendizaje.",
+                "learning_decision_reason": "Requiere aprobación explícita antes de aprender.",
                 "learning_decision_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "analyzer_version": self.ANALYZER_VERSION,
                 "probe_version": self.PROBE_VERSION,
@@ -382,6 +410,7 @@ class HistoricalBudgetAnalyzer:
                 "partida_score": int(probe_result.get("partida_score") or 0),
                 "error": "",
                 "source_kind": source_kind,
+                "file_sha256": file_hash or None,
             }
             quality = validate_budget_quality(read_result, expected_numero=expected_numero)
             issues.extend(quality.get("issues", []))
@@ -405,21 +434,6 @@ class HistoricalBudgetAnalyzer:
                 budget_payload["learning_status"] = "PENDING_REVIEW"
                 budget_payload["learning_status_source"] = "AUTO"
                 budget_payload["learning_decision_reason"] = "Requiere revision manual por avisos."
-                budget_payload["learning_decision_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-            if (
-                source_kind in self._SOURCE_KINDS_REQUIRING_APPROVAL
-                and budget_payload["learning_status"] == "INCLUDED"
-            ):
-                # Nunca auto-incluir presupuestos propios/IA aunque el analisis
-                # economico salga VALID: solo una aprobacion humana explicita
-                # (fuera de este metodo) puede marcarlos como INCLUDED.
-                budget_payload["usable_for_learning"] = False
-                budget_payload["learning_status"] = "PENDING_REVIEW"
-                budget_payload["learning_status_source"] = "AUTO"
-                budget_payload["learning_decision_reason"] = (
-                    f"Origen '{source_kind}' requiere aprobacion explicita antes de aprender de el."
-                )
                 budget_payload["learning_decision_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
             all_warnings = [f"WARN:{w}" for w in warnings] + [f"SEVERE:{w}" for w in severe_warnings]

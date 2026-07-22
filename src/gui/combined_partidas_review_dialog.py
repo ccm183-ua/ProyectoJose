@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 
 from src.core.partida_normalizer import normalize_partida_for_excel
 from src.gui import theme
+from src.gui.partida_provenance_model import row_for_partida
 
 
 class CombinedPartidasReviewDialog(QDialog):
@@ -65,19 +66,22 @@ class CombinedPartidasReviewDialog(QDialog):
         return f"Resultado incompleto: no se ha generado cobertura.{sufijo}"
 
     def _build_rows(self):
+        # Fixes histórico evidenciado, Tarea 6: conserva el source real
+        # ('historical_exact'/'historical_comparable', Tarea 5) en vez de
+        # colapsarlo a 'historical' genérico, y guarda el dict crudo (con
+        # evidence_level/evidence_price_*/evidence_differences) aparte del
+        # normalizado para Excel, que no conserva esos campos.
         for partida in self._historical_partidas:
+            raw = dict(partida or {})
+            raw.setdefault("source", "historical")
             self._rows.append(
-                {
-                    "origin": "Histórica",
-                    "partida": normalize_partida_for_excel(dict(partida or {}), source="historical"),
-                }
+                {"origin": "Histórica", "raw": raw, "partida": normalize_partida_for_excel(raw)}
             )
         for partida in self._ai_partidas:
+            raw = dict(partida or {})
+            raw.setdefault("source", "ai_completion")
             self._rows.append(
-                {
-                    "origin": "IA complementaria",
-                    "partida": normalize_partida_for_excel(dict(partida or {}), source="ai_completion"),
-                }
+                {"origin": "IA complementaria", "raw": raw, "partida": normalize_partida_for_excel(raw)}
             )
     def _build_ui(self):
         main = QVBoxLayout(self)
@@ -105,7 +109,7 @@ class CombinedPartidasReviewDialog(QDialog):
             lay.addWidget(dup)
 
         self._table = QTableWidget(panel)
-        self._table.setColumnCount(10)
+        self._table.setColumnCount(14)
         self._table.setHorizontalHeaderLabels(
             [
                 "Usar",
@@ -118,6 +122,10 @@ class CombinedPartidasReviewDialog(QDialog):
                 "Total",
                 "Confianza",
                 "Motivo/Fuente",
+                "Fuente",
+                "Nivel",
+                "Rango histórico",
+                "Diferencias",
             ]
         )
         self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
@@ -131,6 +139,10 @@ class CombinedPartidasReviewDialog(QDialog):
         self._table.setColumnWidth(7, 90)
         self._table.setColumnWidth(8, 90)
         self._table.setColumnWidth(9, 260)
+        self._table.setColumnWidth(10, 110)
+        self._table.setColumnWidth(11, 130)
+        self._table.setColumnWidth(12, 170)
+        self._table.setColumnWidth(13, 200)
         self._table.setAlternatingRowColors(True)
         self._table.setSortingEnabled(False)
         self._table.setWordWrap(False)
@@ -222,6 +234,12 @@ class CombinedPartidasReviewDialog(QDialog):
             self._table.setItem(i, 8, QTableWidgetItem(str(confianza)))
             self._table.setItem(i, 9, QTableWidgetItem(str(motivo)))
 
+            provenance = row_for_partida(row.get("raw") or partida)
+            self._table.setItem(i, 10, QTableWidgetItem(provenance["Fuente"]))
+            self._table.setItem(i, 11, QTableWidgetItem(provenance["Nivel"]))
+            self._table.setItem(i, 12, QTableWidgetItem(provenance["Rango histórico"]))
+            self._table.setItem(i, 13, QTableWidgetItem(provenance["Diferencias"]))
+
             for col in (2, 3, 5, 6):
                 item = self._table.item(i, col)
                 item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
@@ -306,8 +324,10 @@ class CombinedPartidasReviewDialog(QDialog):
             partida["unidad"] = unidad
             partida["cantidad"] = cantidad
             partida["precio_unitario"] = precio
-            normalized_source = "historical" if data["origin"] == "Histórica" else "ai_completion"
-            selected.append(normalize_partida_for_excel(partida, source=normalized_source))
+            # Fixes histórico evidenciado, Tarea 6: reusar el source ya
+            # resuelto en _build_rows (historical_exact/historical_comparable/
+            # ai_completion), no volver a colapsarlo por origen genérico.
+            selected.append(normalize_partida_for_excel(partida))
 
         self._selected_partidas = selected
         self.accept()

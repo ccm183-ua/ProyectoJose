@@ -1,14 +1,21 @@
 """
 Comparador determinista de compatibilidad entre dos fichas de partida
-(Fase 3, Tarea 8). Sin LLM: reglas de exclusión primero, luego diferencias
-sobre campos no críticos.
+(Fase 3, Tarea 8; endurecido en fixes histórico evidenciado, Tarea 3). Sin
+LLM: precondiciones de datos mínimos primero, luego igualdad de atributos
+críticos, luego diferencias sobre campos no críticos.
 
-Niveles (ver docs/superpowers/plans/2026-07-22-historico-estructurado-y-cruce-fiable.md):
-- exact: misma unidad, acción y sin diferencias en el resto -> puede sugerir precio.
-- comparable: misma unidad/acción pero con diferencias en elemento/material/
-  sistema/dimensiones/condiciones -> puede sugerir rango, con advertencia.
-- related: al menos una de las dos líneas es compuesta -> antecedente, nunca precio.
-- incompatible: distinta unidad o distinta acción -> se excluye.
+Niveles (ver docs/superpowers/specs/2026-07-22-reconduccion-historico-evidenciado-design.md):
+- exact: unidad, acción y elemento conocidos e idénticos, ambas líneas
+  atómicas y sin diferencias en el resto -> puede sugerir precio.
+- comparable: mismos unidad/acción/elemento (críticos), pero con diferencias
+  en sistema/material/dimensiones/condiciones -> puede sugerir rango, con
+  advertencia.
+- related: falta algún atributo mínimo (unidad/acción/elemento) en cualquiera
+  de las dos fichas, o alguna de las dos líneas no es atómica -> antecedente
+  consultable, nunca precio. Una ficha incompleta NO es "probablemente
+  exacta": es evidencia insuficiente, no se premia la ausencia de datos.
+- incompatible: unidad, acción o elemento CONOCIDOS pero distintos -> se
+  excluye explícitamente.
 """
 
 from dataclasses import dataclass
@@ -31,28 +38,35 @@ def _incompatible(field: str) -> ComparisonResult:
     return ComparisonResult("incompatible", 0.0, (field,), (f"'{field}' distinto entre request y evidencia",))
 
 
+def _related(reason: str) -> ComparisonResult:
+    return ComparisonResult("related", 0.0, (), (reason,))
+
+
 def compare_partida_features(request: PartidaFeatures, evidence: PartidaFeatures) -> ComparisonResult:
-    # Igual que accion/elemento/material: solo excluye si AMBAS unidades son
-    # conocidas y distintas. Una request sin unidad concreta (p.ej. una
-    # descripcion libre a nivel de proyecto) no debe descartar toda la
-    # evidencia por comparar "" contra "m2".
-    if request.unit and evidence.unit and request.unit != evidence.unit:
+    # Precondición: sin unidad, acción y elemento conocidos en AMBAS fichas,
+    # no hay evidencia limpia posible. Related, no exact/comparable: la
+    # ausencia de datos no debe leerse como "coincide por defecto".
+    if not all(
+        (request.unit, request.action, request.element, evidence.unit, evidence.action, evidence.element)
+    ):
+        return _related("atributos mínimos incompletos (unidad, acción o elemento)")
+
+    # Atributos críticos: deben ser IDÉNTICOS, no solo "ambos conocidos".
+    # Element ya no degrada a 'comparable': una fachada y una cubierta no son
+    # la misma evidencia aunque compartan unidad y acción.
+    if request.unit != evidence.unit:
         return _incompatible("unit")
-
-    if request.action and evidence.action and request.action != evidence.action:
+    if request.action != evidence.action:
         return _incompatible("action")
+    if request.element != evidence.element:
+        return _incompatible("element")
 
-    if request.line_kind == "composite" or evidence.line_kind == "composite":
-        return ComparisonResult(
-            "related",
-            0.0,
-            (),
-            ("línea compuesta: sirve de antecedente, nunca como precio exacto",),
-        )
+    # Líneas no atómicas (compuestas, auxiliares, desconocidas) nunca sirven
+    # de precio limpio aunque coincidan en los atributos críticos.
+    if request.line_kind != "atomic" or evidence.line_kind != "atomic":
+        return _related("línea no atómica")
 
     differences = []
-    if request.element and evidence.element and request.element != evidence.element:
-        differences.append("element")
     if request.system and evidence.system and request.system != evidence.system:
         differences.append("system")
     if request.material and evidence.material and request.material != evidence.material:
@@ -64,7 +78,9 @@ def compare_partida_features(request: PartidaFeatures, evidence: PartidaFeatures
     differences.extend(f"condition:{c}" for c in sorted(condition_diff))
 
     if not differences:
-        return ComparisonResult("exact", 1.0, (), ("misma unidad, acción y sin diferencias detectadas",))
+        return ComparisonResult(
+            "exact", 1.0, (), ("misma unidad, acción, elemento y sin diferencias detectadas",)
+        )
 
     return ComparisonResult(
         "comparable",

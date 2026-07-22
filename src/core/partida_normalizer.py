@@ -22,7 +22,11 @@ def _to_float(value, default: float = 0.0) -> float:
 
 def _is_historical_source(source: str) -> bool:
     s = (source or "").strip().lower()
-    return s in {"historical", "historica", "histórica"}
+    if s in {"historical", "historica", "histórica"}:
+        return True
+    # Fixes histórico evidenciado, Tarea 5: BudgetOrchestrator ya no emite
+    # solo 'historical' generico, emite 'historical_exact'/'historical_comparable'.
+    return s.startswith("historical_")
 
 
 def _unique_nonempty_parts(values: List[str]) -> str:

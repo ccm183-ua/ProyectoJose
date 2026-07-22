@@ -2,7 +2,7 @@
 Clasificación de partidas históricas en módulos de ejecución.
 """
 
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from src.core.work_type_normalizer import normalize_text
 
@@ -158,15 +158,35 @@ PRIMARY_PRIORITY = (
 # único módulo detectado en la línea.
 _INCIDENTAL_ONLY_MODULES = {"gestion_residuos"}
 
+# Elemento semántico (historical_partida_features) -> módulo que debe ganar
+# como principal si aparece entre los candidatos, aunque otro módulo tenga
+# más confianza por coincidencias incidentales (fixes histórico evidenciado,
+# Tarea 2, Step 4: "andamio"/"contenedor"/"picado" no deben pesar más que el
+# elemento facturable real de la línea).
+_ELEMENT_PRIMARY_OVERRIDE = {
+    "facade_render": "fachada",
+    "downspout": "sustitucion_bajante",
+    "roof": "impermeabilizacion",
+}
 
-def pick_primary_module(candidates: List[Dict]) -> Dict:
+
+def pick_primary_module(candidates: List[Dict], element: Optional[str] = None) -> Dict:
     """Elige el módulo principal entre candidatos {module, confidence, ...}.
 
-    Desempata por PRIMARY_PRIORITY cuando dos módulos empatan en confianza.
-    Compartida por HistoricalPartidaClassifier.classify() y
+    Si `element` tiene un módulo semánticamente obligado (ver
+    `_ELEMENT_PRIMARY_OVERRIDE`) y ese módulo está entre los candidatos, gana
+    directamente sin mirar confianza/prioridad. Si no, desempata por
+    PRIMARY_PRIORITY cuando dos módulos empatan en confianza. Compartida por
+    HistoricalPartidaClassifier.classify() y
     historical_partida_features.extract_partida_features() para que ambos
     elijan siempre el mismo módulo principal de una línea compuesta.
     """
+    forced_module = _ELEMENT_PRIMARY_OVERRIDE.get(element)
+    if forced_module:
+        forced = next((c for c in candidates if c["module"] == forced_module), None)
+        if forced:
+            return forced
+
     def priority_rank(module_name: str) -> int:
         try:
             return PRIMARY_PRIORITY.index(module_name)
