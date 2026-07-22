@@ -82,3 +82,54 @@ class TestHistoricalPartidaClassifier:
         results = classifier.classify_text("Revision fachadas con grieta y fisura")
         modules = [row["module"] for row in results]
         assert "fachada" in modules
+
+
+class TestReviewedHistoricalCases:
+    """Fase 5, Tarea 14: regresiones fijadas tras la revisión humana del
+    histórico real (2026-07-22). Casos reales anonimizados/acortados donde
+    el clasificador sobreclasificaba por mención incidental."""
+
+    def test_demolition_with_debris_removal_stays_demolicion_not_residuos(self):
+        classifier = HistoricalPartidaClassifier()
+        classification = classifier.classify(
+            {
+                "concepto": (
+                    "Desmontaje de bajante existente, incluyendo corte, retirada y "
+                    "carga manual sobre contenedor de residuos"
+                )
+            }
+        )
+        assert classification["primary_module"]["id"] == "demolicion"
+
+    def test_demolition_of_flooring_with_container_transport_stays_demolicion(self):
+        classifier = HistoricalPartidaClassifier()
+        classification = classifier.classify(
+            {
+                "concepto": (
+                    "Demolicion de pavimento existente con medios manuales, sin "
+                    "deteriorar elementos contiguos, y carga sobre contenedor a vertedero"
+                )
+            }
+        )
+        assert classification["primary_module"]["id"] == "demolicion"
+
+    def test_pure_debris_transport_without_demolition_verb_stays_gestion_residuos(self):
+        """gestion_residuos sigue ganando cuando es el UNICO modulo detectado
+        (p.ej. una partida de solo transporte de residuos ya generados)."""
+        classifier = HistoricalPartidaClassifier()
+        classification = classifier.classify(
+            {"concepto": "Transporte de residuos inertes en contenedor a vertedero"}
+        )
+        assert classification["primary_module"]["id"] == "gestion_residuos"
+
+    def test_protection_during_facade_works_goes_to_medios_auxiliares_not_fachada(self):
+        classifier = HistoricalPartidaClassifier()
+        classification = classifier.classify(
+            {
+                "concepto": (
+                    "Proteccion de pavimentos y descuelgues. Tapado mediante mantas "
+                    "la zona de patio durante la ejecucion de los trabajos en fachada"
+                )
+            }
+        )
+        assert classification["primary_module"]["id"] == "medios_auxiliares"

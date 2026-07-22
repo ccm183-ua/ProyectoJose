@@ -62,6 +62,7 @@ MODULE_RULES = {
         "medio auxiliar",
         "proteccion",
         "seguridad",
+        "tapado",
     ],
     "impermeabilizacion": [
         "impermeabilizacion",
@@ -110,8 +111,11 @@ MODULE_RULES = {
         "garaje",
     ],
     "fachada": [
+        # "fachadas" no esta como keyword aparte: normalize_text la expande a
+        # "fachada" (abreviatura fachad->fachada), asi que contaba como un
+        # segundo acierto duplicado e inflaba la confianza de este modulo
+        # cada vez que aparecia la palabra (hallazgo Tarea 14, 2026-07-22).
         "fachada",
-        "fachadas",
         "revision fachada",
         "grieta",
         "fisura",
@@ -147,6 +151,14 @@ PRIMARY_PRIORITY = (
 )
 
 
+# Módulos que casi siempre son incidentales a otra acción real (revisión
+# humana Tarea 14, 2026-07-22: "DESMONTAJE BAJANTE...retirada...contenedor"
+# se facturaba como demolición, no como gestión de residuos, aunque el texto
+# mencionara más términos de residuos). Solo ganan como principal si son el
+# único módulo detectado en la línea.
+_INCIDENTAL_ONLY_MODULES = {"gestion_residuos"}
+
+
 def pick_primary_module(candidates: List[Dict]) -> Dict:
     """Elige el módulo principal entre candidatos {module, confidence, ...}.
 
@@ -161,7 +173,9 @@ def pick_primary_module(candidates: List[Dict]) -> Dict:
         except ValueError:
             return len(PRIMARY_PRIORITY)
 
-    return max(candidates, key=lambda c: (c["confidence"], -priority_rank(c["module"])))
+    non_incidental = [c for c in candidates if c["module"] not in _INCIDENTAL_ONLY_MODULES]
+    pool = non_incidental or candidates
+    return max(pool, key=lambda c: (c["confidence"], -priority_rank(c["module"])))
 
 
 class HistoricalPartidaClassifier:

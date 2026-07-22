@@ -764,6 +764,26 @@ Expected: PASS; el original no se abre en modo escritura y el informe identifica
 
 ### Task 14: Acordar y aplicar revisión humana del histórico actual
 
+> **Estado (2026-07-22): Steps 1-3 hechos con alcance acotado a 2 familias
+> revisadas junto al usuario; Step 4 NO ejecutado sobre la base real.**
+> El informe (Step 1) encontró 8 líneas sin módulo (no 33 — la ficha nueva vía
+> `classify_text` clasifica más que las asignaciones antiguas en
+> `historical_partida_module`) y 182 `composite`. Se revisaron con el usuario
+> ejemplos de 3 familias (pintura/gestión de residuos/fachada) y se
+> confirmaron 2 decisiones reales, documentadas en
+> `docs/criterios-clasificacion-partidas.md` con expresión/acción/módulo/
+> condición según pide este Step 2: (1) demolición con retirada de escombros
+> se queda en `demolicion`, no `gestion_residuos`; (2) protección/tapado
+> durante obra en fachada va a `medios_auxiliares`, no `fachada`. Ambas fijadas
+> con regresión en `TestReviewedHistoricalCases`
+> (`tests/test_historical_partida_classifier.py`, Step 3). Las 8 restantes
+> familias `composite` (cerrajería, impermeabilización, demolición, alicatado,
+> estructura, carpintería, albañilería, bajante) quedan sin revisar. No se
+> implementaron los estados `accepted`/`needs_mapping`/`composite`/`excluded`
+> ni la UI de filtrado en `historical_analysis_results_dialog.py`. Step 4
+> (`--apply` sobre `Documents/CubiApp/datos.db` real) requiere aprobación
+> explícita del usuario fuera de esta sesión — no ejecutado.
+
 **Files:**
 - Modify: `docs/criterios-clasificacion-partidas.md`
 - Modify: `src/gui/historical_analysis_results_dialog.py`
@@ -773,17 +793,17 @@ Expected: PASS; el original no se abre en modo escritura y el informe identifica
 - Estados por partida: `accepted`, `needs_mapping`, `composite`, `excluded`.
 - La interfaz permite filtrar por estado y guardar una decisión del usuario con fecha y motivo breve.
 
-- [ ] **Step 1: Cargar una copia y generar informe de revisión**
+- [x] **Step 1: Cargar una copia y generar informe de revisión** (8 líneas sin módulo, no 33 — ver nota de estado)
 
 Run: `.\.venv\Scripts\python.exe scripts\rebuild_historical_patterns.py --db .\copia-datos.db --dry-run > .\historico-a-revisar.json`
 
 Expected: el informe contiene la lista exacta de 33 líneas sin módulo y las líneas multietiqueta a revisar.
 
-- [ ] **Step 2: Documentar decisiones de clasificación reales**
+- [x] **Step 2: Documentar decisiones de clasificación reales** (2 de 11 familias; ver nota de estado)
 
 Para cada familia de partidas repetida, añadir en `docs/criterios-clasificacion-partidas.md`: expresión habitual, acción, elemento, módulo principal, etiquetas secundarias y una condición que impida una coincidencia exacta.
 
-- [ ] **Step 3: Escribir y ejecutar regresiones por cada decisión añadida**
+- [x] **Step 3: Escribir y ejecutar regresiones por cada decisión añadida**
 
 ```python
 @pytest.mark.parametrize(("concept", "expected_primary"), REVIEWED_CASES)

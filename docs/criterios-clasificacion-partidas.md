@@ -114,3 +114,74 @@ siempre `None` (no hay vocabulario de sistemas todavía) y `dimensions` queda
 siempre `()` (extraer magnitudes tipo "diámetro 100 mm" del texto libre
 requeriría parsing numérico dedicado, no solo keywords).
 
+## Revisión humana del histórico real (Fase 5, Tarea 14 — 2026-07-22)
+
+Informe generado con `scripts/rebuild_historical_patterns.py --apply` sobre una
+copia desechable de `Documents/CubiApp/datos.db` (254 partidas reales): 8 líneas
+sin ningún módulo detectado, 182 líneas `composite` (más de un módulo). Revisadas
+con el usuario las familias más repetidas (pintura 38, gestión de residuos 32,
+fachada 24, cerrajería 20...); dos hallazgos confirmados y corregidos:
+
+### Decisión 1 — demolición con retirada de escombros
+
+- **Expresión habitual**: "Desmontaje/Demolición de X... retirada/carga sobre
+  contenedor/vertedero" (p.ej. desmontaje de bajante, demolición de pavimento
+  o falso techo con transporte de residuos).
+- **Acción**: `demolish`. **Elemento**: el elemento demolido (bajante,
+  pavimento, falso techo...). **Módulo principal**: `demolicion`.
+  **Etiqueta secundaria**: `gestion_residuos`.
+- **Condición que impide coincidencia exacta**: si la partida es *solo*
+  transporte/vertido de residuos ya generados (sin verbo de demoler/desmontar
+  en el texto), el módulo principal pasa a ser `gestion_residuos` — no es la
+  misma evidencia de precio que una demolición con transporte incluido.
+- **Motivo**: la acción que se factura es demoler; la gestión de residuos es
+  casi siempre incidental. Como `gestion_residuos` tiene pocas palabras clave,
+  dos menciones ahí ("residuo"+"contenedor") bastaban para superar en
+  confianza a "desmontaje"+"retirada" en demolición.
+- **Implementación**: `historical_partida_classifier.pick_primary_module()`
+  excluye `gestion_residuos` del pool de candidatos a principal salvo que sea
+  el único módulo detectado en la línea. Regresión:
+  `tests/test_historical_partida_classifier.py::TestReviewedHistoricalCases`.
+
+### Decisión 2 — protección/tapado durante obra en fachada
+
+- **Expresión habitual**: "Protección de pavimentos y descuelgues. Tapado
+  mediante mantas... durante la ejecución de los trabajos en fachada".
+- **Acción**: `protect` (no cubierta por vocabulario de `action` todavía).
+  **Módulo principal**: `medios_auxiliares`. **Etiqueta secundaria**:
+  `fachada` (contexto de dónde ocurre, no el trabajo en sí).
+- **Condición que impide coincidencia exacta**: si el texto describe
+  reparación/intervención real sobre el paramento (grieta, fisura, revoco),
+  el módulo principal es `fachada`, no `medios_auxiliares` — la sola mención
+  de "fachada" como ubicación no basta.
+- **Motivo**: "fachada" aparecía solo como contexto de ubicación, no como el
+  trabajo facturado; la protección/tapado es una partida auxiliar
+  independiente.
+- **Implementación**: se añadió `"tapado"` a las palabras clave de
+  `medios_auxiliares` en `MODULE_RULES`.
+- **Hallazgo colateral corregido**: `"fachadas"` (plural) se normalizaba a
+  `"fachada"` por la expansión de abreviaturas (`fachad→fachada`), así que
+  contaba como un segundo acierto duplicado del mismo texto e inflaba
+  artificialmente la confianza del módulo `fachada` cada vez que aparecía la
+  palabra. Se retiró `"fachadas"` de `MODULE_RULES["fachada"]` (redundante,
+  ya cubierta por `"fachada"` tras normalizar).
+
+### Pendiente (no decidido en esta sesión)
+
+- El mismo patrón de duplicado por abreviatura afecta también a
+  `impermeabilizacion` (`"impermeabilizacion"`/`"imperm"` e
+  `"filtracion"`/`"filtraciones"` normalizan igual) — no se ha tocado, no
+  formaba parte de los hallazgos revisados con el usuario.
+- De las 182 líneas `composite`, solo se revisaron ejemplos representativos
+  de 3 familias (pintura, gestión de residuos, fachada). El resto
+  (cerrajería, impermeabilización, demolición, alicatado, estructura,
+  carpintería, albañilería, bajante) queda pendiente de revisión.
+- Se observó un problema de codificación en `concepto_original` para varias
+  partidas reales (acentos mostrados como `�`) — no es un problema de
+  clasificación, es un problema de origen de datos; no investigado en esta
+  sesión.
+- No se ha ejecutado `--apply` sobre la base real de producción todavía
+  (`Documents/CubiApp/datos.db` sigue en `schema_version=1`): solo sobre
+  copias desechables. Migrar y reconstruir la base real requiere que el
+  usuario decida explícitamente cuándo hacerlo.
+
