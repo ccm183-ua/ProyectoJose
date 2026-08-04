@@ -4,12 +4,13 @@ Diálogo para analizar presupuestos históricos desde una carpeta.
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QCheckBox,
     QDialog,
     QFileDialog,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
+    QListWidget,
     QMessageBox,
     QPushButton,
     QTextEdit,
@@ -36,7 +37,7 @@ class HistoricalAnalysisDialog(QDialog):
         # Precargar la última carpeta analizada para no tener que volver a buscarla.
         last_folder = self._settings.get_default_path(Settings.PATH_HISTORICAL_FOLDER)
         if last_folder:
-            self._folder_input.setText(last_folder)
+            self._folder_list.addItem(last_folder)
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
@@ -56,22 +57,29 @@ class HistoricalAnalysisDialog(QDialog):
         layout.addWidget(text)
         layout.addSpacing(theme.SPACE_SM)
 
-        folder_label = theme.create_form_label(self, "Carpeta de presupuestos:")
+        folder_label = theme.create_form_label(self, "Carpetas de presupuestos:")
         layout.addWidget(folder_label)
 
-        row = QHBoxLayout()
-        self._folder_input = QLineEdit(self)
-        self._folder_input.setReadOnly(True)
-        self._folder_input.setMinimumHeight(32)
-        self._folder_input.setFont(theme.font_base())
-        row.addWidget(self._folder_input, 1)
+        self._folder_list = QListWidget(self)
+        self._folder_list.setFont(theme.font_base())
+        self._folder_list.setMinimumHeight(120)
+        self._folder_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        layout.addWidget(self._folder_list)
 
-        btn_browse = QPushButton("Seleccionar...", self)
-        btn_browse.setFont(theme.font_base())
-        btn_browse.setFixedHeight(32)
-        btn_browse.clicked.connect(self._on_browse)
-        row.addWidget(btn_browse)
-        layout.addLayout(row)
+        folder_actions = QHBoxLayout()
+        btn_add = QPushButton("+ Añadir carpeta...", self)
+        btn_add.setFont(theme.font_base())
+        btn_add.setFixedHeight(32)
+        btn_add.clicked.connect(self._on_add_folder)
+        folder_actions.addWidget(btn_add)
+
+        btn_remove = QPushButton("Quitar seleccionadas", self)
+        btn_remove.setFont(theme.font_base())
+        btn_remove.setFixedHeight(32)
+        btn_remove.clicked.connect(self._on_remove_selected_folders)
+        folder_actions.addWidget(btn_remove)
+        folder_actions.addStretch()
+        layout.addLayout(folder_actions)
 
         self._recursive_check = QCheckBox("Incluir subcarpetas", self)
         self._recursive_check.setChecked(True)
@@ -113,21 +121,32 @@ class HistoricalAnalysisDialog(QDialog):
         actions.addWidget(self._run_btn)
 
         layout.addLayout(actions)
-        theme.fit_dialog(self, 700, 460)
+        theme.fit_dialog(self, 700, 540)
 
-    def _on_browse(self):
+    def _on_add_folder(self):
         path = QFileDialog.getExistingDirectory(self, "Selecciona una carpeta")
-        if path:
-            self._folder_input.setText(path)
+        if not path:
+            return
+        existing = {
+            self._folder_list.item(i).text() for i in range(self._folder_list.count())
+        }
+        if path not in existing:
+            self._folder_list.addItem(path)
+
+    def _on_remove_selected_folders(self):
+        for item in self._folder_list.selectedItems():
+            self._folder_list.takeItem(self._folder_list.row(item))
 
     def _on_run(self):
-        folder = self._folder_input.text().strip()
-        if not folder:
-            QMessageBox.information(self, "Carpeta requerida", "Selecciona una carpeta para analizar.")
+        folders = [self._folder_list.item(i).text() for i in range(self._folder_list.count())]
+        if not folders:
+            QMessageBox.information(
+                self, "Carpeta requerida", "Añade al menos una carpeta para analizar."
+            )
             return
 
-        # Recordar la carpeta para el auto-análisis en el arranque.
-        self._settings.set_default_path(Settings.PATH_HISTORICAL_FOLDER, folder)
+        # Recordar la última carpeta para el auto-análisis en el arranque.
+        self._settings.set_default_path(Settings.PATH_HISTORICAL_FOLDER, folders[-1])
 
         self._run_btn.setEnabled(False)
         self._status_label.setText("Analizando...")
@@ -137,8 +156,8 @@ class HistoricalAnalysisDialog(QDialog):
         force_reanalyze = self._force_check.isChecked()
 
         def _work():
-            return self._analyzer.analyze_folder(
-                folder, recursive=recursive, force_reanalyze=force_reanalyze
+            return self._analyzer.analyze_folders(
+                folders, recursive=recursive, force_reanalyze=force_reanalyze
             )
 
         def _done(ok: bool, payload):

@@ -131,9 +131,8 @@ class HistoricalBudgetAnalyzer:
         self.classifier = classifier or HistoricalPartidaClassifier()
         self.probe = BudgetFileProbe(self.reader)
 
-    def analyze_folder(
-        self, folder_path: str, recursive: bool = True, force_reanalyze: bool = False
-    ) -> Dict:
+    @staticmethod
+    def _collect_excel_paths(folder_path: str, recursive: bool) -> List[str]:
         excel_paths: List[str] = []
         if recursive:
             for root, _, files in os.walk(folder_path):
@@ -145,8 +144,33 @@ class HistoricalBudgetAnalyzer:
                 full_path = os.path.join(folder_path, name)
                 if os.path.isfile(full_path) and name.lower().endswith((".xlsx", ".xlsm")):
                     excel_paths.append(full_path)
+        return excel_paths
+
+    def analyze_folder(
+        self, folder_path: str, recursive: bool = True, force_reanalyze: bool = False
+    ) -> Dict:
+        excel_paths = self._collect_excel_paths(folder_path, recursive)
         return self.analyze_files(
             excel_paths, source_folder=folder_path, force_reanalyze=force_reanalyze
+        )
+
+    def analyze_folders(
+        self, folder_paths: List[str], recursive: bool = True, force_reanalyze: bool = False
+    ) -> Dict:
+        """Como analyze_folder pero para varias carpetas a la vez: un único
+        run_id, un único backup y una única reconstrucción de patrones al
+        final, en vez de repetir el proceso completo carpeta a carpeta."""
+        excel_paths: List[str] = []
+        seen = set()
+        for folder_path in folder_paths:
+            for path in self._collect_excel_paths(folder_path, recursive):
+                if path not in seen:
+                    seen.add(path)
+                    excel_paths.append(path)
+        return self.analyze_files(
+            excel_paths,
+            source_folder="; ".join(folder_paths),
+            force_reanalyze=force_reanalyze,
         )
 
     def analyze_files(

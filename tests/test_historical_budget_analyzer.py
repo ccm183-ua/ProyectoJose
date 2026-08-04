@@ -442,6 +442,37 @@ class TestHistoricalBudgetAnalyzer:
         assert stored["usable_for_learning"] is False
         assert stored["source_kind"] == "external_excel"
 
+    def test_analyze_folders_combines_several_folders_in_one_run(self, tmp_path, monkeypatch):
+        """Analizar presupuestos terminados: seleccionar varias carpetas a la
+        vez debe recorrerlas todas en un unico run_id (no una pasada por
+        carpeta), sin duplicar un mismo Excel si dos carpetas se solapan."""
+        db_path = tmp_path / "datos_multi_folder_test.db"
+        monkeypatch.setenv("CUBIAPP_DB_PATH", str(db_path))
+
+        folder_a = tmp_path / "obra_a"
+        folder_b = tmp_path / "obra_b"
+        folder_a.mkdir()
+        folder_b.mkdir()
+        (folder_a / "presupuesto_a.xlsx").write_text("placeholder", encoding="utf-8")
+        (folder_b / "presupuesto_b.xlsx").write_text("placeholder", encoding="utf-8")
+
+        analyzer = HistoricalBudgetAnalyzer()
+        result = analyzer.analyze_folders([str(folder_a), str(folder_b), str(folder_a)])
+
+        assert result["total_archivos"] == 2
+        assert result["run_id"] is not None
+
+    def test_analyze_folders_with_no_excel_files_reports_zero(self, tmp_path, monkeypatch):
+        db_path = tmp_path / "datos_multi_folder_empty_test.db"
+        monkeypatch.setenv("CUBIAPP_DB_PATH", str(db_path))
+        empty_folder = tmp_path / "vacia"
+        empty_folder.mkdir()
+
+        analyzer = HistoricalBudgetAnalyzer()
+        result = analyzer.analyze_folders([str(empty_folder)])
+
+        assert result["total_archivos"] == 0
+
 
 class TestRebuildPartidaFeatures:
     """Fase 2, Tarea 7: persistir la ficha derivada sin tocar el dato bruto."""
