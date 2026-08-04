@@ -178,6 +178,64 @@ def test_dry_run_reports_eligibility_categories_and_pattern_forecast(tmp_path, m
     assert summary["patterns_after_rebuild"] == 1
 
 
+def test_dry_run_pattern_forecast_excludes_atomic_lines_missing_action_or_element(
+    tmp_path, monkeypatch, capsys
+):
+    """Regresion: patterns_after_rebuild debe aplicar el mismo filtro que
+    HistoricalPatternBuilder._load_groups() (unit/action/element no vacios),
+    no solo line_kind='atomic'. Antes del fix, esta atomica incompleta se
+    contaba como un segundo grupo de patron ademas de la elegible del seed,
+    prediciendo un patron mas de los que _load_groups() genera en realidad."""
+    db_path = _seed_db(tmp_path, monkeypatch)
+    from src.core.repositories import insert_historical_partida, upsert_partida_features
+
+    with sqlite3.connect(db_path) as conn:
+        budget_id = conn.execute("SELECT id FROM historical_budget").fetchone()[0]
+
+    def _add_line(concepto, unit, action, element):
+        partida_id, perr = insert_historical_partida(
+            budget_id,
+            {
+                "concepto_original": concepto,
+                "concepto_normalizado": concepto.lower(),
+                "unidad": unit or "",
+                "precio_unitario": 25.0,
+                "cantidad": 1,
+                "total_linea": 25.0,
+            },
+        )
+        assert perr is None
+        assert (
+            upsert_partida_features(
+                partida_id,
+                {
+                    "action": action,
+                    "element": element,
+                    "system": None,
+                    "unit": unit,
+                    "material": None,
+                    "dimensions": (),
+                    "conditions": (),
+                    "line_kind": "atomic",
+                    "primary_module_id": "fachada",
+                    "secondary_module_ids": (),
+                    "confidence": 0.9,
+                    "reasons": (),
+                    "classifier_version": "test",
+                },
+            )
+            is None
+        )
+
+    _add_line("Reparacion de revoco de fachada", "m2", "repair", "facade_render")
+    _add_line("Revision de fachada con grieta", "m2", None, None)
+
+    exit_code = main(["--db", str(db_path), "--dry-run"])
+    assert exit_code == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["patterns_after_rebuild"] == 1
+
+
 def test_dry_run_reports_duplicate_hashes_without_touching_file(tmp_path, capsys):
     """Un DB de producción anterior a la Tarea 1 (sin el índice único de
     file_sha256) puede tener duplicados reales; el audit debe detectarlos

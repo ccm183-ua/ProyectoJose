@@ -126,6 +126,9 @@ def build_summary(db_path: str) -> dict:
                          AND hb.analysis_status IN ('VALID', 'VALID_WITH_WARNINGS')
                          AND hb.learning_status = 'INCLUDED'
                          AND f.line_kind = 'atomic'
+                         AND f.unit IS NOT NULL AND f.unit <> ''
+                         AND f.action IS NOT NULL AND f.action <> ''
+                         AND f.element IS NOT NULL AND f.element <> ''
                        GROUP BY em.id, hp.concepto_normalizado
                    )"""
             ).fetchone()[0]
