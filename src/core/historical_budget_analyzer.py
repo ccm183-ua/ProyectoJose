@@ -249,6 +249,22 @@ class HistoricalBudgetAnalyzer:
         except Exception:
             summary["errores"] += 1
 
+        # Exportar el paquete de contexto para IA (Tarea 3 del plan
+        # docs/superpowers/plans/2026-08-04-paquete-contexto-ia.md), solo si
+        # hay ruta configurada. Es el momento exacto en que el conocimiento
+        # historico cambia; un fallo aqui no debe tumbar el analisis.
+        from src.core.settings import Settings as _Settings
+
+        context_pack_dir = _Settings().get_default_path(_Settings.PATH_CONTEXT_PACK)
+        if context_pack_dir:
+            try:
+                from src.core import database as _database
+                from scripts.export_context_pack import export_context_pack
+
+                export_context_pack(str(_database.get_db_path()), context_pack_dir)
+            except Exception:
+                summary["errores"] += 1
+
         finish_analysis_run(
             run_id,
             {

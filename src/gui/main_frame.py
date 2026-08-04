@@ -176,6 +176,8 @@ class MainFrame(QMainWindow):
         act_hist.triggered.connect(self._open_historical_analysis)
         act_memory = m_tools.addAction("Panel de memoria historica...")
         act_memory.triggered.connect(self._open_historical_memory_dashboard)
+        act_export_context = m_tools.addAction("Exportar paquete de contexto IA...")
+        act_export_context.triggered.connect(self._export_context_pack_manual)
 
         m_ayuda = menubar.addMenu("&Ayuda")
         act_about = m_ayuda.addAction("Acerca de...")
@@ -396,6 +398,38 @@ class MainFrame(QMainWindow):
         from src.gui.historical_analysis_dialog import HistoricalAnalysisDialog
         dlg = HistoricalAnalysisDialog(self)
         dlg.exec()
+
+    def _export_context_pack_manual(self):
+        from src.core import database
+        from src.core.settings import Settings
+        from scripts.export_context_pack import export_context_pack
+
+        settings = Settings()
+        out_dir = settings.get_default_path(Settings.PATH_CONTEXT_PACK)
+        if not out_dir:
+            out_dir = QFileDialog.getExistingDirectory(
+                self, "Selecciona la carpeta del paquete de contexto (p. ej. iCloud/Drive)"
+            )
+            if not out_dir:
+                return
+            settings.set_default_path(Settings.PATH_CONTEXT_PACK, out_dir)
+
+        try:
+            summary = export_context_pack(str(database.get_db_path()), out_dir)
+        except Exception as exc:
+            QMessageBox.warning(
+                self, "Error", f"No se pudo exportar el paquete de contexto:\n{exc}"
+            )
+            return
+
+        QMessageBox.information(
+            self, "Paquete exportado",
+            f"Carpeta: {out_dir}\n\n"
+            f"Patrones (precio evidenciado): {summary['patrones']}\n"
+            f"Repertorio: {summary['repertorio']}\n"
+            f"Modulos de vocabulario: {summary['vocabulario_modulos']}\n"
+            f"Partidas del ejemplo de estructura: {summary['estructura_partidas']}",
+        )
 
     def _buscar_comunidad_para_presupuesto(self, nombre_cliente: str, direccion: str = "") -> dict | None:
         from src.gui.dialogs import (

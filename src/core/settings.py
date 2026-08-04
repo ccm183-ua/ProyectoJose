@@ -59,6 +59,7 @@ class Settings:
     PATH_RELATION_FILE = "ruta_relacion_presupuestos"
     PATH_DATABASE = "ruta_base_datos"
     PATH_HISTORICAL_FOLDER = "ruta_analisis_historico"
+    PATH_CONTEXT_PACK = "ruta_paquete_contexto_ia"
 
     _ALL_PATH_KEYS = (
         PATH_SAVE_BUDGETS,
@@ -66,6 +67,7 @@ class Settings:
         PATH_RELATION_FILE,
         PATH_DATABASE,
         PATH_HISTORICAL_FOLDER,
+        PATH_CONTEXT_PACK,
     )
 
     def get_database_path(self) -> Optional[str]:
