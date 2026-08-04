@@ -156,7 +156,7 @@ El clasificador de módulos combina reglas, señales de texto y, como último re
 ### Arquitectura de IA ya decidida
 
 - **Patrón elegido: agente guiado por flujo.** Herramientas deterministas consultan BDD/histórico/catálogo/web y calculan cobertura; el modelo de IA solo clasifica, decide qué falta pedir y redacta el borrador y el informe. Se descartaron explícitamente: (a) un agente conversacional libre con acceso abierto a herramientas (peor control de coste y auditoría) y (b) plantillas/reglas con una única llamada IA final (no cubre obras nuevas ni búsqueda razonada).
-- **Preferencia de proveedor:** no usar Claude/Anthropic como motor principal por coste; se prefiere una API de tipo "agente" más barata (p. ej. familia GPT) para el grueso del flujo (clasificación, estructuración, redacción), reservando un modelo más capaz solo para razonar sobre obras ambiguas. Proveedor y modelos concretos aún sin seleccionar.
+- **Proveedor decidido (2026-08-04): Claude/Anthropic al 100%,** para todo el flujo del agente guiado (clasificación, estructuración, redacción y razonamiento sobre obras ambiguas). Sustituye la preferencia anterior de este documento ("no usar Claude/Anthropic por coste, preferir una API tipo agente más barata"), que queda obsoleta. Modelo(s) concreto(s) de la familia Claude aún por precisar (p. ej. Haiku para el grueso del flujo y Sonnet/Opus solo para casos ambiguos, a definir en H6).
 
 ### Usuario y acceso
 

@@ -556,7 +556,7 @@ Estas decisiones no bloquean H0–H2. Deben cerrarse antes del hito indicado.
 | Exportable | Plantilla exacta + PDF; Excel normalizado + PDF; PDF externo | Quién edita, fórmulas y requisitos contractuales | Antes de H3/H9 |
 | Privacidad | Redacción; proveedor empresarial; documentos nunca externos; procesamiento local | Sensibilidad, retención y alojamiento | Antes de H4/H6 |
 | Métricas | Tiempo, aceptación, edición, desviación, cobertura y coste | Línea base manual y umbral rentable | Antes de H6/H9 |
-| Proveedor/modelos IA | Un proveedor; router económico/capaz; varios adapters | Volumen, presupuesto, privacidad, latencia y calidad técnica en español | Antes de H6 |
+| Proveedor/modelos IA | **Cerrado (2026-08-04): Claude/Anthropic al 100%.** Modelo(s) concretos de la familia (Haiku/Sonnet/Opus) por precisar al construir H6. | — | Antes de H6 |
 
 # Orden práctico de trabajo
 

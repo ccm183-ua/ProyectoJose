@@ -20,7 +20,7 @@ Si encuentras discrepancias entre el boceto y lo que observas en el repo, señá
 - Dos salidas siempre separadas: presupuesto limpio para el cliente (sin ruido ni fuentes) e informe privado de trazabilidad (solo para el propietario: fuente, fecha, confianza, estimaciones, preguntas pendientes).
 - Una partida obtenida de web o inferida por IA no pasa a ser conocimiento privado reutilizable hasta que el usuario la confirme explícitamente.
 - Arquitectura de IA: **agente guiado por flujo** (herramientas deterministas hacen las consultas/cálculos; el modelo de IA clasifica, decide qué falta y redacta). Quedan descartados el agente conversacional libre y el enfoque de plantillas+una sola llamada IA.
-- Proveedor de IA: se prefiere una API económica tipo agente (no Claude/Anthropic) para el grueso del flujo, reservando un modelo más capaz solo para obras ambiguas. Proveedor y modelos concretos siguen sin decidir; puedes recomendar opciones con coste/capacidad, pero no des por hecho un proveedor fijo si el roadmap no depende de esa elección.
+- Proveedor de IA: **decidido, Claude/Anthropic al 100%** (2026-08-04). Modelo(s) concretos de la familia (Haiku para el grueso del flujo, Sonnet/Opus reservado para obras ambiguas, u otra combinación) siguen sin cerrar; puedes recomendar opciones dentro de la familia Claude, pero no reabras la elección de proveedor.
 
 ## 3. Principios no negociables para el roadmap
 
