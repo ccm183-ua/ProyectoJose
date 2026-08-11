@@ -174,9 +174,9 @@ fachada 24, cerrajería 20...); dos hallazgos confirmados y corregidos:
   formaba parte de los hallazgos revisados con el usuario.
 - De las 182 líneas `composite`, solo se revisaron ejemplos representativos
   de 3 familias (pintura, gestión de residuos, fachada). El resto
-  (cerrajería, impermeabilización, ~~demolición~~ y ~~alicatado~~ ya
-  revisadas (ver abajo), estructura, carpintería, albañilería, bajante)
-  queda pendiente de revisión.
+  (cerrajería, impermeabilización, ~~demolición~~, ~~alicatado~~ y
+  ~~albañilería~~ ya revisadas (ver abajo), estructura, carpintería,
+  bajante) queda pendiente de revisión.
 - Se observó un problema de codificación en `concepto_original` para varias
   partidas reales (acentos mostrados como `�`) — no es un problema de
   clasificación, es un problema de origen de datos; no investigado en esta
@@ -397,6 +397,70 @@ completa del vocabulario cerrado (el XML de prueba de esta sesión daba
   "revestimiento"): volumen demasiado bajo para decidir con criterio en
   esta ronda. Quedan **sin decisión**, revisar más adelante si aparecen
   con más frecuencia.
+
+### Familia: albañilería (turno 3 de 8)
+
+10 patrones de mayor frecuencia revisados con el usuario. Hallazgo
+distinto de las dos familias anteriores: varias líneas de especificación
+técnica de materiales (p.ej. "Solado de baldosas cerámicas de gres
+rústico, de 20x20 cm...") no contienen ningún verbo de acción reconocible
+en absoluto — no hay palabra clave que lo arregle, quedan sin decisión
+por diseño (no por falta de revisión).
+
+### Decisión 12 — yeso es `plaster` (elemento nuevo)
+
+- **Expresión habitual**: "REMATES DE YESO EN PAREDES Y TECHOS..." /
+  "REMATE DE YESO EN PAREDES, al derribar tabiques..." (5 apariciones
+  combinadas).
+- **Acción**: variable según el patrón. **Elemento**: `plaster` (nuevo).
+  **Módulo principal**: sin cambios.
+- **Motivo**: el yeso de acabado/remate es un elemento facturable propio
+  sin representación previa.
+- **Implementación**: nueva categoría `("plaster", ("yeso",))`.
+  Verificado: 0 falsos positivos en 750 líneas reales.
+
+### Decisión 13 — roza(s) es `wall_channel` (elemento nuevo)
+
+- **Expresión habitual**: "ROZAS EN VIVIENDA PARA INSTAL. ELECTRICIDAD.
+  Abrir rozas y tapar, para nueva instalación de electricidad."
+- **Acción**: `install` (vía "instalacion"). **Elemento**: `wall_channel`
+  (nuevo). **Módulo principal**: sin cambios.
+- **Motivo**: una roza (canal abierto en pared/muro para alojar
+  instalaciones de electricidad o fontanería) es una partida facturable
+  propia, distinta de `partition_wall`.
+- **Implementación**: nueva categoría `("wall_channel", ("roza",))`.
+  Verificado: 0 falsos positivos en 262 líneas reales.
+
+### Decisión 14 — "derribar" como sinónimo de `demolish`
+
+- **Expresión habitual**: "REMATE DE YESO EN PAREDES, al derribar
+  tabiques y hacer rozas de electricidad en la vivienda."
+- **Motivo**: verbo de demolición no cubierto por "demoler"
+  (`demolicion`/`demoler` no son substring de `derribar`).
+- **Implementación**: se añade `"derribar"` a `_ACTION_SYNONYMS["demolish"]`.
+  Verificado: 0 falsos positivos en 10 líneas reales.
+
+### Decisión 15 — "quitan" (forma conjugada) como sinónimo de `demolish`
+
+- **Expresión habitual**: "REMATES DE YESO EN PAREDES Y TECHOS... donde
+  se quitan los tabique o se realiza alguna actuación."
+- **Motivo**: el infinitivo "quitar" (Decisión 3) no cubre por substring
+  las formas conjugadas ("quitan", "quita", etc.) — se añade la forma
+  real observada con mayor frecuencia en el histórico (45 líneas totales).
+  No se generaliza a un stem corto tipo "quit" para no arriesgar
+  colisiones no verificadas con otras formas.
+- **Implementación**: se añade `"quitan"` a `_ACTION_SYNONYMS["demolish"]`.
+  Verificado: 0 falsos positivos en 45 líneas reales.
+
+### Descartado a propósito en esta familia
+
+- Tres patrones de especificación técnica de solado/baldosas (frecuencia 2
+  cada uno) no contienen ningún verbo de acción reconocible — quedan sin
+  decisión porque no hay una palabra clave concreta que los resuelva, no
+  por falta de revisión.
+- Tres patrones de frecuencia 1 (zaguán/rampa, vallado de parcela,
+  reparación monocapa) se descartan por volumen insuficiente para decidir
+  con criterio en esta ronda.
 
 ## Cierre del hito: criterios de salida verificados (Fase 6, Tarea 15 — 2026-07-22)
 

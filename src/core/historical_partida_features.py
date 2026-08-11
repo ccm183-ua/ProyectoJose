@@ -34,7 +34,11 @@ _ACTION_SYNONYMS: _KeywordTable = (
     # substring literal de "retirar" (13 lineas reales, sentido distinto -
     # retirada de escombros ya generados, no demolicion), y el motor de
     # coincidencia actual es por substring sin limite de palabra.
-    ("demolish", ("demolicion", "demoler", "picado", "levantado", "desmontaje", "quitar")),
+    # "derribar" (Decision 14, familia albanileria): verbo no cubierto por
+    # "demoler". "quitan" (Decision 15): forma conjugada de "quitar" que
+    # el infinitivo no cubre por substring. Ambos sin falsos positivos
+    # verificados.
+    ("demolish", ("demolicion", "demoler", "picado", "levantado", "desmontaje", "quitar", "derribar", "quitan")),
     ("install", ("instalacion", "instalar", "colocacion", "colocar", "montaje")),
     ("paint", ("pintura", "pintado", "pintar")),
     ("waterproof", ("impermeabilizacion", "impermeabilizar")),
@@ -81,6 +85,14 @@ _ELEMENT_SYNONYMS: _KeywordTable = (
     # distinto de tile aunque a veces coincidan en la misma obra. 0 falsos
     # positivos verificados en 540 lineas reales.
     ("skirting", ("rodapie",)),
+    # Decision 12 (familia albanileria): sin falsos positivos verificados
+    # en 750 lineas reales.
+    ("plaster", ("yeso",)),
+    # Decision 13 (familia albanileria): canal abierto en pared/muro para
+    # alojar instalaciones (electricidad, fontaneria) -- elemento
+    # facturable propio, distinto de partition_wall. Sin falsos positivos
+    # verificados en 262 lineas reales.
+    ("wall_channel", ("roza",)),
 )
 
 # Agrupa categorías de elemento que en realidad son el mismo elemento
@@ -101,6 +113,8 @@ _ELEMENT_FAMILIES = {
     "kitchen_furniture": "kitchen_furniture",
     "tile": "tile",
     "skirting": "skirting",
+    "plaster": "plaster",
+    "wall_channel": "wall_channel",
 }
 
 # Sistema técnico implícito por elemento: vocabulario cerrado mínimo (Tarea 2,

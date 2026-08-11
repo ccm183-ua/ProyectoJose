@@ -2,6 +2,7 @@
 Tests del clasificador de partidas históricas.
 """
 
+import src.core.historical_partida_features as hpf
 from src.core.historical_partida_classifier import HistoricalPartidaClassifier
 from src.core.historical_partida_features import extract_partida_features
 
@@ -229,3 +230,40 @@ class TestReviewedHistoricalCases:
         features = extract_partida_features(text, "m2", classifier.classify_text(text))
         assert features.action == "demolish"
         assert features.element == "flooring"
+
+    # Decisiones 12-15, familia albanileria (2026-08-04): ver
+    # docs/criterios-clasificacion-partidas.md y
+    # docs/superpowers/plans/2026-08-04-completar-vocabulario-cerrado.md.
+
+    def test_decision_12_yeso_is_plaster(self):
+        """El texto real revisado tambien menciona "tabique", que gana la
+        primera posicion de _match_first (tabla anterior a plaster) --
+        _match_first devuelve partition_wall como elemento primario, pero
+        "yeso" si se detecta como segundo elemento real (via _match_all),
+        lo que correctamente vuelve compuesta la linea: son dos partidas
+        facturables distintas (demoler tabique + remate de yeso), no una."""
+        classifier = HistoricalPartidaClassifier()
+        text = "REMATES DE YESO EN PAREDES Y TECHOS. Remates de yeso en paredes y techos donde se quitan los tabique o se realiza alguna actuacion."
+        features = extract_partida_features(text, "p.a.", classifier.classify_text(text))
+        assert features.element == "partition_wall"
+        assert "plaster" in hpf._match_all(hpf.normalize_text(text), hpf._ELEMENT_SYNONYMS)
+        assert features.line_kind == "composite"
+
+    def test_decision_13_rozas_is_wall_channel(self):
+        classifier = HistoricalPartidaClassifier()
+        text = "ROZAS EN VIVIENDA PARA INSTAL. ELECTRICIDAD. Abrir rozas y tapar, para nueva instalacion de electricidad."
+        features = extract_partida_features(text, "p.a.", classifier.classify_text(text))
+        assert features.action == "install"
+        assert features.element == "wall_channel"
+
+    def test_decision_14_derribar_is_demolish(self):
+        classifier = HistoricalPartidaClassifier()
+        text = "REMATE DE YESO EN PAREDES, al derribar tabiques y hacer rozas de electricidad en la vivienda."
+        features = extract_partida_features(text, "p.a.", classifier.classify_text(text))
+        assert features.action == "demolish"
+
+    def test_decision_15_quitan_conjugated_form_is_demolish(self):
+        classifier = HistoricalPartidaClassifier()
+        text = "REMATES DE YESO EN PAREDES Y TECHOS. Remates de yeso en paredes y techos donde se quitan los tabique o se realiza alguna actuacion."
+        features = extract_partida_features(text, "p.a.", classifier.classify_text(text))
+        assert features.action == "demolish"
