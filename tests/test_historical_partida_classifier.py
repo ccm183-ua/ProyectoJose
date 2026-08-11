@@ -355,3 +355,35 @@ class TestReviewedHistoricalCases:
         text = "Tratamiento superficial de proteccion anticorrosiva para elementos de acero mediante imprimacion anticorrosiva a base de resina epoxi y fosfato de zinc, aplicada en dos manos."
         features = extract_partida_features(text, "m2", classifier.classify_text(text))
         assert features.action == "paint"
+
+    # Decisiones 27-29, familia sustitucion_bajante (2026-08-04): ver
+    # docs/criterios-clasificacion-partidas.md y
+    # docs/superpowers/plans/2026-08-04-completar-vocabulario-cerrado.md.
+
+    def test_decision_27_rejilla_y_cazoleta_is_drain_fitting(self):
+        classifier = HistoricalPartidaClassifier()
+        text = "EMBOCAR REJILLAS A DESAGUES EXISTENTES. Sellado con producto especifico entre rejilla y cazoleta. Sellado de refuerzo de laterales y base de cazoleta con sellante para PVC/ABS."
+        features = extract_partida_features(text, "ud", classifier.classify_text(text))
+        assert features.action == "seal"
+        assert features.element == "drain_fitting"
+
+    def test_decision_28_manguito_is_pipe_fitting(self):
+        classifier = HistoricalPartidaClassifier()
+        text = "MANGUITO UNION 90MM. Suministro y colocacion de manguito de union de PVC Serie B de 90 mm de diametro. Incluye union y material auxiliar."
+        features = extract_partida_features(text, "ud", classifier.classify_text(text))
+        assert features.action == "install"
+        assert features.element == "pipe_fitting"
+
+    def test_decision_28_codo_is_pipe_fitting(self):
+        classifier = HistoricalPartidaClassifier()
+        text = "CODO PVC 45 90MM. Suministro y colocacion de codo de PVC Serie B de 45 grados y 90 mm de diametro. Incluye union y material auxiliar."
+        features = extract_partida_features(text, "ud", classifier.classify_text(text))
+        assert features.action == "install"
+        assert features.element == "pipe_fitting"
+
+    def test_decision_29_bomba_is_pump(self):
+        classifier = HistoricalPartidaClassifier()
+        text = "BOMBAS AGUAS SUCIAS Y CONDUCCION P.V.C. Suministro e instalacion de bomba de achique de aguas sucias y nueva instalacion de tuberia de PVC., incluidas piezas de conexiones."
+        features = extract_partida_features(text, "ud", classifier.classify_text(text))
+        assert features.action == "install"
+        assert features.element == "pump"

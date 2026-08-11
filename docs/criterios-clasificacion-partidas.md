@@ -201,8 +201,8 @@ fachada 24, cerrajería 20...); dos hallazgos confirmados y corregidos:
 - De las 182 líneas `composite`, solo se revisaron ejemplos representativos
   de 3 familias (pintura, gestión de residuos, fachada). El resto
   (~~demolición~~, ~~alicatado~~, ~~albañilería~~, ~~impermeabilización~~,
-  ~~carpintería~~ y ~~cerrajería~~ ya revisadas (ver abajo), estructura,
-  bajante) queda pendiente de revisión.
+  ~~carpintería~~, ~~cerrajería~~ y ~~sustitución de bajante~~ ya
+  revisadas (ver abajo), estructura) queda pendiente de revisión.
 - Se observó un problema de codificación en `concepto_original` para varias
   partidas reales (acentos mostrados como `�`) — no es un problema de
   clasificación, es un problema de origen de datos; no investigado en esta
@@ -690,6 +690,44 @@ insuficiente para decidir con criterio.
   siempre consistente (a diferencia de "revestimiento"/"galería"/
   "formación", descartadas en familias anteriores por cambiar de sentido
   según el contexto).
+
+### Familia: sustitución de bajante (turno 7 de 8)
+
+Rendimiento bajo, similar a cerrajería: solo 2 de los 10 patrones
+superan frecuencia 1. Se agrupan varios términos de bajo volumen
+individual pero del mismo tema recurrente (accesorios de fontanería) en
+lugar de descartarlos uno a uno.
+
+### Decisión 27 — rejilla/desagüe/cazoleta/sumidero es `drain_fitting`
+
+- **Expresión habitual**: "EMBOCAR REJILLAS A DESAGÜES EXISTENTES.
+  Sellado con producto específico entre rejilla y cazoleta..."
+- **Motivo**: accesorios de desagüe (rejilla, cazoleta, sumidero) son el
+  mismo tipo de elemento facturable, agrupados en una sola categoría en
+  vez de cuatro para no fragmentar la evidencia.
+- **Implementación**: nueva categoría `("drain_fitting", ("rejilla",
+  "desague", "cazoleta", "sumidero"))`. Verificado: 0 falsos positivos en
+  186+307+44+59 líneas reales.
+
+### Decisión 28 — manguito/codo es `pipe_fitting`
+
+- **Expresión habitual**: "MANGUITO UNIÓN 90MM..." / "CODO PVC 45º
+  90MM..."
+- **Motivo**: aunque cada frase concreta tiene frecuencia individual 1,
+  manguito y codo son el mismo tema recurrente de accesorios de tubería
+  PVC — se agrupan en vez de descartarlos por volumen insuficiente cada
+  uno por separado.
+- **Implementación**: nueva categoría `("pipe_fitting", ("manguito",
+  "codo"))`. Verificado: 0 falsos positivos en 19+45 líneas reales.
+
+### Decisión 29 — bomba es `pump` (elemento nuevo)
+
+- **Expresión habitual**: "BOMBAS AGUAS SUCIAS Y CONDUCCIÓN P.V.C.
+  Suministro e instalación de bomba de achique de aguas sucias..."
+- **Motivo**: elemento facturable propio.
+- **Implementación**: nueva categoría `("pump", ("bomba",))`. Verificado:
+  0 falsos positivos reales en 83 líneas ("electrobomba" sigue siendo una
+  bomba, no es un error de sentido).
 
 ## Cierre del hito: criterios de salida verificados (Fase 6, Tarea 15 — 2026-07-22)
 

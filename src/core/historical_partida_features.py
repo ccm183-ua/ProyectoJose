@@ -138,6 +138,20 @@ _ELEMENT_SYNONYMS: _KeywordTable = (
     # Decision 25 (familia cerrajeria): elemento facturable propio, sin
     # falsos positivos verificados en 421 lineas reales.
     ("sink", ("fregadero",)),
+    # Decision 27 (familia sustitucion_bajante): agrupa accesorios de
+    # desagüe (rejilla, desague, cazoleta, sumidero) en un unico elemento
+    # facturable. 0 falsos positivos verificados en 186+307+44+59 lineas.
+    ("drain_fitting", ("rejilla", "desague", "cazoleta", "sumidero")),
+    # Decision 28 (familia sustitucion_bajante): agrupa accesorios de
+    # tuberia PVC (manguito, codo) -- tema recurrente aunque cada frase
+    # concreta tenga frecuencia baja. 0 falsos positivos verificados en
+    # 19+45 lineas.
+    ("pipe_fitting", ("manguito", "codo")),
+    # Decision 29 (familia sustitucion_bajante): elemento facturable
+    # propio. Los "falsos positivos" de "electrobomba" siguen siendo una
+    # bomba, no un error real. Sin falsos positivos verificados en 83
+    # lineas.
+    ("pump", ("bomba",)),
 )
 
 # Agrupa categorías de elemento que en realidad son el mismo elemento
@@ -164,6 +178,9 @@ _ELEMENT_FAMILIES = {
     "coping": "coping",
     "furniture": "furniture",
     "sink": "sink",
+    "drain_fitting": "drain_fitting",
+    "pipe_fitting": "pipe_fitting",
+    "pump": "pump",
 }
 
 # Sistema técnico implícito por elemento: vocabulario cerrado mínimo (Tarea 2,
