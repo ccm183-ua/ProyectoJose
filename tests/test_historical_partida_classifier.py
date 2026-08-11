@@ -267,3 +267,44 @@ class TestReviewedHistoricalCases:
         text = "REMATES DE YESO EN PAREDES Y TECHOS. Remates de yeso en paredes y techos donde se quitan los tabique o se realiza alguna actuacion."
         features = extract_partida_features(text, "p.a.", classifier.classify_text(text))
         assert features.action == "demolish"
+
+    # Decisiones 16-20, familia impermeabilizacion (2026-08-04): ver
+    # docs/criterios-clasificacion-partidas.md y
+    # docs/superpowers/plans/2026-08-04-completar-vocabulario-cerrado.md.
+
+    def test_decision_16_desmontar_is_demolish(self):
+        classifier = HistoricalPartidaClassifier()
+        text = "SUBIR ENFRIADORA A/A A CUBIERTA. Desmontar enfriadora de Split de Aire Acondicionado de la terraza existente a planta superior de cubierta."
+        features = extract_partida_features(text, "ud", classifier.classify_text(text))
+        assert features.action == "demolish"
+
+    def test_decision_17_arranque_is_demolish(self):
+        classifier = HistoricalPartidaClassifier()
+        text = "Arranque de albardilla ceramica para cubricion de muros, con medios manuales, y carga manual de escombros sobre camion o contenedor."
+        features = extract_partida_features(text, "ml", classifier.classify_text(text))
+        assert features.action == "demolish"
+        assert features.element == "coping"
+
+    def test_decision_18_sellado_is_new_seal_action(self):
+        """El patron revisado ("SELLADO CON CAUCHO... para su
+        impermeabilizacion") tambien menciona "impermeabilizacion", que
+        gana por ir antes en la tabla de prioridad -- resultado razonable
+        (el sellado se hace CON ese fin). Se prueba "seal" con un ejemplo
+        real distinto que no menciona impermeabilizacion, para demostrar
+        que la categoria nueva si gana cuando es la unica accion presente."""
+        classifier = HistoricalPartidaClassifier()
+        text = (
+            "Sellado de junta de dilatacion de 15 mm de anchura, en paramento "
+            "vertical exterior, con masilla selladora monocomponente de "
+            "poliuretano, dureza Shore A aproximada de 25 y alargamiento en "
+            "rotura > 500%, aplicada con pistola sobre fondo de junta de 20 mm "
+            "de diametro."
+        )
+        features = extract_partida_features(text, "ml", classifier.classify_text(text))
+        assert features.action == "seal"
+
+    def test_decision_20_albardilla_spec_is_coping(self):
+        classifier = HistoricalPartidaClassifier()
+        text = "Albardilla ceramica para cubricion de muros, en piezas de 40x20x4 cm."
+        features = extract_partida_features(text, "ml", classifier.classify_text(text))
+        assert features.element == "coping"

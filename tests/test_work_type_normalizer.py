@@ -15,6 +15,18 @@ class TestNormalizeText:
         assert "reparacion" in value
         assert "bajante" in value
 
+    def test_cub_literal_sigue_expandiendo_a_cubierta(self):
+        assert normalize_text("cub") == "cubierta"
+
+    def test_cubricion_no_se_confunde_con_cubierta(self):
+        """Decision 20 (familia impermeabilizacion, 2026-08-04): "cub" por
+        prefijo capturaba "cubricion" (de albardilla), "cubrir", "cubo",
+        "cubanita"... sin relacion con cubierta/tejado. Ver
+        docs/criterios-clasificacion-partidas.md."""
+        value = normalize_text("Albardilla ceramica para cubricion de muros")
+        assert "cubricion" in value
+        assert "cubierta" not in value
+
 
 class TestNormalizeWorkType:
     def test_normalize_work_type(self):

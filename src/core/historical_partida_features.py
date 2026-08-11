@@ -38,10 +38,20 @@ _ACTION_SYNONYMS: _KeywordTable = (
     # "demoler". "quitan" (Decision 15): forma conjugada de "quitar" que
     # el infinitivo no cubre por substring. Ambos sin falsos positivos
     # verificados.
-    ("demolish", ("demolicion", "demoler", "picado", "levantado", "desmontaje", "quitar", "derribar", "quitan")),
+    # "desmontar" (Decision 16, familia impermeabilizacion): forma verbal
+    # no cubierta por el sustantivo "desmontaje". "arranque" (Decision 17):
+    # sinonimo de demoler/arrancar. Ambos sin falsos positivos verificados.
+    ("demolish", ("demolicion", "demoler", "picado", "levantado", "desmontaje", "quitar", "derribar", "quitan", "desmontar", "arranque")),
     ("install", ("instalacion", "instalar", "colocacion", "colocar", "montaje")),
     ("paint", ("pintura", "pintado", "pintar")),
     ("waterproof", ("impermeabilizacion", "impermeabilizar")),
+    # Decision 18 (familia impermeabilizacion): "sellado"/"sellar" no
+    # encajaban en ninguna accion existente. Repartido entre varios
+    # modulos (impermeabilizacion, fachada, pintura, sustitucion_bajante)
+    # pero significa siempre lo mismo -- a diferencia de "revestimiento"/
+    # "galeria"/"formacion" (descartados en esta misma familia por ser
+    # terminos genericos usados con sentidos distintos segun el contexto).
+    ("seal", ("sellado", "sellar")),
     ("clean", ("limpieza", "limpiar")),
     ("rent", ("alquiler", "arrendamiento")),
 )
@@ -93,6 +103,14 @@ _ELEMENT_SYNONYMS: _KeywordTable = (
     # facturable propio, distinto de partition_wall. Sin falsos positivos
     # verificados en 262 lineas reales.
     ("wall_channel", ("roza",)),
+    # Decision 19 (familia impermeabilizacion): chapa/flashing metalico de
+    # remates. Un falso positivo minoritario aceptado ("rechapado" de
+    # puertas de madera, sentido distinto) frente a 230 lineas reales.
+    ("sheet_metal", ("chapa",)),
+    # Decision 20 (familia impermeabilizacion): albardilla de cubricion de
+    # muros -- elemento facturable propio. Sin falsos positivos
+    # verificados en 21 lineas reales.
+    ("coping", ("albardilla",)),
 )
 
 # Agrupa categorías de elemento que en realidad son el mismo elemento
@@ -115,6 +133,8 @@ _ELEMENT_FAMILIES = {
     "skirting": "skirting",
     "plaster": "plaster",
     "wall_channel": "wall_channel",
+    "sheet_metal": "sheet_metal",
+    "coping": "coping",
 }
 
 # Sistema técnico implícito por elemento: vocabulario cerrado mínimo (Tarea 2,

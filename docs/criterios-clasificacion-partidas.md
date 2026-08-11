@@ -172,11 +172,37 @@ fachada 24, cerrajería 20...); dos hallazgos confirmados y corregidos:
   `impermeabilizacion` (`"impermeabilizacion"`/`"imperm"` e
   `"filtracion"`/`"filtraciones"` normalizan igual) — no se ha tocado, no
   formaba parte de los hallazgos revisados con el usuario.
+- **(2026-08-04, tras la Decisión 20) Hallazgo sistémico sin corregir,
+  fuera del alcance de esta familia**: al investigar la colisión de
+  `"cub"→"cubierta"` que motivó la Decisión 20, se comprobó que el mismo
+  problema de coincidencia por **prefijo** en `ABBREVIATIONS`
+  (`work_type_normalizer.py`) afecta también a otras entradas, con
+  volumen bastante mayor que "cub" en algunos casos. Verificado contra el
+  histórico real:
+  - `"baj"→"bajante"` captura **"baja"** (572 líneas) y **"bajo"** (421
+    líneas) — palabras normalísimas del castellano ("planta baja", "por
+    bajo de"), sin relación con bajantes. **993 líneas afectadas.**
+  - `"rep"→"reparacion"` captura "reposición" (196), "replanteo" (79) y
+    "repaso" (37) — conceptos de construcción distintos de reparación.
+    **312 líneas afectadas.**
+  - `"sust"→"sustitucion"` captura "sustancia"/"sustancias" (56) —
+    término químico sin relación.
+  - `"imper"→"impermeabilizacion"` captura "imperfecciones" (23).
+  - `"filt"→"filtracion"` captura "filtro"/"filtros" (16) — un
+    dispositivo, no una filtración/gotera.
+  - `"rehab"` y `"fachad"` no mostraron colisión en esta comprobación.
+
+  **~1.400 líneas reales** potencialmente mal normalizadas en total, en
+  clasificaciones ya existentes de TODA la aplicación, no solo de esta
+  familia. Deliberadamente **no corregido** en esta sesión (decisión
+  explícita del usuario): es un hallazgo que se ganó su propio plan, con
+  el mismo cuidado que `docs/superpowers/plans/2026-08-04-completar-vocabulario-cerrado.md`,
+  no un parche de paso dentro de la revisión de impermeabilización.
 - De las 182 líneas `composite`, solo se revisaron ejemplos representativos
   de 3 familias (pintura, gestión de residuos, fachada). El resto
-  (cerrajería, impermeabilización, ~~demolición~~, ~~alicatado~~ y
-  ~~albañilería~~ ya revisadas (ver abajo), estructura, carpintería,
-  bajante) queda pendiente de revisión.
+  (~~demolición~~, ~~alicatado~~, ~~albañilería~~ e
+  ~~impermeabilización~~ ya revisadas (ver abajo), cerrajería,
+  estructura, carpintería, bajante) queda pendiente de revisión.
 - Se observó un problema de codificación en `concepto_original` para varias
   partidas reales (acentos mostrados como `�`) — no es un problema de
   clasificación, es un problema de origen de datos; no investigado en esta
@@ -461,6 +487,101 @@ por diseño (no por falta de revisión).
 - Tres patrones de frecuencia 1 (zaguán/rampa, vallado de parcela,
   reparación monocapa) se descartan por volumen insuficiente para decidir
   con criterio en esta ronda.
+
+### Familia: impermeabilización (turno 4 de 8)
+
+10 patrones de mayor frecuencia revisados con el usuario. Esta familia
+tuvo más candidatas descartadas que aceptadas: "galería", "balcón" y
+"formación" resultaron, al comprobar su reparto por módulo, tan genéricas
+como "revestimiento" (familia alicatado) — usadas como nombre de
+habitación o verbo genérico en contextos sin relación entre sí, no como
+señal fiable de un elemento o acción concreto. También se descartó
+"retirada" pese a aparecer en uno de los 10 patrones.
+
+### Decisión 16 — "desmontar" como sinónimo de `demolish`
+
+- **Expresión habitual**: "SUBIR ENFRIADORA A/A A CUBIERTA. Desmontar
+  enfriadora de Split de Aire Acondicionado..."
+- **Motivo**: forma verbal no cubierta por el sustantivo "desmontaje"
+  (mismo tipo de hueco que "derribar"/"quitan").
+- **Implementación**: se añade `"desmontar"` a
+  `_ACTION_SYNONYMS["demolish"]`. Verificado: 0 falsos positivos en 253
+  líneas reales.
+
+### Decisión 17 — "arranque" como sinónimo de `demolish`
+
+- **Expresión habitual**: "Arranque de albardilla cerámica para
+  cubrición de muros, con medios manuales, y carga manual de escombros..."
+- **Motivo**: sinónimo claro de arrancar/demoler no cubierto.
+- **Implementación**: se añade `"arranque"` a
+  `_ACTION_SYNONYMS["demolish"]`. Verificado: 0 falsos positivos en 15
+  líneas reales.
+
+### Decisión 18 — "sellado"/"sellar" como acción nueva `seal`
+
+- **Expresión habitual**: "SELLADO CON CAUCHO. Sellado con caucho con
+  fibras los remates de chapa con encuentro de paredes para su
+  impermeabilización."
+- **Motivo**: no encajaba en ninguna acción existente. Repartido entre
+  varios módulos (impermeabilización, fachada, pintura,
+  sustitución_bajante) pero significa siempre lo mismo — a diferencia de
+  "revestimiento"/"galería"/"formación" (descartados en esta misma
+  familia), que cambian de sentido según el contexto.
+- **Implementación**: nueva categoría `("seal", ("sellado", "sellar"))`.
+  Verificado: 0 falsos positivos en 323+24 líneas reales.
+
+### Decisión 19 — chapa es `sheet_metal` (elemento nuevo)
+
+- **Expresión habitual**: "SELLADO CON CAUCHO... los remates de chapa
+  con encuentro de paredes..."
+- **Motivo**: chapa/flashing metálico de remates es un elemento
+  facturable propio.
+- **Implementación**: nueva categoría `("sheet_metal", ("chapa",))`. Un
+  falso positivo minoritario aceptado: "rechapado" (de puertas de madera,
+  sentido distinto) en 1 de 230 líneas reales — volumen insuficiente para
+  descartar la palabra.
+
+### Decisión 20 — albardilla es `coping` (elemento nuevo)
+
+- **Expresión habitual**: "Arranque de albardilla cerámica para
+  cubrición de muros..." / "Albardilla cerámica para cubrición de muros,
+  en piezas de 40x20x4 cm."
+- **Motivo**: albardilla (remate superior de un muro) es un elemento
+  facturable propio.
+- **Implementación**: nueva categoría `("coping", ("albardilla",))`.
+  Verificado: 0 falsos positivos en 21 líneas reales.
+- **Bug descubierto y corregido de paso**: 8 de las 21 líneas reales de
+  albardilla (38%) usan "cubrición de muros", y `ABBREVIATIONS["cub"]` =
+  "cubierta" en `work_type_normalizer.py` se aplicaba por **prefijo**, así
+  que "cubrición" se normalizaba (incorrectamente) a "cubierta" y ganaba
+  el elemento `roof` en vez de `coping`. Se corrigió excluyendo `"cub"`
+  del matching por prefijo (`_PREFIX_MATCH_EXCLUDED` en
+  `work_type_normalizer.py`) — sigue funcionando como abreviatura si
+  aparece exacta (token `"cub"` solo), pero ya no captura "cubrición",
+  "cubrir", "cubo", "cubanita"... Tests:
+  `tests/test_work_type_normalizer.py::TestNormalizeText`.
+
+### Descartado a propósito en esta familia
+
+- **"galería"** (795 líneas, repartidas sin dominancia clara: demolición
+  182, alicatado 129, carpintería 56...) y **"balcón"** (305 líneas,
+  repartidas entre pintura, cerrajería, impermeabilización, fachada sin
+  dominancia): se usan como nombre de habitación/ubicación en contextos
+  muy distintos, igual que "fachada como ubicación" ya documentado en la
+  Decisión 2 original. No se añaden como elemento.
+- **"formación"** (559 líneas, repartidas entre alicatado, bajante,
+  pintura, albañilería, impermeabilización): verbo genérico ("formación
+  de pendientes", "formación de rampa", "formación de juntas") sin
+  relación fiable con una acción concreta. Colisiona además con
+  "transformación" (3 líneas, sentido distinto). No se añade.
+- **"retirada"**: aparece en el patrón "Retirada de material de relleno
+  en junta de pavimentación..." pero se descarta como palabra clave —
+  3.221 líneas reales la contienen, de las cuales 1.977 coinciden con otra
+  acción ya cubierta (mismo riesgo que "tirar"/"retirar" de la Decisión 3,
+  a una escala mucho mayor: podría reproducir el problema de prioridad
+  pintura/impermeabilización-vs-demolish documentado tras la Decisión 3,
+  pero para cientos de líneas en vez de 2). El patrón concreto queda sin
+  decisión.
 
 ## Cierre del hito: criterios de salida verificados (Fase 6, Tarea 15 — 2026-07-22)
 

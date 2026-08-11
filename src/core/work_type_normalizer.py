@@ -21,6 +21,24 @@ ABBREVIATIONS = {
     "baj": "bajante",
 }
 
+# Claves excluidas de la coincidencia por PREFIJO (Decision 20, familia
+# impermeabilizacion, 2026-08-04): "cub" capturaba por prefijo palabras
+# reales sin relacion con cubierta/tejado -- "cubricion" (usada en
+# albardilla, no en tejados), "cubrir", "cubo", "cubanita"... (~132 lineas
+# reales verificadas). Sigue funcionando como abreviatura si aparece
+# exacta (token == "cub"), via la comprobacion directa en
+# _expand_abbreviation antes de este filtro.
+#
+# El mismo patron de colision existe tambien en "baj" ("baja"/"bajo",
+# ~993 lineas), "rep" ("reposicion"/"replanteo"/"repaso", ~312 lineas),
+# "sust" ("sustancia", ~56 lineas) e "imper" ("imperfecciones", ~23
+# lineas) -- detectado en la misma revision pero deliberadamente NO
+# corregido aqui: es un hallazgo sistemico que afecta a clasificaciones
+# de toda la app, no solo a esta familia, y merece su propio plan con el
+# mismo cuidado que este documento, no un parche de paso. Ver
+# "Pendiente" mas abajo.
+_PREFIX_MATCH_EXCLUDED = {"cub"}
+
 _SIGNAL_TERMS = {
     "bajante",
     "fontaneria",
@@ -70,6 +88,8 @@ def _expand_abbreviation(token: str) -> str:
     if token in ABBREVIATIONS:
         return ABBREVIATIONS[token]
     for short, full in ABBREVIATIONS.items():
+        if short in _PREFIX_MATCH_EXCLUDED:
+            continue
         if token.startswith(short) and len(token) >= len(short):
             return full
     return token
