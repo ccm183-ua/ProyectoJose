@@ -185,6 +185,21 @@ fachada 24, cerrajería 20...); dos hallazgos confirmados y corregidos:
   (`Documents/CubiApp/datos.db` sigue en `schema_version=1`): solo sobre
   copias desechables. Migrar y reconstruir la base real requiere que el
   usuario decida explícitamente cuándo hacerlo.
+- **(2026-08-04, tras la Decisión 3)** "quitar" tiene prioridad de
+  `demolish` sobre `paint`/`waterproof`/`clean` en `_ACTION_SYNONYMS`, igual
+  que ya la tenía sobre ellos con las palabras clave anteriores de
+  `demolish`. Esto reproduce, para pintura/impermeabilización, el mismo
+  problema que ya se resolvió para `repair` (por eso `repair` va antes que
+  `demolish`: un paso previo de picado no debe eclipsar la intervención
+  global). Medido contra la base real: **2 líneas** de pintura ("PINTURA
+  PUERTA PEATONAL Y BOMBEROS...", "PINTURA DE AZULEJOS EN COCINA Y
+  BAÑO...") pasan de `action=paint` a `action=demolish` porque mencionan
+  "quitar" como paso previo. Volumen aceptado como caso conocido (2 de
+  3.217 líneas con ficha completa) en vez de tocar la prioridad compartida
+  de `classify_line_kind`/`_match_first`, que afectaría a las 7 familias
+  todavía sin revisar. Revisar si se repite el patrón al llegar a la
+  familia `pintura` (ya revisada el 22/07, pero antes de esta decisión) o
+  `impermeabilizacion` (todavía pendiente).
 
 ## Revisión del vocabulario cerrado por familias pendientes (2026-08-04)
 
