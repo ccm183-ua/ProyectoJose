@@ -52,7 +52,12 @@ _ACTION_SYNONYMS: _KeywordTable = (
     # carpinteria): variantes del mismo concepto de acabado/pintura.
     # "esmaltado" tiene un falso positivo minoritario aceptado
     # ("termoesmaltado", ficha tecnica de material, 3 de 34 lineas).
-    ("paint", ("pintura", "pintado", "pintar", "esmalte", "esmaltado", "barnizado", "barnizar")),
+    # "imprimacion" (Decision 26, familia cerrajeria): a diferencia de
+    # "lijado" (descartado por ser solo preparacion), el patron real
+    # muestra que puede ser el trabajo completo por si solo (recubrimiento
+    # anticorrosivo/de proteccion). 714 lineas, 0 falsos positivos, 76%
+    # concentradas en pintura+cerrajeria con sentido siempre consistente.
+    ("paint", ("pintura", "pintado", "pintar", "esmalte", "esmaltado", "barnizado", "barnizar", "imprimacion")),
     ("waterproof", ("impermeabilizacion", "impermeabilizar")),
     # Decision 18 (familia impermeabilizacion): "sellado"/"sellar" no
     # encajaban en ninguna accion existente. Repartido entre varios
@@ -130,6 +135,9 @@ _ELEMENT_SYNONYMS: _KeywordTable = (
     # positivos menores aceptados (error de OCR "lmueble") de 693 lineas
     # reales.
     ("furniture", ("mueble",)),
+    # Decision 25 (familia cerrajeria): elemento facturable propio, sin
+    # falsos positivos verificados en 421 lineas reales.
+    ("sink", ("fregadero",)),
 )
 
 # Agrupa categorías de elemento que en realidad son el mismo elemento
@@ -155,6 +163,7 @@ _ELEMENT_FAMILIES = {
     "sheet_metal": "sheet_metal",
     "coping": "coping",
     "furniture": "furniture",
+    "sink": "sink",
 }
 
 # Sistema técnico implícito por elemento: vocabulario cerrado mínimo (Tarea 2,

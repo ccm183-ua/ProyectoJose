@@ -338,3 +338,20 @@ class TestReviewedHistoricalCases:
         text = "Maestreado y enlucido en liso, las paredes de la cocina, estudio y pasillo hasta puerta existente."
         features = extract_partida_features(text, "m2", classifier.classify_text(text))
         assert features.action == "render"
+
+    # Decisiones 25-26, familia cerrajeria (2026-08-04): ver
+    # docs/criterios-clasificacion-partidas.md y
+    # docs/superpowers/plans/2026-08-04-completar-vocabulario-cerrado.md.
+
+    def test_decision_25_fregadero_is_sink(self):
+        classifier = HistoricalPartidaClassifier()
+        text = "Suministro y colocacion de fregadero de cocina en acero inox. Modelo BERLIN PLUS 55 B/E y grifo de cocina IMEX CAPRI MNM FREGADERO OSMOSIS CROMO."
+        features = extract_partida_features(text, "ud", classifier.classify_text(text))
+        assert features.action == "install"
+        assert features.element == "sink"
+
+    def test_decision_26_imprimacion_is_paint(self):
+        classifier = HistoricalPartidaClassifier()
+        text = "Tratamiento superficial de proteccion anticorrosiva para elementos de acero mediante imprimacion anticorrosiva a base de resina epoxi y fosfato de zinc, aplicada en dos manos."
+        features = extract_partida_features(text, "m2", classifier.classify_text(text))
+        assert features.action == "paint"

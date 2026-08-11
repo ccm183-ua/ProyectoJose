@@ -200,8 +200,8 @@ fachada 24, cerrajería 20...); dos hallazgos confirmados y corregidos:
   no un parche de paso dentro de la revisión de impermeabilización.
 - De las 182 líneas `composite`, solo se revisaron ejemplos representativos
   de 3 familias (pintura, gestión de residuos, fachada). El resto
-  (~~demolición~~, ~~alicatado~~, ~~albañilería~~, ~~impermeabilización~~
-  y ~~carpintería~~ ya revisadas (ver abajo), cerrajería, estructura,
+  (~~demolición~~, ~~alicatado~~, ~~albañilería~~, ~~impermeabilización~~,
+  ~~carpintería~~ y ~~cerrajería~~ ya revisadas (ver abajo), estructura,
   bajante) queda pendiente de revisión.
 - Se observó un problema de codificación en `concepto_original` para varias
   partidas reales (acentos mostrados como `�`) — no es un problema de
@@ -657,6 +657,39 @@ en toda la revisión.
 - **Implementación**: nueva categoría `("render", ("enlucido",
   "maestreado"))`. Verificado: 0 falsos positivos en 644+155 líneas
   reales.
+
+### Familia: cerrajería (turno 6 de 8)
+
+Rendimiento mucho menor que las familias anteriores: solo 2 de los 10
+patrones de mayor frecuencia superan frecuencia 1 — el resto son
+descripciones técnicas muy específicas (tuberías, recubrimientos
+poliméricos, pasivación de armaduras...) descartadas por volumen
+insuficiente para decidir con criterio.
+
+### Decisión 25 — fregadero es `sink` (elemento nuevo)
+
+- **Expresión habitual**: "Suministro y colocación de fregadero de
+  cocina en acero inox..."
+- **Motivo**: elemento facturable propio.
+- **Implementación**: nueva categoría `("sink", ("fregadero",))`.
+  Verificado: 0 falsos positivos en 421 líneas reales.
+
+### Decisión 26 — "imprimacion" dentro de `paint`
+
+- **Expresión habitual**: "Tratamiento superficial de protección
+  anticorrosiva para elementos de acero mediante imprimación
+  anticorrosiva a base de resina epoxi y fosfato de zinc, aplicada en dos
+  manos."
+- **Motivo**: a diferencia de "lijado" (descartado en la Decisión 23 por
+  ser solo preparación), el patrón real muestra que la imprimación puede
+  ser el trabajo completo por sí sola (recubrimiento anticorrosivo/de
+  protección), no solo un paso previo a otro acabado.
+- **Implementación**: se añade `"imprimacion"` a
+  `_ACTION_SYNONYMS["paint"]`. Verificado: 0 falsos positivos en 714
+  líneas reales, 76% concentradas en pintura+cerrajería con sentido
+  siempre consistente (a diferencia de "revestimiento"/"galería"/
+  "formación", descartadas en familias anteriores por cambiar de sentido
+  según el contexto).
 
 ## Cierre del hito: criterios de salida verificados (Fase 6, Tarea 15 — 2026-07-22)
 
