@@ -174,8 +174,9 @@ fachada 24, cerrajería 20...); dos hallazgos confirmados y corregidos:
   formaba parte de los hallazgos revisados con el usuario.
 - De las 182 líneas `composite`, solo se revisaron ejemplos representativos
   de 3 familias (pintura, gestión de residuos, fachada). El resto
-  (cerrajería, impermeabilización, demolición, alicatado, estructura,
-  carpintería, albañilería, bajante) queda pendiente de revisión.
+  (cerrajería, impermeabilización, ~~demolición~~ ya revisada (ver abajo),
+  alicatado, estructura, carpintería, albañilería, bajante) queda pendiente
+  de revisión.
 - Se observó un problema de codificación en `concepto_original` para varias
   partidas reales (acentos mostrados como `�`) — no es un problema de
   clasificación, es un problema de origen de datos; no investigado en esta
@@ -184,6 +185,136 @@ fachada 24, cerrajería 20...); dos hallazgos confirmados y corregidos:
   (`Documents/CubiApp/datos.db` sigue en `schema_version=1`): solo sobre
   copias desechables. Migrar y reconstruir la base real requiere que el
   usuario decida explícitamente cuándo hacerlo.
+
+## Revisión del vocabulario cerrado por familias pendientes (2026-08-04)
+
+Retoma las ocho familias que quedaron sin revisar el 22/07 (ver "Pendiente"
+arriba), siguiendo el plan
+`docs/superpowers/plans/2026-08-04-completar-vocabulario-cerrado.md`: por
+cada familia, un informe de impacto (`src/core/historical_vocabulary_gap_report.py`)
+trae los patrones reales de mayor frecuencia sin ficha completa
+(`action`/`element` vacíos), y el usuario decide categoría y motivo sobre
+esos ejemplos reales, nunca inventados.
+
+Ranking inicial de impacto (líneas atómicas sin ficha completa / total,
+sobre la base real de producción): demolición 75/80 (94%), alicatado 71/74
+(96%), albañilería 42/46 (91%), impermeabilización 40/62 (65%), carpintería
+32/61 (52%), sustitución de bajante 32/72 (44%), cerrajería 29/66 (44%),
+estructura 7/25 (28%).
+
+### Familia: demolición (turno 1 de 8)
+
+10 patrones de mayor frecuencia revisados con el usuario. Hallazgo
+principal: 8 de los 10 usaban el verbo **"quitar"**, ausente por completo
+del vocabulario de acciones pese a ser el verbo mayoritario de
+demolición/retirada en el histórico real (1.418 líneas).
+
+### Decisión 3 — "quitar" como sinónimo de `demolish`
+
+- **Expresión habitual**: "Quitar WC y mueble de lavabo, con retirada a
+  contenedor de escombros." / "QUITAR SUELO LAMINADO..." / "QUITAR
+  PUERTAS DE PASO..." (8 de los 10 patrones de mayor frecuencia de la
+  familia).
+- **Acción**: `demolish` (nuevo sinónimo: `quitar`). **Elemento**: el
+  elemento retirado en cada caso (ver Decisiones 5-8). **Módulo
+  principal**: sin cambios — estas líneas ya tenían `primary_module_id =
+  demolicion` asignado por el clasificador; esta decisión no toca
+  detección de módulo, solo completa la ficha de acción/elemento.
+- **Condición que impide coincidencia exacta**: ninguna adicional a las ya
+  existentes.
+- **Motivo**: "quitar" es, con diferencia, el verbo más frecuente para
+  demolición/retirada en el histórico real y no estaba cubierto. Se
+  descarta explícitamente añadir **"tirar"** en la misma pasada aunque
+  aparece en uno de los 10 patrones revisados ("Tirar tabiques
+  existentes..."): "tirar" es substring literal de "retirar" (13 líneas
+  reales, sentido distinto — retirada de escombros ya generados, no
+  demolición — mismo tipo de matiz que la Decisión 1), y el motor de
+  coincidencia actual es por substring sin límite de palabra. Se deja
+  "tirar" **sin decisión**, pendiente de una detección más precisa (por
+  palabra completa) si llega a compensar.
+- **Implementación**: se añade `"quitar"` a `_ACTION_SYNONYMS["demolish"]`
+  en `historical_partida_features.py`. Verificado contra la base real: 0
+  falsos positivos de "quitar" como substring de otra palabra en las 1.418
+  líneas reales que lo contienen.
+
+### Decisión 4 — enfoscado sobre "paramento vertical exterior" es `facade_render`
+
+- **Expresión habitual**: "Picado de enfoscado de cemento, aplicado sobre
+  paramento vertical exterior de hasta 3 m de altura, con medios
+  manuales, y carga manual de escombros sobre camión o contenedor."
+  (frecuencia 8 — el patrón más repetido sin ficha de toda la familia
+  demolición).
+- **Acción**: `demolish` (ya cubierto por "picado"). **Elemento**:
+  `facade_render` — misma evidencia que "revoco de fachada", descrita sin
+  usar la palabra "fachada". **Módulo principal**: sin cambios
+  (`demolicion`, ya asignado).
+- **Condición que impide coincidencia exacta**: ninguna adicional.
+- **Motivo**: el texto describe literalmente un enfoscado de cemento sobre
+  el paramento exterior — mismo elemento facturable que "revoco de
+  fachada", solo que redactado sin la palabra clave que ya cubría el
+  vocabulario.
+- **Implementación**: se añaden `"paramento vertical exterior"` y
+  `"enfoscado de cemento"` a los sinónimos existentes de `facade_render`.
+
+### Decisión 5 — "tabique" es `partition_wall` (elemento nuevo)
+
+- **Expresión habitual**: "Tirar tabiques existentes de pasillo, cocina,
+  galería y estudio, con retirada de escombros a contenedor."
+- **Acción**: sin decisión (usa "tirar", ver Decisión 3 — esta línea
+  concreta queda con `element` completo pero `action` vacío hasta que se
+  revise "tirar"). **Elemento**: `partition_wall` (nuevo). **Módulo
+  principal**: sin cambios.
+- **Condición que impide coincidencia exacta**: ninguna.
+- **Motivo**: "tabique" no tenía elemento propio; es un elemento
+  facturable claramente distinto de `structure` (que cubre viga/pilar/
+  zuncho, elementos estructurales, no tabiquería de partición).
+- **Implementación**: nueva categoría `("partition_wall", ("tabique",))`
+  en `_ELEMENT_SYNONYMS`, con entrada correspondiente en
+  `_ELEMENT_FAMILIES`. Verificado: 0 falsos positivos contra la base real.
+
+### Decisión 6 — WC/lavabo/sanitario es `sanitary_ware` (elemento nuevo)
+
+- **Expresión habitual**: "Quitar WC y mueble de lavabo, con retirada a
+  contenedor de escombros."
+- **Acción**: `demolish` (vía "quitar", Decisión 3). **Elemento**:
+  `sanitary_ware` (nuevo). **Módulo principal**: sin cambios.
+- **Condición que impide coincidencia exacta**: ninguna.
+- **Motivo**: aparatos sanitarios (WC, lavabo) son un elemento facturable
+  propio, sin representación previa en el vocabulario.
+- **Implementación**: nueva categoría `("sanitary_ware", ("wc", "lavabo",
+  "sanitario"))`. Verificado: 0 falsos positivos contra la base real.
+
+### Decisión 7 — suelo/solado es `flooring` (elemento nuevo)
+
+- **Expresión habitual**: "QUITAR SUELO LAMINADO. Quitar solado laminado
+  existente en vivienda y rodapié, con retirada de escombros a
+  vertedero."
+- **Acción**: `demolish` (vía "quitar", Decisión 3). **Elemento**:
+  `flooring` (nuevo, vía "suelo" o "solado"). **Módulo principal**: sin
+  cambios.
+- **Condición que impide coincidencia exacta**: ninguna.
+- **Motivo**: pavimento/solado es un elemento facturable propio. Se
+  verificó una colisión de "suelo" con "entresuelo" (6 líneas reales, es
+  una planta/piso, no el elemento suelo) frente a 485 líneas reales
+  genuinas de suelo/pavimento — se acepta ese riesgo medido (1.2% de falsos
+  positivos) porque la ganancia es sustancialmente mayor, a diferencia de
+  "tirar" en la Decisión 3 donde la proporción no compensaba. "solado" no
+  tiene ese problema.
+- **Implementación**: nueva categoría `("flooring", ("suelo", "solado"))`.
+
+### Decisión 8 — muebles de cocina/electrodomésticos es `kitchen_furniture` (elemento nuevo)
+
+- **Expresión habitual**: "QUITAR MUEBLES DE COCINA. Quitar muebles de
+  cocina existentes, con retirada a vertedero de escombros."
+- **Acción**: `demolish` (vía "quitar", Decisión 3). **Elemento**:
+  `kitchen_furniture` (nuevo). **Módulo principal**: sin cambios.
+- **Condición que impide coincidencia exacta**: ninguna.
+- **Motivo**: mobiliario y electrodomésticos de cocina son un elemento
+  facturable propio en las reformas de vivienda de esta empresa.
+- **Implementación**: nueva categoría `("kitchen_furniture", ("mueble de
+  cocina", "muebles de cocina", "electrodomestico"))` — variantes
+  singular/plural necesarias porque el motor compara substrings completos,
+  no por token. Verificado: 0 falsos positivos contra la base real.
 
 ## Cierre del hito: criterios de salida verificados (Fase 6, Tarea 15 — 2026-07-22)
 

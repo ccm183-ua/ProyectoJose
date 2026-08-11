@@ -28,7 +28,13 @@ _KeywordTable = Tuple[Tuple[str, Tuple[str, ...]], ...]
 # describe la intervención global, no el paso previo de picado.
 _ACTION_SYNONYMS: _KeywordTable = (
     ("repair", ("reparacion", "reparar")),
-    ("demolish", ("demolicion", "demoler", "picado", "levantado", "desmontaje")),
+    # "quitar" (Decision 3, familia demolicion): verbo mayoritario de
+    # retirada/demolicion en el historico real (1.418 lineas), sin falsos
+    # positivos por substring verificados. "tirar" NO se anade: es
+    # substring literal de "retirar" (13 lineas reales, sentido distinto -
+    # retirada de escombros ya generados, no demolicion), y el motor de
+    # coincidencia actual es por substring sin limite de palabra.
+    ("demolish", ("demolicion", "demoler", "picado", "levantado", "desmontaje", "quitar")),
     ("install", ("instalacion", "instalar", "colocacion", "colocar", "montaje")),
     ("paint", ("pintura", "pintado", "pintar")),
     ("waterproof", ("impermeabilizacion", "impermeabilizar")),
@@ -39,13 +45,32 @@ _ACTION_SYNONYMS: _KeywordTable = (
 # Entradas compuestas (p.ej. "revoco en fachada") antes que la genérica
 # ("fachada") para no perder precisión cuando ambas aparecen.
 _ELEMENT_SYNONYMS: _KeywordTable = (
-    ("facade_render", ("revoco en fachada", "revoco de fachada", "revoco fachada", "enfoscado fachada", "enfoscado de fachada")),
+    # Decision 4 (familia demolicion): "paramento vertical exterior" y
+    # "enfoscado de cemento" describen la misma evidencia que "revoco de
+    # fachada" sin usar la palabra "fachada" (patron mas repetido sin
+    # ficha de toda la familia demolicion, frecuencia 8).
+    ("facade_render", ("revoco en fachada", "revoco de fachada", "revoco fachada", "enfoscado fachada", "enfoscado de fachada", "paramento vertical exterior", "enfoscado de cemento")),
     ("facade", ("fachada",)),
     ("downspout", ("bajante",)),
     ("roof", ("cubierta", "tejado")),
     ("structure", ("estructura", "viga", "pilar", "zuncho")),
     ("door", ("puerta", "portal")),
     ("railing", ("barandilla", "pasamanos")),
+    # Decision 5 (familia demolicion): "tabique" sin falsos positivos
+    # verificados contra el historico real.
+    ("partition_wall", ("tabique",)),
+    # Decision 6 (familia demolicion): sin falsos positivos verificados.
+    ("sanitary_ware", ("wc", "lavabo", "sanitario")),
+    # Decision 7 (familia demolicion): "suelo" colisiona con "entresuelo"
+    # (6 lineas reales, es una planta/piso, no el elemento) frente a 485
+    # lineas reales genuinas de suelo/pavimento -- se acepta ese riesgo
+    # medido, a diferencia de "tirar" en la Decision 3. "solado" no tiene
+    # ese problema.
+    ("flooring", ("suelo", "solado")),
+    # Decision 8 (familia demolicion): variantes singular/plural
+    # necesarias porque el motor compara substrings completos, no por
+    # token ("mueble de cocina" no es substring de "muebles de cocina").
+    ("kitchen_furniture", ("mueble de cocina", "muebles de cocina", "electrodomestico")),
 )
 
 # Agrupa categorías de elemento que en realidad son el mismo elemento
@@ -60,6 +85,10 @@ _ELEMENT_FAMILIES = {
     "structure": "structure",
     "door": "door",
     "railing": "railing",
+    "partition_wall": "partition_wall",
+    "sanitary_ware": "sanitary_ware",
+    "flooring": "flooring",
+    "kitchen_furniture": "kitchen_furniture",
 }
 
 # Sistema técnico implícito por elemento: vocabulario cerrado mínimo (Tarea 2,

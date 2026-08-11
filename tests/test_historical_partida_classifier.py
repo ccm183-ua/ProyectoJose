@@ -3,6 +3,7 @@ Tests del clasificador de partidas históricas.
 """
 
 from src.core.historical_partida_classifier import HistoricalPartidaClassifier
+from src.core.historical_partida_features import extract_partida_features
 
 
 class TestHistoricalPartidaClassifier:
@@ -133,3 +134,66 @@ class TestReviewedHistoricalCases:
             }
         )
         assert classification["primary_module"]["id"] == "medios_auxiliares"
+
+    # Decisiones 3-8, familia demolicion (2026-08-04): ver
+    # docs/criterios-clasificacion-partidas.md y
+    # docs/superpowers/plans/2026-08-04-completar-vocabulario-cerrado.md.
+    # Textos reales del histórico, patrones de mayor frecuencia sin ficha
+    # completa (informe de src/core/historical_vocabulary_gap_report.py).
+
+    def test_decision_3_quitar_is_demolish(self):
+        classifier = HistoricalPartidaClassifier()
+        text = "Quitar puerta de paso y premarco del bano, con retirada a vertedero de escombros con nuestros medios."
+        features = extract_partida_features(text, "ud", classifier.classify_text(text))
+        assert features.action == "demolish"
+        assert features.element == "door"
+
+    def test_decision_4_paramento_vertical_exterior_is_facade_render(self):
+        classifier = HistoricalPartidaClassifier()
+        text = (
+            "Picado de enfoscado de cemento, aplicado sobre paramento vertical "
+            "exterior de hasta 3 m de altura, con medios manuales, y carga manual "
+            "de escombros sobre camion o contenedor."
+        )
+        features = extract_partida_features(text, "m2", classifier.classify_text(text))
+        assert features.action == "demolish"
+        assert features.element == "facade_render"
+
+    def test_decision_5_tabique_is_partition_wall_but_tirar_stays_unmatched(self):
+        classifier = HistoricalPartidaClassifier()
+        text = "Tirar tabiques existentes de pasillo, cocina, galeria y estudio, con retirada de escombros a contenedor."
+        features = extract_partida_features(text, "ud", classifier.classify_text(text))
+        assert features.element == "partition_wall"
+        assert features.action is None
+
+    def test_decision_6_wc_y_lavabo_is_sanitary_ware(self):
+        classifier = HistoricalPartidaClassifier()
+        text = "Quitar WC y mueble de lavabo, con retirada a contenedor de escombros."
+        features = extract_partida_features(text, "ud", classifier.classify_text(text))
+        assert features.action == "demolish"
+        assert features.element == "sanitary_ware"
+
+    def test_decision_7_suelo_laminado_is_flooring(self):
+        classifier = HistoricalPartidaClassifier()
+        text = "QUITAR SUELO LAMINADO. Quitar solado laminado existente en vivienda y rodapie, con retirada de escombros a vertedero."
+        features = extract_partida_features(text, "m2", classifier.classify_text(text))
+        assert features.action == "demolish"
+        assert features.element == "flooring"
+
+    def test_decision_7_entresuelo_is_a_known_accepted_false_positive(self):
+        """"suelo" es substring de "entresuelo" (planta/piso, no el elemento
+        suelo): 6 lineas reales colisionan frente a 485 aciertos genuinos.
+        La Decision 7 acepta ese riesgo medido a proposito (a diferencia de
+        "tirar"/"retirar" en la Decision 3, que se descarto) -- este test
+        documenta el trade-off aceptado, no lo previene."""
+        classifier = HistoricalPartidaClassifier()
+        text = "Localizar fuga de agua en vivienda del entresuelo B, comprobando valvula de plato de ducha."
+        features = extract_partida_features(text, "ud", classifier.classify_text(text))
+        assert features.element == "flooring"
+
+    def test_decision_8_muebles_de_cocina_is_kitchen_furniture(self):
+        classifier = HistoricalPartidaClassifier()
+        text = "QUITAR MUEBLES DE COCINA. Quitar muebles de cocina existentes, con retirada a vertedero de escombros."
+        features = extract_partida_features(text, "ud", classifier.classify_text(text))
+        assert features.action == "demolish"
+        assert features.element == "kitchen_furniture"
