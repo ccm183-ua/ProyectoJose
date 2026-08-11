@@ -17,6 +17,7 @@ _SOURCE_LABELS = {
     "historical_comparable": "Histórico",
     "ai_completion": "IA — borrador",
     "ai_draft": "IA — borrador",
+    "sin_evidencia_ia": "Importado sin precio — revisar",
 }
 
 _LEVEL_LABELS = {

@@ -177,6 +177,8 @@ class MainFrame(QMainWindow):
         act_memory.triggered.connect(self._open_historical_memory_dashboard)
         act_export_context = m_tools.addAction("Exportar paquete de contexto IA...")
         act_export_context.triggered.connect(self._export_context_pack_manual)
+        act_import_xml = m_tools.addAction("Importar borrador IA (XML)...")
+        act_import_xml.triggered.connect(self._import_ai_xml_budget)
 
         m_ayuda = menubar.addMenu("&Ayuda")
         act_about = m_ayuda.addAction("Acerca de...")
@@ -429,6 +431,97 @@ class MainFrame(QMainWindow):
             f"Modulos de vocabulario: {summary['vocabulario_modulos']}\n"
             f"Partidas del ejemplo de estructura: {summary['estructura_partidas']}",
         )
+
+    def _import_ai_xml_budget(self):
+        """Importa el XML de partidas redactado con Claude (esquema-partidas-ia.md)
+        y lo anade, tras revision humana, a un presupuesto existente.
+
+        Nunca escribe nada sin pasar por CombinedPartidasReviewDialog: ni las
+        partidas sin evidencia de precio ni las que ya venian marcadas 'nueva'
+        se insertan solas.
+        """
+        from src.core.settings import Settings
+        from src.core.xml_budget_importer import parse_and_validate, match_partidas_with_evidence
+        from src.core.services.budget_partidas_flow import (
+            MODE_APPEND, apply_reviewed_partidas, split_generated_partidas_for_review,
+        )
+        from src.gui.combined_partidas_review_dialog import CombinedPartidasReviewDialog
+
+        xml_path, _ = QFileDialog.getOpenFileName(
+            self, "Importar borrador de partidas (XML)", "",
+            "XML (*.xml);;Todos (*.*)",
+        )
+        if not xml_path:
+            return
+
+        result = parse_and_validate(xml_path)
+        if not result["ok"]:
+            QMessageBox.critical(self, "Fichero rechazado", result["error"])
+            return
+
+        aceptadas = result["aceptadas"]
+        rechazadas = result["rechazadas"]
+        if not aceptadas:
+            detalle = "\n".join(f"- {r['concepto']}: {r['motivo']}" for r in rechazadas)
+            QMessageBox.warning(
+                self, "Sin partidas validas",
+                f"Ninguna partida ha pasado la validacion del esquema:\n\n{detalle}",
+            )
+            return
+
+        listas, pendientes = match_partidas_with_evidence(aceptadas)
+
+        avisos = []
+        if rechazadas:
+            avisos.append(
+                f"{len(rechazadas)} partida(s) rechazada(s) por el esquema:\n"
+                + "\n".join(f"- {r['concepto']}: {r['motivo']}" for r in rechazadas)
+            )
+        if pendientes:
+            avisos.append(
+                f"{len(pendientes)} partida(s) pendiente(s) de medida (no se importan todavia):\n"
+                + "\n".join(f"- {p['concepto']}" for p in pendientes)
+            )
+        if avisos:
+            QMessageBox.information(self, "Antes de continuar", "\n\n".join(avisos))
+
+        if not listas:
+            return
+
+        default_dir = Settings().get_default_path(Settings.PATH_OPEN_BUDGETS) or ""
+        excel_path, _ = QFileDialog.getOpenFileName(
+            self, "Presupuesto donde anadir estas partidas", default_dir,
+            "Excel (*.xlsx *.xls);;Todos (*.*)",
+        )
+        if not excel_path:
+            return
+
+        try:
+            existing = self._budget_svc.read_budget(excel_path)
+        except Exception as exc:
+            QMessageBox.critical(self, "Error", f"No se pudo leer el presupuesto:\n{exc}")
+            return
+        existing_partidas = (existing or {}).get("partidas", []) or []
+
+        historicas, ia_estimadas = split_generated_partidas_for_review(
+            listas, MODE_APPEND, existing_partidas=existing_partidas
+        )
+
+        review = CombinedPartidasReviewDialog(
+            self, historical_partidas=historicas, ai_partidas=ia_estimadas,
+        )
+        if review.exec() != 1:
+            return
+        selected = review.get_selected_partidas()
+        if not selected:
+            return
+
+        if apply_reviewed_partidas(self._budget_svc, excel_path, selected, MODE_APPEND):
+            QMessageBox.information(
+                self, "Éxito", f"{len(selected)} partida(s) añadida(s) a:\n{excel_path}",
+            )
+        else:
+            QMessageBox.critical(self, "Error", "Error al añadir las partidas al Excel.")
 
     def _buscar_comunidad_para_presupuesto(self, nombre_cliente: str, direccion: str = "") -> dict | None:
         from src.gui.dialogs import (
