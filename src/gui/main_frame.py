@@ -60,11 +60,10 @@ class MainFrame(QMainWindow):
         folder = Settings().get_default_path(Settings.PATH_HISTORICAL_FOLDER)
 
         def _work():
+            from src.core.historical_budget_analyzer import HistoricalBudgetAnalyzer
             if folder and _os.path.isdir(folder):
-                from src.core.historical_budget_analyzer import HistoricalBudgetAnalyzer
                 return HistoricalBudgetAnalyzer().analyze_folder(folder, recursive=True)
-            from src.core.historical_pattern_builder import HistoricalPatternBuilder
-            return HistoricalPatternBuilder().rebuild_patterns()
+            return HistoricalBudgetAnalyzer().rebuild_features_and_patterns()
 
         def _done(ok, payload):
             if not ok:

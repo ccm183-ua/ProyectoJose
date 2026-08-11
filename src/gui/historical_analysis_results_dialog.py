@@ -757,6 +757,6 @@ class HistoricalAnalysisResultsDialog(QDialog):
 
     @staticmethod
     def _rebuild_patterns():
-        from src.core.historical_pattern_builder import HistoricalPatternBuilder
+        from src.core.historical_budget_analyzer import HistoricalBudgetAnalyzer
 
-        HistoricalPatternBuilder().rebuild_patterns()
+        HistoricalBudgetAnalyzer().rebuild_features_and_patterns()

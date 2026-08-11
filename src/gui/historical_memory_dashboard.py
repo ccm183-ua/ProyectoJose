@@ -52,7 +52,6 @@ from src.core.historical_budget_enrichment_service import (
 from src.core.historical_enrichment import technical_description_status_label
 from src.core.historical_integrity_diagnostics import diagnose_historical_integrity
 from src.core.historical_issue_catalog import historical_issue_label
-from src.core.historical_pattern_builder import HistoricalPatternBuilder
 from src.core.database import get_db_path_as_string, open_db_folder
 from src.core.repositories import (
     append_budget_issue,
@@ -1375,7 +1374,7 @@ class HistoricalMemoryDashboard(QDialog):
             )
             if confirm != QMessageBox.StandardButton.Yes:
                 return
-        result = HistoricalPatternBuilder().rebuild_patterns()
+        result = self._analyzer.rebuild_features_and_patterns()
         if not silent:
             QMessageBox.information(
                 self,

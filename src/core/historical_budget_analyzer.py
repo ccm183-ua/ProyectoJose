@@ -240,12 +240,11 @@ class HistoricalBudgetAnalyzer:
                     {"excel_path": path, "warnings": result.get("warnings", [])}
                 )
 
-        # Regenerar patrones tras cada análisis (aunque solo haya omitidos),
-        # para cubrir el caso de datos históricos ya cacheados sin patrones previos.
+        # Regenerar fichas y patrones tras cada análisis (aunque solo haya
+        # omitidos), para cubrir el caso de datos históricos ya cacheados sin
+        # patrones previos.
         try:
-            from src.core.historical_pattern_builder import HistoricalPatternBuilder
-
-            HistoricalPatternBuilder().rebuild_patterns()
+            self.rebuild_features_and_patterns()
         except Exception:
             summary["errores"] += 1
 
@@ -644,3 +643,22 @@ class HistoricalBudgetAnalyzer:
                 if not err:
                     count += 1
         return count
+
+    def rebuild_features_and_patterns(self) -> Dict:
+        """Reconstruye primero las fichas derivadas de todas las partidas
+        historicas y despues los patrones sugeridos a partir de ellas.
+
+        rebuild_patterns() por si solo agrupa evidencia leyendo
+        historical_partida_feature: si esa tabla esta vacia (fichas nunca
+        calculadas) siempre encuentra 0 lineas atomicas y deja
+        suggested_partida_pattern vacia, aunque haya presupuestos incluidos
+        con partidas reales. Este es el mismo orden que ya usaba
+        scripts/rebuild_historical_patterns.py por terminal.
+        """
+        from src.core import database
+        from src.core.historical_pattern_builder import HistoricalPatternBuilder
+
+        with database.get_connection(read_only=True) as conn:
+            budget_ids = [row[0] for row in conn.execute("SELECT id FROM historical_budget").fetchall()]
+        self.rebuild_partida_features(budget_ids)
+        return HistoricalPatternBuilder().rebuild_patterns()
