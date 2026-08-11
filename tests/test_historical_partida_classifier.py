@@ -308,3 +308,33 @@ class TestReviewedHistoricalCases:
         text = "Albardilla ceramica para cubricion de muros, en piezas de 40x20x4 cm."
         features = extract_partida_features(text, "ml", classifier.classify_text(text))
         assert features.element == "coping"
+
+    # Decisiones 21-24, familia carpinteria (2026-08-04): ver
+    # docs/criterios-clasificacion-partidas.md y
+    # docs/superpowers/plans/2026-08-04-completar-vocabulario-cerrado.md.
+
+    def test_decision_21_sustitucion_is_install(self):
+        classifier = HistoricalPartidaClassifier()
+        text = "SUSTITUCION PUERTA ENTRADA. Suministro y sustitucion de puerta de entrada a zaguan, compuesta de 1 hoja practicable derecha y 1 fijo superior, en aluminio, color LACADO BLANCO."
+        features = extract_partida_features(text, "ud", classifier.classify_text(text))
+        assert features.action == "install"
+
+    def test_decision_22_mueble_generico_is_furniture(self):
+        classifier = HistoricalPartidaClassifier()
+        text = "Suministro y colocacion de mueble laminado gris de 0,90x,83x0,54 para descalcificador, formado por modulo y encimera de laminado de madera."
+        features = extract_partida_features(text, "ud", classifier.classify_text(text))
+        assert features.action == "install"
+        assert features.element == "furniture"
+
+    def test_decision_23_barnizado_is_paint(self):
+        classifier = HistoricalPartidaClassifier()
+        text = "BARNIZADO PASAMANOS ESCALERA MADERA. Barnizado de pasamanos de escalera, en tono nogual brillante."
+        features = extract_partida_features(text, "ml", classifier.classify_text(text))
+        assert features.action == "paint"
+        assert features.element == "railing"
+
+    def test_decision_24_maestreado_y_enlucido_is_render(self):
+        classifier = HistoricalPartidaClassifier()
+        text = "Maestreado y enlucido en liso, las paredes de la cocina, estudio y pasillo hasta puerta existente."
+        features = extract_partida_features(text, "m2", classifier.classify_text(text))
+        assert features.action == "render"

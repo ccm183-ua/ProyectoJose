@@ -42,8 +42,17 @@ _ACTION_SYNONYMS: _KeywordTable = (
     # no cubierta por el sustantivo "desmontaje". "arranque" (Decision 17):
     # sinonimo de demoler/arrancar. Ambos sin falsos positivos verificados.
     ("demolish", ("demolicion", "demoler", "picado", "levantado", "desmontaje", "quitar", "derribar", "quitan", "desmontar", "arranque")),
-    ("install", ("instalacion", "instalar", "colocacion", "colocar", "montaje")),
-    ("paint", ("pintura", "pintado", "pintar")),
+    # "sustitucion" (Decision 21, familia carpinteria): 629 lineas reales,
+    # 0 falsos positivos, sin ninguna accion propia pese a dar nombre al
+    # modulo sustitucion_bajante. Se mapea a install (sustituir implica
+    # instalar lo nuevo), consistente con las lineas de sustitucion_bajante
+    # que ya evidencian precio via "colocacion" aparte.
+    ("install", ("instalacion", "instalar", "colocacion", "colocar", "montaje", "sustitucion")),
+    # "esmalte"/"esmaltado" y "barnizado"/"barnizar" (Decision 23, familia
+    # carpinteria): variantes del mismo concepto de acabado/pintura.
+    # "esmaltado" tiene un falso positivo minoritario aceptado
+    # ("termoesmaltado", ficha tecnica de material, 3 de 34 lineas).
+    ("paint", ("pintura", "pintado", "pintar", "esmalte", "esmaltado", "barnizado", "barnizar")),
     ("waterproof", ("impermeabilizacion", "impermeabilizar")),
     # Decision 18 (familia impermeabilizacion): "sellado"/"sellar" no
     # encajaban en ninguna accion existente. Repartido entre varios
@@ -52,6 +61,11 @@ _ACTION_SYNONYMS: _KeywordTable = (
     # "galeria"/"formacion" (descartados en esta misma familia por ser
     # terminos genericos usados con sentidos distintos segun el contexto).
     ("seal", ("sellado", "sellar")),
+    # Decision 24 (familia carpinteria): "enlucido"/"maestreado" son la
+    # misma tecnica de acabado de paramentos (enlucir tras maestrear) --
+    # mismo termino "render" que ya usa _SYSTEM_BY_ELEMENT para
+    # facade_render. 0 falsos positivos verificados en 644+155 lineas.
+    ("render", ("enlucido", "maestreado")),
     ("clean", ("limpieza", "limpiar")),
     ("rent", ("alquiler", "arrendamiento")),
 )
@@ -111,6 +125,11 @@ _ELEMENT_SYNONYMS: _KeywordTable = (
     # muros -- elemento facturable propio. Sin falsos positivos
     # verificados en 21 lineas reales.
     ("coping", ("albardilla",)),
+    # Decision 22 (familia carpinteria): mobiliario generico, distinto de
+    # kitchen_furniture (mueble de cocina especificamente). Dos falsos
+    # positivos menores aceptados (error de OCR "lmueble") de 693 lineas
+    # reales.
+    ("furniture", ("mueble",)),
 )
 
 # Agrupa categorías de elemento que en realidad son el mismo elemento
@@ -135,6 +154,7 @@ _ELEMENT_FAMILIES = {
     "wall_channel": "wall_channel",
     "sheet_metal": "sheet_metal",
     "coping": "coping",
+    "furniture": "furniture",
 }
 
 # Sistema técnico implícito por elemento: vocabulario cerrado mínimo (Tarea 2,

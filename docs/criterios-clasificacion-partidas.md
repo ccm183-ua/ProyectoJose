@@ -200,9 +200,9 @@ fachada 24, cerrajería 20...); dos hallazgos confirmados y corregidos:
   no un parche de paso dentro de la revisión de impermeabilización.
 - De las 182 líneas `composite`, solo se revisaron ejemplos representativos
   de 3 familias (pintura, gestión de residuos, fachada). El resto
-  (~~demolición~~, ~~alicatado~~, ~~albañilería~~ e
-  ~~impermeabilización~~ ya revisadas (ver abajo), cerrajería,
-  estructura, carpintería, bajante) queda pendiente de revisión.
+  (~~demolición~~, ~~alicatado~~, ~~albañilería~~, ~~impermeabilización~~
+  y ~~carpintería~~ ya revisadas (ver abajo), cerrajería, estructura,
+  bajante) queda pendiente de revisión.
 - Se observó un problema de codificación en `concepto_original` para varias
   partidas reales (acentos mostrados como `�`) — no es un problema de
   clasificación, es un problema de origen de datos; no investigado en esta
@@ -582,6 +582,81 @@ señal fiable de un elemento o acción concreto. También se descartó
   pintura/impermeabilización-vs-demolish documentado tras la Decisión 3,
   pero para cientos de líneas en vez de 2). El patrón concreto queda sin
   decisión.
+
+### Familia: carpintería (turno 5 de 8)
+
+10 patrones de mayor frecuencia revisados con el usuario. Hallazgo
+principal: **"sustitución"** (629 líneas reales, 0 falsos positivos) no
+tenía ninguna acción propia, pese a dar nombre al módulo
+`sustitucion_bajante` — el mayor hueco de acción encontrado hasta ahora
+en toda la revisión.
+
+### Decisión 21 — "sustitucion" dentro de `install`
+
+- **Expresión habitual**: "SUSTITUCIÓN PUERTA EXTERIOR Nº 2. Suministro y
+  sustitución de puerta abatible..." / "SUSTITUCIÓN PUERTA ENTRADA.
+  Suministro y sustitución de puerta de entrada a zaguán..."
+- **Motivo**: sustituir implica instalar lo nuevo — consistente con como
+  ya funcionan las líneas de `sustitucion_bajante` que evidencian precio
+  vía "colocación" mencionada aparte. No se crea una acción `replace`
+  separada para no fragmentar la evidencia entre dos categorías que en la
+  práctica se solapan casi siempre.
+- **Implementación**: se añade `"sustitucion"` a
+  `_ACTION_SYNONYMS["install"]`. Verificado: 0 falsos positivos en 629
+  líneas reales.
+- **Mismo patrón ya conocido, de nuevo**: en la prueba de regresión
+  contra la base real, 6 líneas cambiaron de `paint` a `install`. 4 son
+  correcciones reales (el `paint` anterior venía de cláusulas negadas del
+  tipo "no incluida la pintura"/"no contemplada la pintura", el mismo
+  problema de menciones boilerplate ya visto en la Decisión 3). Pero
+  **2 líneas tituladas explícitamente "PINTURA..."** ("PINTURA NATURAL AL
+  SILICATO", "SUSTITUCIÓN PUERTA ENTRADA... y pintura de la puerta")
+  pasan a `install` solo por mencionar "sustitución" de pasada — mismo
+  problema de prioridad ya documentado tras la Decisión 3 (pintura/
+  impermeabilización vs. demolish), esta vez con install. Volumen
+  igualmente mínimo (2 líneas): aceptado como caso conocido, no se toca
+  la lógica compartida de prioridad.
+
+### Decisión 22 — mueble (genérico) es `furniture` (elemento nuevo)
+
+- **Expresión habitual**: "Suministro y colocación de mueble laminado
+  gris de 0,90x,83x0,54 para descalcificador, formado por módulo y
+  encimera de laminado de madera."
+- **Motivo**: mobiliario genérico, distinto de `kitchen_furniture`
+  (Decisión 8, específicamente "mueble de cocina"). Al ir `kitchen_furniture`
+  antes en la tabla, un texto que diga "mueble de cocina" sigue
+  coincidiendo con esa categoría más específica primero.
+- **Implementación**: nueva categoría `("furniture", ("mueble",))`. Dos
+  falsos positivos menores aceptados (error de OCR "lmueble") de 693
+  líneas reales.
+
+### Decisión 23 — esmalte/esmaltado y barnizado/barnizar dentro de `paint`
+
+- **Expresión habitual**: "PUERTAS DE ASCENSOR. Lijado superficial y
+  aplicación de imprimación multiadherente... esmalte..." / "BARNIZADO
+  PASAMANOS ESCALERA MADERA. Barnizado de pasamanos de escalera..."
+- **Motivo**: esmaltar y barnizar son variantes del mismo concepto de
+  acabado/pintura de superficie — no se separan en categorías propias
+  para no fragmentar evidencia de conceptos que en la práctica son el
+  mismo tipo de partida. **"lijado" deliberadamente NO se añade como
+  acción**: es un paso de preparación previo (como "picado" antes de
+  "reparación"), no la intervención global — si ganara prioridad,
+  reproduciría el mismo problema ya documentado tras la Decisión 3.
+- **Implementación**: se añaden `"esmalte"`, `"esmaltado"`, `"barnizado"`,
+  `"barnizar"` a `_ACTION_SYNONYMS["paint"]`. Un falso positivo
+  minoritario aceptado: "termoesmaltado" (ficha técnica de material, 3 de
+  34 líneas).
+
+### Decisión 24 — enlucido/maestreado como acción nueva `render`
+
+- **Expresión habitual**: "Maestreado y enlucido en liso, las paredes de
+  la cocina, estudio y pasillo hasta puerta existente."
+- **Motivo**: maestrear y enlucir son la misma técnica de acabado de
+  paramentos (maestrear prepara, enlucir remata) — mismo término "render"
+  que ya usa `_SYSTEM_BY_ELEMENT` internamente para `facade_render`.
+- **Implementación**: nueva categoría `("render", ("enlucido",
+  "maestreado"))`. Verificado: 0 falsos positivos en 644+155 líneas
+  reales.
 
 ## Cierre del hito: criterios de salida verificados (Fase 6, Tarea 15 — 2026-07-22)
 
