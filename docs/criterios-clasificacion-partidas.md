@@ -174,9 +174,9 @@ fachada 24, cerrajería 20...); dos hallazgos confirmados y corregidos:
   formaba parte de los hallazgos revisados con el usuario.
 - De las 182 líneas `composite`, solo se revisaron ejemplos representativos
   de 3 familias (pintura, gestión de residuos, fachada). El resto
-  (cerrajería, impermeabilización, ~~demolición~~ ya revisada (ver abajo),
-  alicatado, estructura, carpintería, albañilería, bajante) queda pendiente
-  de revisión.
+  (cerrajería, impermeabilización, ~~demolición~~ y ~~alicatado~~ ya
+  revisadas (ver abajo), estructura, carpintería, albañilería, bajante)
+  queda pendiente de revisión.
 - Se observó un problema de codificación en `concepto_original` para varias
   partidas reales (acentos mostrados como `�`) — no es un problema de
   clasificación, es un problema de origen de datos; no investigado en esta
@@ -330,6 +330,73 @@ demolición/retirada en el histórico real (1.418 líneas).
   cocina", "muebles de cocina", "electrodomestico"))` — variantes
   singular/plural necesarias porque el motor compara substrings completos,
   no por token. Verificado: 0 falsos positivos contra la base real.
+
+### Familia: alicatado (turno 2 de 8)
+
+10 patrones de mayor frecuencia revisados con el usuario. Hallazgo
+principal: "azulejo"/"alicatado" no tenían elemento propio pese a ser el
+núcleo de esta familia — es el caso concreto que originó la revisión
+completa del vocabulario cerrado (el XML de prueba de esta sesión daba
+`sin_evidencia_ia` en dos partidas de alicatado).
+
+### Decisión 9 — azulejo/alicatado es `tile` (elemento nuevo)
+
+- **Expresión habitual**: "Quitar azulejo existente en baño, cocina y
+  galería, con retirada de escombros a contenedor." / "COLOCACIÓN DE
+  ALICATADO. Suministro y colocación de alicatado en paredes de cocina y
+  galería..." (4 de los 10 patrones de mayor frecuencia de la familia,
+  12 apariciones combinadas).
+- **Acción**: `demolish` (vía "quitar"/"demolicion") o `install` (vía
+  "colocacion"/"colocar"), según el patrón. **Elemento**: `tile` (nuevo).
+  **Módulo principal**: sin cambios.
+- **Condición que impide coincidencia exacta**: ninguna.
+- **Motivo**: era el hueco más grande de toda la revisión — el elemento
+  que da nombre al módulo no tenía representación en el vocabulario de
+  elementos.
+- **Implementación**: nueva categoría `("tile", ("azulejo",
+  "alicatado"))`. Verificado: 0 falsos positivos en 577 (azulejo) y 1257
+  (alicatado) líneas reales.
+
+### Decisión 10 — rodapié es `skirting` (elemento nuevo, distinto de tile)
+
+- **Expresión habitual**: "Demolición de rodapié cerámico con medios
+  manuales y carga manual de escombros..." / "Rodapié cerámico de gres
+  rústico, de 9 cm..." (3 de los 10 patrones, 8 apariciones combinadas).
+- **Acción**: `demolish` o ninguna decidida (las líneas de suministro
+  técnicas del rodapié no llevan verbo de acción reconocido). **Elemento**:
+  `skirting` (nuevo). **Módulo principal**: sin cambios.
+- **Condición que impide coincidencia exacta**: ninguna.
+- **Motivo**: el rodapié es una partida facturable propia y distinta del
+  alicatado de pared, aunque a menudo aparezcan en la misma obra — no se
+  fusiona con `tile` a propósito.
+- **Implementación**: nueva categoría `("skirting", ("rodapie",))`.
+  Verificado: 0 falsos positivos en 540 líneas reales.
+
+### Decisión 11 — pavimento/baldosa se añaden a `flooring`
+
+- **Expresión habitual**: "DEMOLICIÓN PAVIMENTO CERÁMICO. Demolición de
+  pavimento de baldosas cerámicas con medios manuales..."
+- **Acción**: `demolish`. **Elemento**: `flooring` (ya existente,
+  Decisión 7 — mismo elemento que suelo/solado). **Módulo principal**:
+  sin cambios.
+- **Condición que impide coincidencia exacta**: ninguna.
+- **Motivo**: "pavimento" y "baldosa" son sinónimos reales de suelo/solado
+  en este histórico, y no estaban cubiertos.
+- **Implementación**: se añaden `"pavimento"` y `"baldosa"` a los
+  sinónimos existentes de `flooring`. Verificado: 0 falsos positivos en
+  1085 (pavimento) y 177 (baldosa) líneas reales.
+
+### Descartado a propósito en esta familia
+
+- **"revestimiento"** (903 líneas, 554 de ellas en el módulo `pintura`):
+  demasiado genérico para mapearlo a `tile` — contaminaría elementos de
+  pintura, impermeabilización, albañilería, etc. No se añade como palabra
+  suelta.
+- **"vierteaguas"** (frecuencia 2) y **"piezas de gran formato"**
+  (frecuencia 2, patrón que solo aparecía bajo la palabra genérica
+  "revestimiento"): volumen demasiado bajo para decidir con criterio en
+  esta ronda. Quedan **sin decisión**, revisar más adelante si aparecen
+  con más frecuencia.
 
 ## Cierre del hito: criterios de salida verificados (Fase 6, Tarea 15 — 2026-07-22)
 

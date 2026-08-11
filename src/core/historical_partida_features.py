@@ -61,16 +61,26 @@ _ELEMENT_SYNONYMS: _KeywordTable = (
     ("partition_wall", ("tabique",)),
     # Decision 6 (familia demolicion): sin falsos positivos verificados.
     ("sanitary_ware", ("wc", "lavabo", "sanitario")),
-    # Decision 7 (familia demolicion): "suelo" colisiona con "entresuelo"
-    # (6 lineas reales, es una planta/piso, no el elemento) frente a 485
-    # lineas reales genuinas de suelo/pavimento -- se acepta ese riesgo
-    # medido, a diferencia de "tirar" en la Decision 3. "solado" no tiene
-    # ese problema.
-    ("flooring", ("suelo", "solado")),
+    # Decision 7 (familia demolicion) + Decision 11 (familia alicatado):
+    # "suelo" colisiona con "entresuelo" (6 lineas reales, es una
+    # planta/piso, no el elemento) frente a 485 lineas reales genuinas de
+    # suelo/pavimento -- se acepta ese riesgo medido, a diferencia de
+    # "tirar" en la Decision 3. "solado"/"pavimento"/"baldosa" no tienen
+    # ese problema (0 falsos positivos verificados).
+    ("flooring", ("suelo", "solado", "pavimento", "baldosa")),
     # Decision 8 (familia demolicion): variantes singular/plural
     # necesarias porque el motor compara substrings completos, no por
     # token ("mueble de cocina" no es substring de "muebles de cocina").
     ("kitchen_furniture", ("mueble de cocina", "muebles de cocina", "electrodomestico")),
+    # Decision 9 (familia alicatado): el hueco mas grande de toda la
+    # revision -- "azulejo"/"alicatado" no tenian elemento propio pese a
+    # ser el nucleo de esta familia. 0 falsos positivos verificados en
+    # 577 (azulejo) y 1257 (alicatado) lineas reales.
+    ("tile", ("azulejo", "alicatado")),
+    # Decision 10 (familia alicatado): elemento facturable propio,
+    # distinto de tile aunque a veces coincidan en la misma obra. 0 falsos
+    # positivos verificados en 540 lineas reales.
+    ("skirting", ("rodapie",)),
 )
 
 # Agrupa categorías de elemento que en realidad son el mismo elemento
@@ -89,6 +99,8 @@ _ELEMENT_FAMILIES = {
     "sanitary_ware": "sanitary_ware",
     "flooring": "flooring",
     "kitchen_furniture": "kitchen_furniture",
+    "tile": "tile",
+    "skirting": "skirting",
 }
 
 # Sistema técnico implícito por elemento: vocabulario cerrado mínimo (Tarea 2,

@@ -197,3 +197,35 @@ class TestReviewedHistoricalCases:
         features = extract_partida_features(text, "ud", classifier.classify_text(text))
         assert features.action == "demolish"
         assert features.element == "kitchen_furniture"
+
+    # Decisiones 9-11, familia alicatado (2026-08-04): ver
+    # docs/criterios-clasificacion-partidas.md y
+    # docs/superpowers/plans/2026-08-04-completar-vocabulario-cerrado.md.
+
+    def test_decision_9_azulejo_is_tile(self):
+        classifier = HistoricalPartidaClassifier()
+        text = "Quitar azulejo existente en bano, cocina y galeria, con retirada de escombros a contenedor."
+        features = extract_partida_features(text, "m2", classifier.classify_text(text))
+        assert features.action == "demolish"
+        assert features.element == "tile"
+
+    def test_decision_9_alicatado_word_is_tile(self):
+        classifier = HistoricalPartidaClassifier()
+        text = "COLOCACION DE ALICATADO. Suministro y colocacion de alicatado en paredes de cocina y galeria, totalmente colocado, junteado y limpio."
+        features = extract_partida_features(text, "m2", classifier.classify_text(text))
+        assert features.action == "install"
+        assert features.element == "tile"
+
+    def test_decision_10_rodapie_is_skirting_not_tile(self):
+        classifier = HistoricalPartidaClassifier()
+        text = "Demolicion de rodapie ceramico con medios manuales y carga manual de escombros sobre camion o contenedor."
+        features = extract_partida_features(text, "ml", classifier.classify_text(text))
+        assert features.action == "demolish"
+        assert features.element == "skirting"
+
+    def test_decision_11_pavimento_ceramico_is_flooring(self):
+        classifier = HistoricalPartidaClassifier()
+        text = "DEMOLICION PAVIMENTO CERAMICO. Demolicion de pavimento de baldosas ceramicas con medios manuales y carga manual de escombros sobre camion o contenedor."
+        features = extract_partida_features(text, "m2", classifier.classify_text(text))
+        assert features.action == "demolish"
+        assert features.element == "flooring"
