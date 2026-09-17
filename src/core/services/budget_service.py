@@ -15,7 +15,6 @@ from src.core.excel_manager import ExcelManager
 from src.core.file_manager import FileManager
 from src.core.partida_normalizer import normalize_partida_for_excel
 from src.core.template_manager import TemplateManager
-from src.utils.helpers import sanitize_filename
 from src.utils.budget_utils import normalize_date, strip_obra_prefix
 
 logger = logging.getLogger(__name__)
@@ -56,20 +55,24 @@ class BudgetService:
         self,
         project_data: Dict,
         project_name: str,
-        save_dir: str,
+        save_path: str,
         template_path: str,
         comunidad_data: Optional[Dict] = None,
         admin_data: Optional[Dict] = None,
+        overwrite: bool = False,
     ) -> BudgetCreationResult:
         """Crea un presupuesto completo: carpeta, subcarpetas, Excel desde plantilla y registro en historial.
 
         Args:
             project_data: Datos del proyecto (calle, num_calle, codigo_postal, etc.).
-            project_name: Nombre del proyecto para el archivo y la carpeta.
-            save_dir: Directorio donde guardar el presupuesto.
+            project_name: Nombre del proyecto para los datos del Excel y el registro en BD.
+            save_path: Ruta completa del archivo .xlsx de destino, tal como la eligió
+                el usuario. La carpeta de obra es, por definición, la que lo contiene.
             template_path: Ruta a la plantilla Excel.
             comunidad_data: Datos de la comunidad (opcional).
             admin_data: Datos de la administración (opcional).
+            overwrite: True solo si el usuario ya consintió explícitamente sustituir
+                ese archivo exacto.
 
         Returns:
             BudgetCreationResult con el resultado de la operación.
@@ -77,15 +80,19 @@ class BudgetService:
         if not os.path.exists(template_path):
             return BudgetCreationResult(success=False, error="No se encontró la plantilla.")
 
-        folder_name = sanitize_filename(project_name)
-        folder_path = os.path.join(save_dir, folder_name)
-        if not self._files.create_folder(folder_path):
+        if os.path.exists(save_path) and not overwrite:
+            return BudgetCreationResult(
+                success=False,
+                excel_path=save_path,
+                error=f"Ya existe un presupuesto en {save_path}. No se ha sobrescrito.",
+            )
+
+        folder_path = os.path.dirname(save_path)
+        if folder_path and not self._files.create_folder(folder_path):
             return BudgetCreationResult(success=False, error="No se pudo crear la carpeta.")
 
         subfolders = ["FOTOS", "PLANOS", "PROYECTO", "MEDICIONES", "PRESUPUESTOS"]
         self._files.create_subfolders(folder_path, subfolders)
-
-        save_path = os.path.join(folder_path, f"{folder_name}.xlsx")
 
         excel_data = self._build_excel_data(
             project_data, project_name, comunidad_data, admin_data,

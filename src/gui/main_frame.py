@@ -295,16 +295,49 @@ class MainFrame(QMainWindow):
         from src.core.settings import Settings
         from src.utils.helpers import sanitize_filename
         save_default_dir = Settings().get_default_path(Settings.PATH_SAVE_BUDGETS) or ""
+        folder_name = sanitize_filename(project_name)
+
+        # QFileDialog solo respeta el directorio de la ruta propuesta si ya existe;
+        # crearlo aquí es lo que hace que la confirmación nativa de sobrescritura
+        # se aplique sobre la ruta que realmente se va a escribir.
+        proposed_dir = save_default_dir
+        created_dir = ""
+        if save_default_dir:
+            candidate = os.path.join(save_default_dir, folder_name)
+            try:
+                if not os.path.isdir(candidate):
+                    created_dir = candidate
+                os.makedirs(candidate, exist_ok=True)
+                proposed_dir = candidate
+            except OSError:
+                created_dir = ""
+
         save_path, _ = QFileDialog.getSaveFileName(
             self, "Guardar Presupuesto",
-            os.path.join(save_default_dir, f"{sanitize_filename(project_name)}.xlsx"),
+            os.path.join(proposed_dir, f"{folder_name}.xlsx"),
             "Excel (*.xlsx);;Todos (*.*)",
         )
         if not save_path:
+            if created_dir:
+                try:
+                    os.rmdir(created_dir)
+                except OSError:
+                    pass
             return
 
+        if not os.path.splitext(save_path)[1]:
+            save_path += ".xlsx"
+            # La ruta cambió respecto a la que confirmó el diálogo: hay que
+            # volver a pedir consentimiento sobre la ruta definitiva.
+            if os.path.exists(save_path) and QMessageBox.question(
+                self, "Sustituir archivo",
+                f"Ya existe {save_path}. ¿Sustituirlo?",
+            ) != QMessageBox.StandardButton.Yes:
+                return
+
+        overwrite = os.path.exists(save_path)
+
         template_path = self._budget_svc.get_template_path()
-        save_dir = os.path.dirname(save_path)
 
         partes_dir = [
             p for p in [
@@ -322,8 +355,9 @@ class MainFrame(QMainWindow):
         admin_data = self._db_svc.get_admin_para_comunidad(comunidad_data)
 
         result = self._budget_svc.create_budget(
-            project_data, project_name, save_dir, template_path,
+            project_data, project_name, save_path, template_path,
             comunidad_data=comunidad_data, admin_data=admin_data,
+            overwrite=overwrite,
         )
         if not result.success:
             QMessageBox.critical(self, "Error", result.error)
