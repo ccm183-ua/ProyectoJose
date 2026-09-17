@@ -302,10 +302,16 @@ def normalize_partida_for_excel(partida: Dict, source: str = "") -> Dict:
         or "ud"
     )
     cantidad = _to_float(partida.get("cantidad"), 1.0)
+    # El precio revisado manda: 'precio_unitario' tiene precedencia sobre 'precio'.
+    # Esta función devuelve los dos campos con el mismo valor, y quien edita el precio
+    # (la tabla de revisión combinada) solo reescribe 'precio_unitario'; con la
+    # precedencia inversa el alias antiguo pisaba la edición del usuario. Ningún
+    # productor del proyecto emite las dos claves a la vez, así que el orden solo
+    # cambia el resultado en dicts ya normalizados y reeditados.
     precio = _to_float(
-        partida.get("precio")
-        if partida.get("precio") is not None
-        else partida.get("precio_unitario"),
+        partida.get("precio_unitario")
+        if partida.get("precio_unitario") is not None
+        else partida.get("precio"),
         0.0,
     )
     total = calcular_importe_linea(cantidad, precio)
