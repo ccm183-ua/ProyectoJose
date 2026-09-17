@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from src.core.budget_generator import BudgetGenerator
+from src.core.services.budget_partidas_flow import OUTCOME_APPLIED
 
 
 class _DummyBudgetService:
@@ -98,8 +99,9 @@ def test_historical_only_inserts_once(monkeypatch):
     monkeypatch.setattr(hist_mod, "HistoricalSuggestionsDialog", HistDialog)
     monkeypatch.setattr(review_mod, "CombinedPartidasReviewDialog", ReviewDialog)
     monkeypatch.setattr(step_mod, "HistoricalSelectionNextStepDialog", StepDialog)
-    frame._offer_partidas("budget.xlsx", {"cliente": "X"})
+    outcome = frame._offer_partidas("budget.xlsx", {"cliente": "X"})
 
+    assert outcome == OUTCOME_APPLIED
     assert len(frame._budget_svc.insert_calls) == 1
     assert frame._budget_svc.insert_calls[0][1][0]["concepto"] == "Hist 1"
 
@@ -171,8 +173,9 @@ def test_historical_plus_ai_inserts_once_at_end(monkeypatch):
     monkeypatch.setattr(complete_mod, "AICompleteHistoricalBudgetDialog", CompleteDialog)
     monkeypatch.setattr(review_mod, "CombinedPartidasReviewDialog", ReviewDialog)
     monkeypatch.setattr(step_mod, "HistoricalSelectionNextStepDialog", StepDialog)
-    frame._offer_partidas("budget.xlsx", {"cliente": "X"})
+    outcome = frame._offer_partidas("budget.xlsx", {"cliente": "X"})
 
+    assert outcome == OUTCOME_APPLIED
     assert len(frame._budget_svc.insert_calls) == 1
     inserted = frame._budget_svc.insert_calls[0][1]
     assert len(inserted) == 2
