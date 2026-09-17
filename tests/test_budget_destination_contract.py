@@ -163,6 +163,9 @@ class _RecordingBudgetService:
     def finalize_budget(self, *args, **kwargs):
         return True
 
+    def discard_budget(self, *args, **kwargs):
+        return True
+
 
 class _DummyDbService:
     @staticmethod
