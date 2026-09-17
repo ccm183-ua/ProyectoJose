@@ -76,3 +76,21 @@ def test_discard_budget_informa_si_no_puede_borrar_el_excel(db_env, monkeypatch)
         entry["ruta_excel"] == str(excel)
         for entry in db_repository.get_historial_reciente()
     )
+
+
+def test_discard_budget_informa_si_no_puede_borrar_el_historial(db_env, monkeypatch):
+    folder, excel = _crear_borrador(db_env)
+
+    monkeypatch.setattr(
+        "src.core.db_repository.eliminar_historial_por_ruta",
+        lambda ruta: "Error de base de datos: bloqueada.",
+    )
+
+    ok = BudgetService().discard_budget(str(excel), str(folder))
+
+    assert ok is False
+    assert not excel.exists()
+    assert any(
+        entry["ruta_excel"] == str(excel)
+        for entry in db_repository.get_historial_reciente()
+    )

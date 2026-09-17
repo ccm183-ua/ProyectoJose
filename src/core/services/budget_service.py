@@ -161,7 +161,10 @@ class BudgetService:
         carpeta de obra solo si quedan vacías. Nunca borra directorios con
         contenido: `os.rmdir` falla y se ignora, así que un fallo no destruye
         datos del usuario. Si el Excel no se puede borrar (abierto, permisos),
-        no se toca nada más y devuelve False.
+        no se toca nada más y devuelve False. Si falla el borrado de la fila de
+        historial, también devuelve False —el Excel y las carpetas vacías sí se
+        eliminan— para que el llamante comunique que el descarte quedó a medias
+        en lugar de reportar un éxito silencioso.
         """
         try:
             os.remove(excel_path)
@@ -188,7 +191,7 @@ class BudgetService:
             except OSError:
                 pass
 
-        return True
+        return err is None
 
     def open_budget(self, file_path: str) -> bool:
         """Abre un presupuesto, lo registra en historial y devuelve True si fue exitoso."""

@@ -446,7 +446,7 @@ class MainFrame(QMainWindow):
             QMessageBox.warning(
                 self,
                 "Aviso",
-                f"No se pudo eliminar el borrador. Sigue en:\n{excel_path}",
+                f"No se pudo completar el descarte. Revisa el estado de:\n{excel_path}",
             )
 
     def _schedule_historical_feedback(self, excel_path):
