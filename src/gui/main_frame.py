@@ -27,6 +27,11 @@ from src.gui.historical_suggestions_dialog import (
 )
 
 
+def _same_path(a: str, b: str) -> bool:
+    """Compara rutas normalizando separadores y mayúsculas (Windows)."""
+    return os.path.normcase(os.path.normpath(a)) == os.path.normcase(os.path.normpath(b))
+
+
 class MainFrame(QMainWindow):
     def __init__(self, parent=None, title="cubiApp", **kwargs):
         super().__init__(parent)
@@ -317,51 +322,64 @@ class MainFrame(QMainWindow):
             os.path.join(proposed_dir, f"{folder_name}.xlsx"),
             "Excel (*.xlsx);;Todos (*.*)",
         )
-        if not save_path:
-            if created_dir:
+        try:
+            if not save_path:
+                return
+
+            if not os.path.splitext(save_path)[1]:
+                save_path += ".xlsx"
+                # La ruta cambió respecto a la que confirmó el diálogo: hay que
+                # volver a pedir consentimiento sobre la ruta definitiva.
+                if os.path.exists(save_path) and QMessageBox.question(
+                    self, "Sustituir archivo",
+                    f"Ya existe {save_path}. ¿Sustituirlo?",
+                ) != QMessageBox.StandardButton.Yes:
+                    return
+
+            folder_path = os.path.dirname(save_path)
+            if save_default_dir and _same_path(folder_path, save_default_dir):
+                QMessageBox.critical(
+                    self, "Error",
+                    "Guarda el presupuesto dentro de una carpeta de proyecto, no "
+                    f"directamente en {save_default_dir}.",
+                )
+                return
+
+            overwrite = os.path.exists(save_path)
+
+            template_path = self._budget_svc.get_template_path()
+
+            partes_dir = [
+                p for p in [
+                    project_data.get("calle", ""),
+                    project_data.get("num_calle", ""),
+                    project_data.get("codigo_postal", ""),
+                    project_data.get("localidad", ""),
+                ] if p
+            ]
+            direccion_proyecto = ", ".join(partes_dir)
+
+            comunidad_data = self._buscar_comunidad_para_presupuesto(
+                project_data.get("cliente", ""), direccion=direccion_proyecto,
+            )
+            admin_data = self._db_svc.get_admin_para_comunidad(comunidad_data)
+
+            result = self._budget_svc.create_budget(
+                project_data, project_name, save_path, template_path,
+                comunidad_data=comunidad_data, admin_data=admin_data,
+                overwrite=overwrite,
+            )
+            if not result.success:
+                QMessageBox.critical(self, "Error", result.error)
+                return
+        finally:
+            # La carpeta se creó solo para que el diálogo propusiera una ruta real;
+            # si el usuario guardó en otro sitio (o canceló), no debe quedar vacía.
+            if created_dir and not _same_path(os.path.dirname(save_path), created_dir):
                 try:
                     os.rmdir(created_dir)
                 except OSError:
                     pass
-            return
-
-        if not os.path.splitext(save_path)[1]:
-            save_path += ".xlsx"
-            # La ruta cambió respecto a la que confirmó el diálogo: hay que
-            # volver a pedir consentimiento sobre la ruta definitiva.
-            if os.path.exists(save_path) and QMessageBox.question(
-                self, "Sustituir archivo",
-                f"Ya existe {save_path}. ¿Sustituirlo?",
-            ) != QMessageBox.StandardButton.Yes:
-                return
-
-        overwrite = os.path.exists(save_path)
-
-        template_path = self._budget_svc.get_template_path()
-
-        partes_dir = [
-            p for p in [
-                project_data.get("calle", ""),
-                project_data.get("num_calle", ""),
-                project_data.get("codigo_postal", ""),
-                project_data.get("localidad", ""),
-            ] if p
-        ]
-        direccion_proyecto = ", ".join(partes_dir)
-
-        comunidad_data = self._buscar_comunidad_para_presupuesto(
-            project_data.get("cliente", ""), direccion=direccion_proyecto,
-        )
-        admin_data = self._db_svc.get_admin_para_comunidad(comunidad_data)
-
-        result = self._budget_svc.create_budget(
-            project_data, project_name, save_path, template_path,
-            comunidad_data=comunidad_data, admin_data=admin_data,
-            overwrite=overwrite,
-        )
-        if not result.success:
-            QMessageBox.critical(self, "Error", result.error)
-            return
 
         # Flujo unificado: descripción libre (voz o texto) → orquestador → revisión combinada.
         # El flujo clásico (_offer_partidas) se mantiene como fallback automático.

@@ -68,6 +68,21 @@ def test_create_budget_escribe_en_la_ruta_elegida(db_env, template_path, tmp_pat
     assert os.path.isdir(tmp_path / "FOTOS")
 
 
+def test_create_budget_rechaza_guardar_en_una_carpeta_de_estado(db_env, template_path, tmp_path):
+    state_dir = tmp_path / "PTE. PRESUPUESTAR"
+    state_dir.mkdir()
+    save_path = str(state_dir / "Chosen.xlsx")
+
+    result = BudgetService().create_budget(
+        _project_data(), "Original", save_path, template_path,
+    )
+
+    assert result.success is False
+    assert result.error
+    assert not os.path.exists(save_path)
+    assert not os.path.isdir(state_dir / "FOTOS")
+
+
 def test_create_budget_no_sobrescribe_un_excel_existente(db_env, template_path, tmp_path):
     save_path = str(tmp_path / "Chosen.xlsx")
     svc = BudgetService()
@@ -155,16 +170,16 @@ class _DummyDbService:
         return None
 
 
-def _build_gui_frame(monkeypatch, tmp_path, chosen_exists):
+def _build_gui_frame(monkeypatch, tmp_path, chosen, question_answer=None):
     from src.gui import main_frame as main_mod
     from src.gui.main_frame import MainFrame
 
-    chosen = tmp_path / "Original" / "Chosen.xlsx"
-    if chosen_exists:
-        chosen.parent.mkdir(parents=True, exist_ok=True)
-        chosen.write_bytes(b"previo")
-
     monkeypatch.setattr(main_mod, "QMessageBox", _NoUiMessageBox)
+    if question_answer is not None:
+        monkeypatch.setattr(
+            _NoUiMessageBox, "question",
+            staticmethod(lambda *args, **kwargs: question_answer),
+        )
     monkeypatch.setattr(
         "src.core.settings.Settings.get_default_path",
         lambda self, key: str(tmp_path),
@@ -182,7 +197,7 @@ def _build_gui_frame(monkeypatch, tmp_path, chosen_exists):
     frame._offer_partidas_unified = lambda *args, **kwargs: None
     frame._open_dashboard = lambda *args, **kwargs: None
     frame._schedule_historical_feedback = lambda *args, **kwargs: None
-    return frame, chosen
+    return frame
 
 
 @pytest.mark.parametrize("chosen_exists", [False, True])
@@ -192,7 +207,11 @@ def test_create_budget_gui_pasa_la_ruta_elegida_y_el_consentimiento(
     if importlib.util.find_spec("PySide6") is None:
         pytest.skip("PySide6 no disponible en entorno de tests")
     monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "datos_gui_contract.db"))
-    frame, chosen = _build_gui_frame(monkeypatch, tmp_path, chosen_exists)
+    chosen = tmp_path / "Original" / "Chosen.xlsx"
+    if chosen_exists:
+        chosen.parent.mkdir(parents=True, exist_ok=True)
+        chosen.write_bytes(b"previo")
+    frame = _build_gui_frame(monkeypatch, tmp_path, chosen)
 
     frame._create_budget()
 
@@ -200,3 +219,56 @@ def test_create_budget_gui_pasa_la_ruta_elegida_y_el_consentimiento(
     call = frame._budget_svc.calls[0]
     assert call["save_path"] == str(chosen)
     assert call["overwrite"] is chosen_exists
+
+
+def test_create_budget_gui_rechaza_guardar_en_la_carpeta_configurada(monkeypatch, tmp_path):
+    if importlib.util.find_spec("PySide6") is None:
+        pytest.skip("PySide6 no disponible en entorno de tests")
+    monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "datos_gui_raiz.db"))
+    frame = _build_gui_frame(monkeypatch, tmp_path, tmp_path / "Chosen.xlsx")
+
+    frame._create_budget()
+
+    assert frame._budget_svc.calls == []
+    assert not (tmp_path / "Original").exists()
+
+
+def test_create_budget_gui_limpia_la_carpeta_propuesta_si_guarda_en_otro_sitio(
+    monkeypatch, tmp_path,
+):
+    if importlib.util.find_spec("PySide6") is None:
+        pytest.skip("PySide6 no disponible en entorno de tests")
+    monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "datos_gui_limpieza.db"))
+    elsewhere = tmp_path / "Elsewhere" / "Chosen.xlsx"
+    frame = _build_gui_frame(monkeypatch, tmp_path, elsewhere)
+
+    frame._create_budget()
+
+    assert len(frame._budget_svc.calls) == 1
+    assert frame._budget_svc.calls[0]["save_path"] == str(elsewhere)
+    assert not (tmp_path / "Original").exists()
+
+
+@pytest.mark.parametrize("question_answer, expected_calls", [
+    (_NoUiMessageBox.StandardButton.No, 0),
+    (_NoUiMessageBox.StandardButton.Yes, 1),
+])
+def test_create_budget_gui_reconfirma_al_normalizar_la_extension(
+    monkeypatch, tmp_path, question_answer, expected_calls,
+):
+    if importlib.util.find_spec("PySide6") is None:
+        pytest.skip("PySide6 no disponible en entorno de tests")
+    monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "datos_gui_extension.db"))
+    chosen = tmp_path / "Original" / "Chosen"
+    normalized = chosen.with_suffix(".xlsx")
+    normalized.parent.mkdir(parents=True, exist_ok=True)
+    normalized.write_bytes(b"previo")
+    frame = _build_gui_frame(monkeypatch, tmp_path, chosen, question_answer=question_answer)
+
+    frame._create_budget()
+
+    assert len(frame._budget_svc.calls) == expected_calls
+    if expected_calls:
+        call = frame._budget_svc.calls[0]
+        assert call["save_path"] == str(normalized)
+        assert call["overwrite"] is True

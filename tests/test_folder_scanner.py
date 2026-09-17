@@ -124,3 +124,18 @@ class TestFindBestExcel:
         self._make_xlsx(tmp_path / "presupuesto.xlsx")
         result = folder_scanner._find_best_excel(str(tmp_path), None)
         assert result is not None
+
+
+class TestIsStateFolder:
+    def test_known_state_name(self):
+        assert folder_scanner.is_state_folder("/ruta/PTE. PRESUPUESTAR")
+
+    def test_case_insensitive_and_trailing_separator(self):
+        assert folder_scanner.is_state_folder("/ruta/terminado/")
+
+    def test_project_folder_is_not_a_state(self):
+        assert not folder_scanner.is_state_folder("/ruta/PTE. PRESUPUESTAR/122-20 Obra")
+
+    def test_empty(self):
+        assert not folder_scanner.is_state_folder("")
+        assert not folder_scanner.is_state_folder(None)

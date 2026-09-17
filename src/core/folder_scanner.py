@@ -17,6 +17,32 @@ _PROJECT_NUMBER_RE = re.compile(r"(\d{1,4}-\d{2})")
 
 _MIN_XLSX_SIZE = 4096
 
+# Estados (primer nivel) de la estructura de presupuestos. Fuente única para el
+# lector (presupuestos visibles), el escritor (destino válido) y la GUI (pestañas).
+STATE_FOLDER_NAMES = (
+    "PTE. PRESUPUESTAR",
+    "PRESUPUESTADO",
+    "EJECUTAR",
+    "EJECUTANDO",
+    "TERMINADO",
+    "ANULADOS",
+)
+
+_STATE_FOLDER_NAMES_UPPER = frozenset(name.upper() for name in STATE_FOLDER_NAMES)
+
+
+def is_state_folder(folder_path: str) -> bool:
+    """``True`` si *folder_path* es una carpeta de estado (primer nivel).
+
+    Un Excel guardado directamente aquí no pertenece a ninguna carpeta de
+    proyecto, así que ``scan_projects`` lo descarta y nunca aparece en el
+    dashboard.
+    """
+    if not folder_path:
+        return False
+    name = os.path.basename(os.path.normpath(folder_path)).strip().upper()
+    return name in _STATE_FOLDER_NAMES_UPPER
+
 
 def _extract_project_number(name: str) -> Optional[str]:
     """Extrae el número de proyecto (ej: '122-20') de un nombre de carpeta o archivo."""
