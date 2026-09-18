@@ -88,26 +88,46 @@ def test_include_selected_approves_with_current_user(qapp, monkeypatch):
     assert calls == [(7, dlg._current_user())]
 
 
-def test_rebuild_patterns_republishes_context_pack(qapp, monkeypatch):
-    """H09: incluir/excluir/reconstruir cambia la memoria y debe republicar el
-    paquete, no dejar el que se exporto en el ultimo analisis."""
+def test_rebuild_patterns_uses_single_rebuild_and_publish_operation(qapp, monkeypatch):
+    """H09/R4: reconstruir cambia la memoria y debe republicar el paquete en la
+    misma operacion, no en dos pasos que puedan quedarse a medias."""
     dlg = _make_dashboard(qapp, monkeypatch)
-    published = []
+    calls = []
     dlg._analyzer = type(
         "FakeAnalyzer",
         (),
-        {"publish_context_pack": lambda self: published.append(True)},
+        {
+            "rebuild_patterns_and_publish": lambda self: calls.append(True)
+            or {"patterns_inserted": 1, "publication_error": None}
+        },
     )()
     monkeypatch.setattr(dlg, "_refresh_kpis", lambda: None)
-    monkeypatch.setattr(
-        dash_mod,
-        "HistoricalPatternBuilder",
-        lambda: type("FakeBuilder", (), {"rebuild_patterns": lambda self: {"patterns_inserted": 1}})(),
-    )
 
     HistoricalMemoryDashboard._rebuild_patterns(dlg, silent=True)
 
-    assert published == [True]
+    assert calls == [True]
+
+
+def test_rebuild_patterns_warns_when_publication_fails(qapp, monkeypatch):
+    dlg = _make_dashboard(qapp, monkeypatch)
+    dlg._analyzer = type(
+        "FakeAnalyzer",
+        (),
+        {
+            "rebuild_patterns_and_publish": lambda self: {
+                "patterns_inserted": 1,
+                "publication_error": "disco lleno",
+            }
+        },
+    )()
+    monkeypatch.setattr(dlg, "_refresh_kpis", lambda: None)
+    _NoUiMessageBox.reset()
+
+    HistoricalMemoryDashboard._rebuild_patterns(dlg, silent=True)
+
+    warnings = [c for c in _NoUiMessageBox.calls if c[0] == "warning"]
+    assert warnings
+    assert "disco lleno" in warnings[0][1][2]
 
 
 def test_publish_context_pack_warns_when_publication_fails(qapp, monkeypatch):

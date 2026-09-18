@@ -83,16 +83,28 @@ class MainFrame(QMainWindow):
         ]
 
         def _work():
+            from src.core.historical_budget_analyzer import HistoricalBudgetAnalyzer
+
+            analyzer = HistoricalBudgetAnalyzer()
             if folders:
-                from src.core.historical_budget_analyzer import HistoricalBudgetAnalyzer
-                return HistoricalBudgetAnalyzer().analyze_folders(folders, recursive=True)
-            from src.core.historical_pattern_builder import HistoricalPatternBuilder
-            return HistoricalPatternBuilder().rebuild_patterns()
+                return analyzer.analyze_folders(folders, recursive=True)
+            return analyzer.rebuild_patterns_and_publish()
 
         def _done(ok, payload):
+            logger = logging.getLogger(__name__)
             if not ok:
-                logging.getLogger(__name__).debug(
+                logger.debug(
                     "Refresco histórico de arranque falló: %s", payload
+                )
+                return
+            publication_error = (
+                payload.get("publication_error") if isinstance(payload, dict) else None
+            )
+            if publication_error:
+                logger.warning(
+                    "Refresco histórico de arranque no pudo publicar el "
+                    "paquete de contexto: %s",
+                    publication_error,
                 )
 
         run_in_background(_work, _done)

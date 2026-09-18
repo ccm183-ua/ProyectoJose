@@ -262,23 +262,18 @@ class HistoricalBudgetAnalyzer:
                 )
 
         # Regenerar patrones tras cada análisis (aunque solo haya omitidos),
-        # para cubrir el caso de datos históricos ya cacheados sin patrones previos.
+        # para cubrir el caso de datos históricos ya cacheados sin patrones
+        # previos, y republicar el paquete en la misma operación: es el
+        # momento exacto en que el conocimiento histórico cambia. Un fallo no
+        # debe tumbar el análisis, pero sí quedar visible en el resumen.
         try:
-            from src.core.historical_pattern_builder import HistoricalPatternBuilder
-
-            HistoricalPatternBuilder().rebuild_patterns()
+            rebuild_summary = self.rebuild_patterns_and_publish()
         except Exception:
             summary["errores"] += 1
-
-        # Exportar el paquete de contexto para IA (Tarea 3 del plan
-        # docs/superpowers/plans/2026-08-04-paquete-contexto-ia.md), solo si
-        # hay ruta configurada. Es el momento exacto en que el conocimiento
-        # historico cambia; un fallo aqui no debe tumbar el analisis, pero si
-        # quedar visible en el resumen como publicacion fallida.
-        publication_error = self.publish_context_pack()
-        if publication_error:
-            summary["errores"] += 1
-            summary["publication_error"] = publication_error
+        else:
+            if rebuild_summary.get("publication_error"):
+                summary["errores"] += 1
+                summary["publication_error"] = rebuild_summary["publication_error"]
 
         finish_analysis_run(
             run_id,
@@ -290,6 +285,18 @@ class HistoricalBudgetAnalyzer:
                 "estado": "finished" if summary["errores"] == 0 else "finished_with_errors",
             },
         )
+        return summary
+
+    def rebuild_patterns_and_publish(self) -> Dict:
+        """Reconstruye los patrones y publica el paquete como una sola
+        operación, para que ninguna ruta de producción pueda cambiar la
+        memoria derivada sin intentar publicarla. Devuelve el resumen de la
+        reconstrucción con `publication_error` (None si no hay ruta
+        configurada o si la publicación fue correcta)."""
+        from src.core.historical_pattern_builder import HistoricalPatternBuilder
+
+        summary = HistoricalPatternBuilder().rebuild_patterns()
+        summary["publication_error"] = self.publish_context_pack()
         return summary
 
     def publish_context_pack(self) -> Optional[str]:

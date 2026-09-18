@@ -756,10 +756,8 @@ class HistoricalAnalysisResultsDialog(QDialog):
             pass
 
     def _rebuild_patterns(self):
-        from src.core.historical_pattern_builder import HistoricalPatternBuilder
-
-        HistoricalPatternBuilder().rebuild_patterns()
-        error = self._analyzer.publish_context_pack()
+        result = self._analyzer.rebuild_patterns_and_publish()
+        error = result.get("publication_error")
         if error:
             QMessageBox.warning(
                 self,

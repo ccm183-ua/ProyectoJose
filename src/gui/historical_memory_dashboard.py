@@ -52,7 +52,6 @@ from src.core.historical_budget_enrichment_service import (
 from src.core.historical_enrichment import technical_description_status_label
 from src.core.historical_integrity_diagnostics import diagnose_historical_integrity
 from src.core.historical_issue_catalog import historical_issue_label
-from src.core.historical_pattern_builder import HistoricalPatternBuilder
 from src.core.database import get_db_path_as_string, open_db_folder
 from src.core.repositories import (
     append_budget_issue,
@@ -1377,8 +1376,7 @@ class HistoricalMemoryDashboard(QDialog):
             )
             if confirm != QMessageBox.StandardButton.Yes:
                 return
-        result = HistoricalPatternBuilder().rebuild_patterns()
-        self._publish_context_pack()
+        result = self._analyzer.rebuild_patterns_and_publish()
         if not silent:
             QMessageBox.information(
                 self,
@@ -1386,6 +1384,14 @@ class HistoricalMemoryDashboard(QDialog):
                 f"Patrones reconstruidos: {int(result.get('patterns_inserted', 0))}",
             )
         self._refresh_kpis()
+        error = result.get("publication_error")
+        if error:
+            QMessageBox.warning(
+                self,
+                "Paquete de contexto",
+                "La memoria historica cambio, pero no se pudo publicar el "
+                f"paquete de contexto:\n{error}",
+            )
 
     def _publish_context_pack(self):
         """Actualiza el paquete exportado tras cambiar la memoria historica.
