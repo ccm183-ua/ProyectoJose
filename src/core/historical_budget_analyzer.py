@@ -86,6 +86,18 @@ def _safe_json_dumps(data: Dict) -> str:
         return "{}"
 
 
+def _same_content_version(existing: Dict, budget_payload: Dict) -> bool:
+    """True solo si hay un hash de contenido conocido y coincide.
+
+    Es la única prueba de que una aprobación manual sigue aplicando a la
+    versión revisada: sin hash comparable no se puede afirmar que el contenido
+    sea el mismo, así que la aprobación no se hereda.
+    """
+    existing_hash = (existing.get("file_sha256") or "").strip()
+    new_hash = (budget_payload.get("file_sha256") or "").strip()
+    return bool(existing_hash) and existing_hash == new_hash
+
+
 def _apply_existing_manual_learning_decision(budget_payload: Dict, existing: Optional[Dict]) -> None:
     """Conserva decisiones manuales cuando el nuevo análisis sigue siendo apto."""
     if not existing:
@@ -105,12 +117,30 @@ def _apply_existing_manual_learning_decision(budget_payload: Dict, existing: Opt
     if previous_status != "INCLUDED":
         return
 
+    if not _same_content_version(existing, budget_payload):
+        # El contenido revisado cambió (o no hay hash comparable): la
+        # aprobación deja de aplicar y el payload se queda en PENDING_REVIEW.
+        budget_payload["approved_at"] = ""
+        budget_payload["approved_by"] = ""
+        return
+
+    approved_by = (existing.get("approved_by") or "").strip()
+    approved_at = (existing.get("approved_at") or "").strip()
+    if not approved_by or not approved_at:
+        # H06: una inclusión sin actor ni fecha no es prueba de revisión, así
+        # que no se hereda y el payload se queda en PENDING_REVIEW.
+        budget_payload["approved_at"] = ""
+        budget_payload["approved_by"] = ""
+        return
+
     if budget_payload.get("analysis_status") in (AnalysisStatus.VALID, AnalysisStatus.VALID_WITH_WARNINGS):
         budget_payload["usable_for_learning"] = True
         budget_payload["learning_status"] = "INCLUDED"
         budget_payload["learning_status_source"] = "MANUAL"
         budget_payload["learning_decision_reason"] = existing.get("learning_decision_reason") or "Decision manual preservada tras reanalisis."
         budget_payload["learning_decision_at"] = existing.get("learning_decision_at") or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        budget_payload["approved_by"] = approved_by
+        budget_payload["approved_at"] = approved_at
 
 
 class HistoricalBudgetAnalyzer:
@@ -241,29 +271,18 @@ class HistoricalBudgetAnalyzer:
                 )
 
         # Regenerar patrones tras cada análisis (aunque solo haya omitidos),
-        # para cubrir el caso de datos históricos ya cacheados sin patrones previos.
+        # para cubrir el caso de datos históricos ya cacheados sin patrones
+        # previos, y republicar el paquete en la misma operación: es el
+        # momento exacto en que el conocimiento histórico cambia. Un fallo no
+        # debe tumbar el análisis, pero sí quedar visible en el resumen.
         try:
-            from src.core.historical_pattern_builder import HistoricalPatternBuilder
-
-            HistoricalPatternBuilder().rebuild_patterns()
+            rebuild_summary = self.rebuild_patterns_and_publish()
         except Exception:
             summary["errores"] += 1
-
-        # Exportar el paquete de contexto para IA (Tarea 3 del plan
-        # docs/superpowers/plans/2026-08-04-paquete-contexto-ia.md), solo si
-        # hay ruta configurada. Es el momento exacto en que el conocimiento
-        # historico cambia; un fallo aqui no debe tumbar el analisis.
-        from src.core.settings import Settings as _Settings
-
-        context_pack_dir = _Settings().get_default_path(_Settings.PATH_CONTEXT_PACK)
-        if context_pack_dir:
-            try:
-                from src.core import database as _database
-                from scripts.export_context_pack import export_context_pack
-
-                export_context_pack(str(_database.get_db_path()), context_pack_dir)
-            except Exception:
+        else:
+            if rebuild_summary.get("publication_error"):
                 summary["errores"] += 1
+                summary["publication_error"] = rebuild_summary["publication_error"]
 
         finish_analysis_run(
             run_id,
@@ -276,6 +295,40 @@ class HistoricalBudgetAnalyzer:
             },
         )
         return summary
+
+    def rebuild_patterns_and_publish(self) -> Dict:
+        """Reconstruye los patrones y publica el paquete como una sola
+        operación, para que ninguna ruta de producción pueda cambiar la
+        memoria derivada sin intentar publicarla. Devuelve el resumen de la
+        reconstrucción con `publication_error` (None si no hay ruta
+        configurada o si la publicación fue correcta)."""
+        from src.core.historical_pattern_builder import HistoricalPatternBuilder
+
+        summary = HistoricalPatternBuilder().rebuild_patterns()
+        summary["publication_error"] = self.publish_context_pack()
+        return summary
+
+    def publish_context_pack(self) -> Optional[str]:
+        """Publica el paquete de contexto si hay carpeta configurada.
+
+        Devuelve None si no hay ruta o si la exportacion fue correcta, o el
+        mensaje de error si fallo. Nunca propaga la excepcion: publicar es un
+        efecto secundario de haber cambiado la memoria historica, no su
+        resultado principal, pero el fallo debe poder mostrarse al usuario.
+        """
+        from src.core.settings import Settings
+
+        context_pack_dir = Settings().get_default_path(Settings.PATH_CONTEXT_PACK)
+        if not context_pack_dir:
+            return None
+        try:
+            from src.core import database
+            from scripts.export_context_pack import export_context_pack
+
+            export_context_pack(str(database.get_db_path()), context_pack_dir)
+            return None
+        except Exception as exc:
+            return str(exc) or "Error al exportar el paquete de contexto."
 
     def analyze_budget(
         self,

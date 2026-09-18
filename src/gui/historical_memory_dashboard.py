@@ -52,10 +52,10 @@ from src.core.historical_budget_enrichment_service import (
 from src.core.historical_enrichment import technical_description_status_label
 from src.core.historical_integrity_diagnostics import diagnose_historical_integrity
 from src.core.historical_issue_catalog import historical_issue_label
-from src.core.historical_pattern_builder import HistoricalPatternBuilder
 from src.core.database import get_db_path_as_string, open_db_folder
 from src.core.repositories import (
     append_budget_issue,
+    approve_budget_for_learning,
     clear_all_historical_analysis_data,
     delete_historical_budgets_by_ids,
     get_budget_enrichment,
@@ -1272,13 +1272,7 @@ class HistoricalMemoryDashboard(QDialog):
         changed = 0
         for data in eligible:
             budget_id = int(data.get("id") or 0)
-            err = set_historical_budget_learning_status(
-                budget_id,
-                "INCLUDED",
-                True,
-                decision_source="MANUAL",
-                decision_reason="Incluido manualmente desde panel de memoria.",
-            )
+            err = approve_budget_for_learning(budget_id, self._current_user())
             if err:
                 QMessageBox.warning(self, "Incluir en memoria", err)
                 continue
@@ -1298,6 +1292,13 @@ class HistoricalMemoryDashboard(QDialog):
             QMessageBox.information(self, "Incluir en memoria", f"Presupuestos incluidos: {changed}")
         else:
             QMessageBox.information(self, "Incluir en memoria", "No hay presupuestos seleccionados aptos para incluir.")
+
+    @staticmethod
+    def _current_user() -> str:
+        try:
+            return os.getlogin()
+        except OSError:
+            return "usuario"
 
     def _exclude_selected(self):
         eligible = [d for d in self._selected_rows_data() if self._can_be_excluded_in_memory(d)]
@@ -1398,7 +1399,7 @@ class HistoricalMemoryDashboard(QDialog):
             )
             if confirm != QMessageBox.StandardButton.Yes:
                 return
-        result = HistoricalPatternBuilder().rebuild_patterns()
+        result = self._analyzer.rebuild_patterns_and_publish()
         if not silent:
             QMessageBox.information(
                 self,
@@ -1406,6 +1407,30 @@ class HistoricalMemoryDashboard(QDialog):
                 f"Patrones reconstruidos: {int(result.get('patterns_inserted', 0))}",
             )
         self._refresh_kpis()
+        error = result.get("publication_error")
+        if error:
+            QMessageBox.warning(
+                self,
+                "Paquete de contexto",
+                "La memoria historica cambio, pero no se pudo publicar el "
+                f"paquete de contexto:\n{error}",
+            )
+
+    def _publish_context_pack(self):
+        """Actualiza el paquete exportado tras cambiar la memoria historica.
+
+        Cualquier alta, baja, reconstruccion o reanalisis cambia que partidas
+        son reutilizables; si no se republica, Claude sigue viendo la version
+        anterior. Un fallo de publicacion se avisa, no se silencia.
+        """
+        error = self._analyzer.publish_context_pack()
+        if error:
+            QMessageBox.warning(
+                self,
+                "Paquete de contexto",
+                "La memoria historica cambio, pero no se pudo publicar el "
+                f"paquete de contexto:\n{error}",
+            )
 
     def _confirm_clear_all_historical_analysis(self):
         confirm = QMessageBox.question(
@@ -1434,6 +1459,7 @@ class HistoricalMemoryDashboard(QDialog):
             "Borrado completo de presupuestos analizados desde el panel de memoria.",
             {"historical_budgets_removed": n},
         )
+        self._publish_context_pack()
         self._reload()
         QMessageBox.information(
             self,

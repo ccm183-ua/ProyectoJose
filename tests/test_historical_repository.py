@@ -95,6 +95,7 @@ class TestApproveBudgetForLearning:
                 "analysis_status": "VALID",
                 "learning_status": "PENDING_REVIEW",
                 "source_kind": "own_final_budget",
+                "file_sha256": "hash_propio",
             }
         )
         assert err is None

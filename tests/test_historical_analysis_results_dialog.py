@@ -119,3 +119,45 @@ def test_include_button_disabled_when_not_valid(qapp, monkeypatch):
     assert dlg._can_be_included_in_memory({"analysis_status": "NOT_COMPATIBLE"}) is False
     assert dlg._can_be_included_in_memory({"analysis_status": "VALID"}) is True
     assert dlg._can_be_included_in_memory({"analysis_status": "VALID_WITH_WARNINGS"}) is True
+
+
+def test_rebuild_patterns_runs_the_single_rebuild_and_publish_operation(qapp, monkeypatch):
+    """El dialogo no reconstruye por su cuenta: delega en la operacion unica
+    que tambien publica, y sin error de publicacion no avisa."""
+    dlg = _make_dialog(qapp, monkeypatch)
+    calls = []
+    dlg._analyzer = type(
+        "FakeAnalyzer",
+        (),
+        {
+            "rebuild_patterns_and_publish": lambda self: calls.append("rebuild")
+            or {"patterns_inserted": 1, "publication_error": None}
+        },
+    )()
+
+    HistoricalAnalysisResultsDialog._rebuild_patterns(dlg)
+
+    assert calls == ["rebuild"]
+    assert [c for c in _NoUiMessageBox.calls if c[0] == "warning"] == []
+
+
+def test_rebuild_patterns_warns_when_publication_fails(qapp, monkeypatch):
+    """Un fallo al publicar el paquete tras reconstruir la memoria debe llegar
+    al usuario, no quedarse en el resumen."""
+    dlg = _make_dialog(qapp, monkeypatch)
+    calls = []
+    dlg._analyzer = type(
+        "FakeAnalyzer",
+        (),
+        {
+            "rebuild_patterns_and_publish": lambda self: calls.append("rebuild")
+            or {"patterns_inserted": 1, "publication_error": "disco lleno"}
+        },
+    )()
+
+    HistoricalAnalysisResultsDialog._rebuild_patterns(dlg)
+
+    assert calls == ["rebuild"]
+    warnings = [c for c in _NoUiMessageBox.calls if c[0] == "warning"]
+    assert len(warnings) == 1
+    assert "disco lleno" in warnings[0][1][2]

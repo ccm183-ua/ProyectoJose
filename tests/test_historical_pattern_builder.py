@@ -58,6 +58,9 @@ class TestHistoricalPatternBuilder:
                 "analysis_status": "VALID",
                 "usable_for_learning": True,
                 "learning_status": "INCLUDED",
+                "approved_by": "test",
+                "approved_at": "2026-01-01 10:00:00",
+                "file_sha256": "hash_hist.xlsx",
             }
         )
         assert err is None
@@ -122,6 +125,9 @@ class TestHistoricalPatternBuilder:
                 "analysis_status": "VALID",
                 "usable_for_learning": True,
                 "learning_status": "INCLUDED",
+                "approved_by": "test",
+                "approved_at": "2026-01-01 10:00:00",
+                "file_sha256": "hash_included.xlsx",
             }
         )
         assert err_inc is None
@@ -212,6 +218,9 @@ class TestHistoricalPatternBuilder:
                 "analysis_status": "EXCLUDED_INCOMPLETE_DATA",
                 "usable_for_learning": True,
                 "learning_status": "INCLUDED",
+                "approved_by": "test",
+                "approved_at": "2026-01-01 10:00:00",
+                "file_sha256": "hash_invalid_but_included.xlsx",
                 "learning_status_source": "MANUAL",
             }
         )
@@ -256,6 +265,9 @@ class TestHistoricalPatternBuilder:
                 "analysis_status": "VALID",
                 "usable_for_learning": True,
                 "learning_status": "INCLUDED",
+                "approved_by": "test",
+                "approved_at": "2026-01-01 10:00:00",
+                "file_sha256": "hash_trace.xlsx",
             }
         )
         assert err is None
@@ -355,6 +367,9 @@ class TestHistoricalPatternBuilder:
                 "analysis_status": "VALID",
                 "usable_for_learning": True,
                 "learning_status": "INCLUDED",
+                "approved_by": "test",
+                "approved_at": "2026-01-01 10:00:00",
+                "file_sha256": "hash_stable.xlsx",
             }
         )
         assert err is None
@@ -440,6 +455,9 @@ class TestPrimaryModuleEvidence:
                 "analysis_status": "VALID",
                 "usable_for_learning": True,
                 "learning_status": "INCLUDED",
+                "approved_by": "test",
+                "approved_at": "2026-01-01 10:00:00",
+                "file_sha256": "hash_compuesta.xlsx",
             }
         )
         assert err is None
@@ -489,6 +507,9 @@ class TestPrimaryModuleEvidence:
                 "analysis_status": "VALID",
                 "usable_for_learning": True,
                 "learning_status": "INCLUDED",
+                "approved_by": "test",
+                "approved_at": "2026-01-01 10:00:00",
+                "file_sha256": "hash_compuesta2.xlsx",
             }
         )
         assert err is None
@@ -539,6 +560,9 @@ class TestPrimaryModuleEvidence:
                     "analysis_status": "VALID",
                     "usable_for_learning": True,
                     "learning_status": "INCLUDED",
+                    "approved_by": "test",
+                    "approved_at": "2026-01-01 10:00:00",
+                    "file_sha256": f"hash_{name}",
                 }
             )
             assert err is None
