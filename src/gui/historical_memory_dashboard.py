@@ -56,6 +56,7 @@ from src.core.historical_pattern_builder import HistoricalPatternBuilder
 from src.core.database import get_db_path_as_string, open_db_folder
 from src.core.repositories import (
     append_budget_issue,
+    approve_budget_for_learning,
     clear_all_historical_analysis_data,
     delete_historical_budgets_by_ids,
     get_budget_enrichment,
@@ -1261,13 +1262,7 @@ class HistoricalMemoryDashboard(QDialog):
             if not self._can_be_included_in_memory(data):
                 continue
             budget_id = int(data.get("id") or 0)
-            err = set_historical_budget_learning_status(
-                budget_id,
-                "INCLUDED",
-                True,
-                decision_source="MANUAL",
-                decision_reason="Incluido manualmente desde panel de memoria.",
-            )
+            err = approve_budget_for_learning(budget_id, self._current_user())
             if err:
                 QMessageBox.warning(self, "Incluir en memoria", err)
                 continue
@@ -1287,6 +1282,13 @@ class HistoricalMemoryDashboard(QDialog):
             QMessageBox.information(self, "Incluir en memoria", f"Presupuestos incluidos: {changed}")
         else:
             QMessageBox.information(self, "Incluir en memoria", "No hay presupuestos seleccionados aptos para incluir.")
+
+    @staticmethod
+    def _current_user() -> str:
+        try:
+            return os.getlogin()
+        except OSError:
+            return "usuario"
 
     def _exclude_selected(self):
         changed = 0

@@ -86,6 +86,18 @@ def _safe_json_dumps(data: Dict) -> str:
         return "{}"
 
 
+def _same_content_version(existing: Dict, budget_payload: Dict) -> bool:
+    """True solo si hay un hash de contenido conocido y coincide.
+
+    Es la única prueba de que una aprobación manual sigue aplicando a la
+    versión revisada: sin hash comparable no se puede afirmar que el contenido
+    sea el mismo, así que la aprobación no se hereda.
+    """
+    existing_hash = (existing.get("file_sha256") or "").strip()
+    new_hash = (budget_payload.get("file_sha256") or "").strip()
+    return bool(existing_hash) and existing_hash == new_hash
+
+
 def _apply_existing_manual_learning_decision(budget_payload: Dict, existing: Optional[Dict]) -> None:
     """Conserva decisiones manuales cuando el nuevo análisis sigue siendo apto."""
     if not existing:
@@ -105,12 +117,21 @@ def _apply_existing_manual_learning_decision(budget_payload: Dict, existing: Opt
     if previous_status != "INCLUDED":
         return
 
+    if not _same_content_version(existing, budget_payload):
+        # El contenido revisado cambió (o no hay hash comparable): la
+        # aprobación deja de aplicar y el payload se queda en PENDING_REVIEW.
+        budget_payload["approved_at"] = ""
+        budget_payload["approved_by"] = ""
+        return
+
     if budget_payload.get("analysis_status") in (AnalysisStatus.VALID, AnalysisStatus.VALID_WITH_WARNINGS):
         budget_payload["usable_for_learning"] = True
         budget_payload["learning_status"] = "INCLUDED"
         budget_payload["learning_status_source"] = "MANUAL"
         budget_payload["learning_decision_reason"] = existing.get("learning_decision_reason") or "Decision manual preservada tras reanalisis."
         budget_payload["learning_decision_at"] = existing.get("learning_decision_at") or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        budget_payload["approved_by"] = existing.get("approved_by") or ""
+        budget_payload["approved_at"] = existing.get("approved_at") or ""
 
 
 class HistoricalBudgetAnalyzer:
