@@ -77,14 +77,17 @@ class BudgetOrchestrator:
             {
                 'partidas': List[Dict],   # Cada partida tiene campo 'source'
                 'source': str,            # 'orquestado'|'historico'|'ia'|'error'
-                'error': str | None,
+                'status': str,            # 'ok'|'partial'|'error'
+                'error': str | None,      # error de la IA, aunque haya partidas
                 'cobertura': {
                     'modulos_historico': List[str],
                     'modulos_ia': List[str],
+                    'modulos_pendientes': List[str],
                     'partidas_historicas': int,
                     'partidas_ia': int,
                     'historical_confidence': float,
                     'failure_reason': str,
+                    'error_ia': str | None,
                 }
             }
         """
@@ -95,15 +98,18 @@ class BudgetOrchestrator:
             return {
                 "partidas": [],
                 "source": "error",
+                "status": "error",
                 "error": f"Error inesperado al generar el presupuesto: {exc}",
                 "evidence_report": [],
                 "cobertura": {
                     "modulos_historico": [],
                     "modulos_ia": [],
+                    "modulos_pendientes": [],
                     "partidas_historicas": 0,
                     "partidas_ia": 0,
                     "historical_confidence": 0.0,
                     "failure_reason": "UNEXPECTED_ERROR",
+                    "error_ia": None,
                 },
             }
 
@@ -175,30 +181,123 @@ class BudgetOrchestrator:
 
         # Paso 4 — merge
         todas_partidas = partidas_historicas + partidas_ia
+        source = self._source_label(len(partidas_historicas), len(partidas_ia))
 
-        if partidas_historicas and partidas_ia:
-            source = "orquestado"
-        elif partidas_historicas:
-            source = "historico"
-        elif partidas_ia:
-            source = "ia"
+        # Regla conservadora: el prompt de huecos no exige un campo 'module'
+        # por partida, así que no se puede atribuir con fiabilidad qué hueco
+        # resolvió cada partida IA. Se dan por pendientes todos los huecos si
+        # la llamada de huecos falló o no devolvió ninguna partida.
+        if modulos_gap and (error_ia or not partidas_ia):
+            modulos_pendientes = list(modulos_gap)
         else:
-            source = "error"
+            modulos_pendientes = []
+
+        if not todas_partidas:
+            status = "error"
+        elif modulos_pendientes or error_ia:
+            status = "partial"
+        else:
+            status = "ok"
 
         return {
             "partidas": todas_partidas,
             "source": source,
-            "error": error_ia if not todas_partidas else None,
+            "status": status,
+            "error": error_ia,
             "evidence_report": historical_result.get("evidence_report", []),
             "cobertura": {
                 "modulos_historico": modulos_cubiertos,
                 "modulos_ia": modulos_gap,
+                "modulos_pendientes": modulos_pendientes,
                 "partidas_historicas": len(partidas_historicas),
                 "partidas_ia": len(partidas_ia),
                 "historical_confidence": historical_result.get("confidence", 0.0),
                 "failure_reason": historical_result.get("failure_reason", "OK"),
+                "error_ia": error_ia,
             },
         }
+
+    def retry_pending(
+        self,
+        descripcion_libre: str,
+        previous_result: Dict,
+        datos_proyecto: Optional[Dict] = None,
+        plantilla: Optional[Dict] = None,
+    ) -> Dict:
+        """
+        Reintenta SOLO los módulos pendientes de un resultado parcial.
+
+        No vuelve a consultar el histórico: reenvía a la IA únicamente
+        `cobertura['modulos_pendientes']` y fusiona el resultado con las
+        partidas ya obtenidas, de modo que el reintento no puede duplicar la
+        fachada ni perder trabajo válido.
+        """
+        cobertura = dict(previous_result.get("cobertura") or {})
+        pendientes = list(cobertura.get("modulos_pendientes") or [])
+        if not pendientes:
+            return previous_result
+
+        modulos_historico = list(cobertura.get("modulos_historico") or [])
+        datos_proyecto = datos_proyecto or {}
+        tipo_obra = datos_proyecto.get("tipo_obra", "") or descripcion_libre[:80]
+
+        try:
+            ia_result = self._generator.generate_for_gap_modules(
+                tipo_obra=tipo_obra,
+                descripcion=descripcion_libre,
+                gap_modules=pendientes,
+                datos_proyecto=datos_proyecto,
+                # La IA debe seguir viendo la fachada como no repetible sin
+                # reconsultar el histórico: build_gap_prompt deriva los
+                # módulos ya cubiertos de detected_modules menos gap_modules.
+                historical_context={
+                    "detected_modules": [
+                        {"name": m} for m in modulos_historico + pendientes
+                    ]
+                },
+                plantilla=plantilla,
+            )
+            partidas_nuevas = ia_result.get("partidas", []) or []
+            error_ia = ia_result.get("error")
+            for p in partidas_nuevas:
+                p["source"] = "ai_completion"
+
+            resuelto = bool(partidas_nuevas) and not error_ia
+            cobertura["partidas_ia"] = (
+                int(cobertura.get("partidas_ia", 0) or 0) + len(partidas_nuevas)
+            )
+            cobertura["error_ia"] = error_ia
+            cobertura["modulos_pendientes"] = [] if resuelto else pendientes
+
+            resultado = dict(previous_result)
+            resultado["partidas"] = list(previous_result.get("partidas") or []) + partidas_nuevas
+            resultado["cobertura"] = cobertura
+            resultado["error"] = error_ia
+            resultado["source"] = self._source_label(
+                int(cobertura.get("partidas_historicas", 0) or 0),
+                cobertura["partidas_ia"],
+            )
+            resultado["status"] = "partial" if cobertura["modulos_pendientes"] else "ok"
+            return resultado
+        except Exception as exc:
+            logger.exception("Fallo inesperado reintentando los módulos pendientes")
+            # El reintento nunca puede devolver menos partidas de las recibidas.
+            fallido = dict(previous_result)
+            fallido["status"] = "partial"
+            fallido["error"] = f"Error inesperado al reintentar lo pendiente: {exc}"
+            cobertura["error_ia"] = fallido["error"]
+            fallido["cobertura"] = cobertura
+            return fallido
+
+    @staticmethod
+    def _source_label(n_historicas: int, n_ia: int) -> str:
+        if n_historicas and n_ia:
+            return "orquestado"
+        if n_historicas:
+            return "historico"
+        if n_ia:
+            return "ia"
+        return "error"
 
     def _split_coverage(
         self, historical_result: Dict
