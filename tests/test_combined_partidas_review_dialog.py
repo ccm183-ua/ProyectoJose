@@ -181,3 +181,35 @@ def test_edited_price_reaches_excel_and_survives_reread(qapp, temp_dir, monkeypa
     assert len(partidas) == 1
     assert partidas[0]["precio"] == pytest.approx(37.50)
     assert partidas[0]["importe"] == pytest.approx(75.00)
+
+
+def test_summary_warns_about_pending_modules_instead_of_claiming_full_historical_coverage(qapp):
+    """H03 (S1-C): con 1 histórica y 0 IA, el resumen no puede afirmar que
+    todas las partidas son históricas sin nombrar el hueco pendiente."""
+    hist = [
+        {
+            "titulo": "Reparacion fachada",
+            "unidad": "m2",
+            "cantidad": 1,
+            "precio_unitario": 50.0,
+            "source": "historical_exact",
+        }
+    ]
+    dlg = CombinedPartidasReviewDialog(
+        None,
+        historical_partidas=hist,
+        ai_partidas=[],
+        cobertura={
+            "partidas_historicas": 1,
+            "partidas_ia": 0,
+            "modulos_pendientes": ["sustitucion_bajante"],
+            "error_ia": "Timeout",
+        },
+    )
+
+    text = dlg._coverage_summary_text()
+
+    assert "Resultado parcial" in text
+    assert "sustitucion bajante" in text
+    assert "Timeout" in text
+    assert "Todas las partidas (1) provienen de referencias históricas." != text
