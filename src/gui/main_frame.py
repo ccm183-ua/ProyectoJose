@@ -524,7 +524,8 @@ class MainFrame(QMainWindow):
             f"Patrones (precio evidenciado): {summary['patrones']}\n"
             f"Repertorio: {summary['repertorio']}\n"
             f"Modulos de vocabulario: {summary['vocabulario_modulos']}\n"
-            f"Partidas del ejemplo de estructura: {summary['estructura_partidas']}",
+            f"Partidas del ejemplo de estructura: {summary['estructura_partidas']}\n\n"
+            "El paquete no esta anonimizado: revisa LIMITES.md antes de compartirlo.",
         )
 
     def _buscar_comunidad_para_presupuesto(self, nombre_cliente: str, direccion: str = "") -> dict | None:

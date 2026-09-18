@@ -6,10 +6,17 @@ redactar borradores de presupuesto: patrones con precio evidenciado,
 repertorio de conceptos reales, vocabulario cerrado y un presupuesto de
 ejemplo. Solo lectura sobre la base de datos (modo ro, sin migraciones).
 
-scrub_text() es el filtro de datos personales: elimina direcciones,
-referencias a "Comunidad de Propietarios" y CIF/NIF del texto libre de
-partida antes de que salga de la maquina, sin tocar conceptos legitimos
-que contengan numeros o palabras parecidas (medidas, codigos de material).
+scrub_text() es un minimizador best-effort del texto libre de partida: borra
+un conjunto estrecho de patrones (direcciones con "C/"/"Avda.", "Comunidad
+de Propietarios", CIF/NIF y correos) sin tocar conceptos legitimos que
+contengan numeros o palabras parecidas (medidas, codigos de material).
+
+NO es anonimizacion y no se debe presentar como tal: deja fuera formatos de
+direccion o identificadores que no reconoce. El paquete exportado incluye un
+LIMITES.md con lo que no garantiza, para que se revise a mano antes de
+compartirlo. La minimizacion de campos (no exportar cliente, administracion,
+contacto, CIF, direccion postal ni nombre del Excel) reduce el riesgo, pero no
+sustituye esa revision.
 """
 
 import csv
@@ -42,10 +49,46 @@ _RE_COMUNIDAD = re.compile(
 # CIF/NIF: letra + 8 digitos, u 8 digitos + letra.
 _RE_CIF_NIF = re.compile(r"\b[A-Za-z]\d{8}\b|\b\d{8}[A-Za-z]\b")
 
+# Correo electronico. Nunca es parte de un concepto tecnico facturable, asi
+# que eliminarlo no destruye informacion util.
+_RE_EMAIL = re.compile(r"\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b")
+
+
+LIMITES_FILENAME = "LIMITES.md"
+
+_LIMITES_MD = """# Limites del paquete de contexto
+
+Este paquete **no esta anonimizado**. Se genera con una minimizacion
+best-effort del texto libre (direcciones con `C/`/`Avda.`, "Comunidad de
+Propietarios", CIF/NIF y correos), pero ese filtro es deliberadamente
+estrecho: **no garantiza** que desaparezcan todos los identificadores.
+
+Revisa el contenido a mano antes de compartirlo o subirlo a un proveedor.
+
+## Que incluye
+
+- `patrones.csv`: conceptos con precio evidenciado.
+- `repertorio.csv`: conceptos y precios historicos incluidos en memoria.
+- `vocabulario.md`: listas cerradas de modulos, acciones, elementos y unidades.
+- `estructura.md`: orden y agrupacion de un presupuesto real.
+
+## Que NO se exporta (minimizacion de campos)
+
+- Cliente/comunidad, administracion, CIF, telefono y correo de contacto.
+- Direccion postal de cabecera, localidad y nombre/ruta del fichero Excel.
+- Cualquier importe o dato que no provenga de partidas incluidas en memoria.
+
+## Que puede quedar en el texto
+
+- Nombres propios, cargos y direcciones con formatos no reconocidos.
+- Identificadores embebidos en conceptos tecnicos (p. ej. numeros de via).
+"""
+
 
 def scrub_text(text: str) -> Tuple[str, List[str]]:
-    """Elimina datos personales de un texto libre de partida.
+    """Minimiza best-effort datos personales de un texto libre de partida.
 
+    NO es anonimizacion: solo retira los patrones estrechos que reconoce.
     Devuelve el texto limpio y la lista de razones por las que se toco
     (vacia si no se elimino nada), para poder auditar el resultado en vez
     de confiar a ciegas en que el filtro acerto.
@@ -64,6 +107,10 @@ def scrub_text(text: str) -> Tuple[str, List[str]]:
     if _RE_CIF_NIF.search(cleaned):
         cleaned = _RE_CIF_NIF.sub("", cleaned)
         reasons.append("cif_nif")
+
+    if _RE_EMAIL.search(cleaned):
+        cleaned = _RE_EMAIL.sub("", cleaned)
+        reasons.append("email")
 
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
     return cleaned, reasons
@@ -231,6 +278,14 @@ def write_estructura_md(conn: sqlite3.Connection, path: Path) -> int:
     return len(partidas)
 
 
+def write_limites_md(path: Path) -> int:
+    """Declara en el propio paquete que no es una salida anonimizada y que
+    hay que revisarlo antes de compartirlo. Sin este fichero, el nombre de la
+    carpeta podria leerse como una garantia de anonimizacion."""
+    path.write_text(_LIMITES_MD, encoding="utf-8")
+    return 1
+
+
 def export_context_pack(db_path: str, out_dir: str) -> Dict[str, int]:
     """Exporta el paquete de contexto completo. Solo lectura: abre la BD en
     modo ro y no llama a init_schema ni a ninguna migracion."""
@@ -246,9 +301,12 @@ def export_context_pack(db_path: str, out_dir: str) -> Dict[str, int]:
     finally:
         conn.close()
 
+    write_limites_md(out / LIMITES_FILENAME)
+
     return {
         "patrones": n_patrones,
         "repertorio": n_repertorio,
         "vocabulario_modulos": n_modulos,
         "estructura_partidas": n_estructura,
+        "limites": 1,
     }

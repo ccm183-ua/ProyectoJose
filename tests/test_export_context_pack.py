@@ -48,6 +48,11 @@ class TestScrubTextRemovesPersonalData:
         assert "B12345678" not in text
         assert "cif_nif" in reasons
 
+    def test_removes_email(self):
+        text, reasons = scrub_text("Pintura contacto prueba@example.invalid")
+        assert "prueba@example.invalid" not in text
+        assert "email" in reasons
+
     def test_no_reasons_when_nothing_removed(self):
         text, reasons = scrub_text("Alicatado de cocina")
         assert text == "Alicatado de cocina"
@@ -255,6 +260,19 @@ class TestExportContextPack:
         assert summary_a == summary_b
         for name in ("patrones.csv", "repertorio.csv", "vocabulario.md", "estructura.md"):
             assert (out_a / name).read_bytes() == (out_b / name).read_bytes()
+
+    def test_limits_file_declares_no_anonymization_and_review(self, tmp_path, monkeypatch):
+        """H07: el paquete declara sus limites en vez de presentarse como
+        anonimizado; el filtro por regex no es una garantia."""
+        db_path = _seed_full_pack(tmp_path, monkeypatch)
+        out_dir = tmp_path / "pack"
+        summary = export_context_pack(str(db_path), str(out_dir))
+
+        assert summary["limites"] == 1
+        text = (out_dir / "LIMITES.md").read_text(encoding="utf-8").lower()
+        assert "no esta anonimizado" in text
+        assert "no garantiza" in text
+        assert "revisa" in text
 
 
 class TestAutomaticExportTrigger:
