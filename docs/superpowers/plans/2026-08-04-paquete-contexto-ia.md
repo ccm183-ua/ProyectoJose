@@ -2,7 +2,7 @@
 
 **Goal:** Que la aplicación exporte automáticamente, a una carpeta sincronizada, un paquete de contexto con el que Claude (aplicación de consumo, con una skill personalizada) pueda redactar borradores de presupuesto **sin poder inventar precios, módulos, unidades ni cantidades**.
 
-**Architecture:** Un exportador determinista y de solo lectura vuelca cuatro ficheros desde SQLite. El paquete exportado **es** el vocabulario permitido: exportador y (más adelante) validador leen la misma fuente, así que no pueden desincronizarse. Claude queda fuera del sistema; el único contrato es el esquema del fichero de salida. La importación de ese fichero queda **fuera del alcance de este plan** — se aborda solo si la puerta de evaluación pasa.
+**Architecture:** Un exportador determinista y de solo lectura vuelca cinco ficheros desde SQLite. El paquete exportado **es** el vocabulario permitido: exportador y (más adelante) validador leen la misma fuente, así que no pueden desincronizarse. Claude queda fuera del sistema; el único contrato es el esquema del fichero de salida. La importación de ese fichero queda **fuera del alcance de este plan** — se aborda solo si la puerta de evaluación pasa.
 
 **Tech Stack:** Python 3.11, SQLite, PySide6, `pytest`. Sin dependencias nuevas.
 
@@ -81,7 +81,7 @@ Ejecutar contra una copia de solo lectura y volcar solo las líneas que el filtr
 
 ---
 
-## Task 2: Exportar los cuatro ficheros
+## Task 2: Exportar los cinco ficheros
 
 **Files:**
 - Modify: `scripts/export_context_pack.py`
@@ -102,7 +102,7 @@ Columnas: `concepto`, `unidad`, `precio_unitario`, `tipo_linea`, `modulo_princip
 
 Módulos de ejecución (`execution_module`), acciones y elementos del vocabulario cerrado (`historical_partida_features`), unidades observadas, y el criterio de línea atómica frente a compuesta. Este fichero es la fuente de verdad de lo que el validador aceptará más adelante.
 
-- [ ] **Step 4: `estructura.md` — un presupuesto real anonimizado**
+- [ ] **Step 4: `estructura.md` — un presupuesto real minimizado, no anonimizado**
 
 Un `historical_budget` `INCLUDED` representativo (preferir uno con varias partidas, no de una línea), con sus partidas en orden, pasado por el filtro. Muestra el orden de ejecución de obra y cómo se agrupa.
 
@@ -196,7 +196,7 @@ Módulo o unidad fuera de lista → rechazo de esa partida, con el motivo. Falta
 
 - [ ] **Step 1: Escribir la skill contra el esquema**
 
-Debe cubrir: cómo leer los cuatro ficheros y qué papel tiene cada uno; que el repertorio sirve para saber qué partidas existen y cómo se redactan, **no** para fijar precios; que preguntar por una medida que falta es preferible a estimarla; que una partida sin precedente se marca `nueva="true"` siempre; y el esquema exacto de salida.
+Debe cubrir: cómo leer los cinco ficheros y qué papel tiene cada uno; que el repertorio sirve para saber qué partidas existen y cómo se redactan, **no** para fijar precios; que preguntar por una medida que falta es preferible a estimarla; que una partida sin precedente se marca `nueva="true"` siempre; y el esquema exacto de salida.
 
 Redactar en positivo y sin gritar: describir el comportamiento correcto en vez de acumular prohibiciones en mayúsculas. Las prohibiciones de verdad ya están en el esquema.
 
