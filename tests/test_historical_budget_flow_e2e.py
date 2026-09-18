@@ -56,6 +56,7 @@ def _import_and_approve_atomic_facade_budget(tmp_path) -> int:
             "analysis_status": "VALID",
             "learning_status": "PENDING_REVIEW",
             "source_kind": "external_excel",
+            "file_sha256": "hash_fachada",
         }
     )
     assert err is None

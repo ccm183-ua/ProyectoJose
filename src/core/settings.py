@@ -11,7 +11,7 @@ import json
 import os
 import secrets
 import tempfile
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 
 # Variables de entorno para API keys. Se mantienen fuera de Git.
@@ -59,6 +59,7 @@ class Settings:
     PATH_RELATION_FILE = "ruta_relacion_presupuestos"
     PATH_DATABASE = "ruta_base_datos"
     PATH_HISTORICAL_FOLDER = "ruta_analisis_historico"
+    PATH_HISTORICAL_FOLDERS = "rutas_analisis_historico"
     PATH_CONTEXT_PACK = "ruta_paquete_contexto_ia"
 
     _ALL_PATH_KEYS = (
@@ -202,6 +203,35 @@ class Settings:
             return
         config = self._load_config()
         config[key] = path.strip() if path else ""
+        self._save_config(config)
+
+    def get_historical_folders(self) -> List[str]:
+        """Conjunto completo de carpetas configuradas para análisis histórico.
+
+        Si aún no existe la lista (configuración anterior a este contrato),
+        cae a la única carpeta guardada en PATH_HISTORICAL_FOLDER.
+        """
+        config = self._load_config()
+        folders = config.get(self.PATH_HISTORICAL_FOLDERS)
+        if isinstance(folders, list):
+            cleaned = [str(folder).strip() for folder in folders if str(folder).strip()]
+            if cleaned:
+                return cleaned
+        legacy = self.get_default_path(self.PATH_HISTORICAL_FOLDER)
+        return [legacy] if legacy else []
+
+    def set_historical_folders(self, folders: List[str]) -> None:
+        """Guarda el conjunto completo de carpetas, sin duplicados y en orden."""
+        seen = set()
+        cleaned: List[str] = []
+        for folder in folders or []:
+            path = str(folder or "").strip()
+            if path and path not in seen:
+                seen.add(path)
+                cleaned.append(path)
+        config = self._load_config()
+        config[self.PATH_HISTORICAL_FOLDERS] = cleaned
+        config[self.PATH_HISTORICAL_FOLDER] = cleaned[-1] if cleaned else ""
         self._save_config(config)
 
     def get_all_default_paths(self) -> Dict[str, Optional[str]]:

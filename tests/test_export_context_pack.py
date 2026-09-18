@@ -13,8 +13,11 @@ repertorio, vocabulario, estructura) desde una base de solo lectura.
 from datetime import datetime
 from pathlib import Path
 
+import pytest
+
 from scripts.export_context_pack import export_context_pack, scrub_text
 from scripts.rebuild_historical_patterns import sha256_file
+from src.core import database
 from src.core.historical_budget_analyzer import HistoricalBudgetAnalyzer
 from src.core.historical_pattern_builder import HistoricalPatternBuilder
 from src.core.settings import Settings
@@ -47,6 +50,11 @@ class TestScrubTextRemovesPersonalData:
         text, reasons = scrub_text("Obra para cliente B12345678 impermeabilizacion")
         assert "B12345678" not in text
         assert "cif_nif" in reasons
+
+    def test_removes_email(self):
+        text, reasons = scrub_text("Pintura contacto prueba@example.invalid")
+        assert "prueba@example.invalid" not in text
+        assert "email" in reasons
 
     def test_no_reasons_when_nothing_removed(self):
         text, reasons = scrub_text("Alicatado de cocina")
@@ -120,6 +128,9 @@ def _seed_full_pack(tmp_path, monkeypatch):
                 "analysis_status": "VALID",
                 "usable_for_learning": True,
                 "learning_status": "INCLUDED",
+                "approved_by": "test",
+                "approved_at": "2026-01-01 10:00:00",
+                "file_sha256": f"hash_{nombre}",
             }
         )
         assert berr is None
@@ -256,6 +267,115 @@ class TestExportContextPack:
         for name in ("patrones.csv", "repertorio.csv", "vocabulario.md", "estructura.md"):
             assert (out_a / name).read_bytes() == (out_b / name).read_bytes()
 
+    def test_limits_file_declares_no_anonymization_and_review(self, tmp_path, monkeypatch):
+        """H07: el paquete declara sus limites en vez de presentarse como
+        anonimizado; el filtro por regex no es una garantia."""
+        db_path = _seed_full_pack(tmp_path, monkeypatch)
+        out_dir = tmp_path / "pack"
+        summary = export_context_pack(str(db_path), str(out_dir))
+
+        assert summary["limites"] == 1
+        text = (out_dir / "LIMITES.md").read_text(encoding="utf-8").lower()
+        assert "no esta anonimizado" in text
+        assert "no garantiza" in text
+        assert "revisa" in text
+
+    def test_failure_while_rendering_keeps_previous_pack_intact(self, tmp_path, monkeypatch):
+        """H09: si la publicacion falla a mitad, la version anterior sigue
+        completa e identificable; no se mezcla una version nueva con otra
+        antigua."""
+        import scripts.export_context_pack as export_mod
+
+        db_path = _seed_full_pack(tmp_path, monkeypatch)
+        out_dir = tmp_path / "pack"
+        export_context_pack(str(db_path), str(out_dir))
+
+        names = ("patrones.csv", "repertorio.csv", "vocabulario.md", "estructura.md", "LIMITES.md")
+        before = {name: (out_dir / name).read_bytes() for name in names}
+
+        def _boom(_conn):
+            raise RuntimeError("fallo al renderizar repertorio")
+
+        monkeypatch.setattr(export_mod, "_render_repertorio_csv", _boom)
+
+        with pytest.raises(RuntimeError):
+            export_context_pack(str(db_path), str(out_dir))
+
+        after = {name: (out_dir / name).read_bytes() for name in names}
+        assert after == before
+        assert not list(out_dir.glob(".*.tmp")), "no deben quedar temporales"
+
+    def test_failure_while_publishing_rolls_back_already_replaced_files(self, tmp_path, monkeypatch):
+        """H09: si falla el renombrado del segundo fichero, los ya
+        reemplazados vuelven a la generacion anterior; no puede quedar una
+        mezcla de paquete nuevo y viejo."""
+        import scripts.export_context_pack as export_mod
+
+        db_path = _seed_full_pack(tmp_path, monkeypatch)
+        out_dir = tmp_path / "pack"
+        export_context_pack(str(db_path), str(out_dir))
+
+        names = ("patrones.csv", "repertorio.csv", "vocabulario.md", "estructura.md", "LIMITES.md")
+        before = {name: (out_dir / name).read_bytes() for name in names}
+
+        # Nueva generacion con contenido distinto para que la mezcla se note.
+        with database.get_connection() as conn:
+            budget_id = conn.execute(
+                "SELECT id FROM historical_budget WHERE nombre_proyecto='obra_a'"
+            ).fetchone()[0]
+        module_id, module_err = get_or_create_execution_module("fachada")
+        assert module_err is None
+        pid, perr = insert_historical_partida(
+            budget_id,
+            {
+                "orden": 99,
+                "concepto_original": "Impermeabilizacion de cubierta con tela asfaltica",
+                "concepto_normalizado": "impermeabilizacion de cubierta con tela asfaltica",
+                "unidad": "m2",
+                "precio_unitario": 99.0,
+                "cantidad": 1,
+                "total_linea": 99.0,
+            },
+        )
+        assert perr is None
+        assert assign_partida_module(pid, module_id, 0.9, "rules") is None
+        assert upsert_partida_features(
+            pid,
+            {
+                "action": "repair",
+                "element": "facade",
+                "system": None,
+                "unit": "m2",
+                "material": None,
+                "dimensions": (),
+                "conditions": (),
+                "line_kind": "atomic",
+                "primary_module_id": "fachada",
+                "secondary_module_ids": (),
+                "confidence": 0.9,
+                "reasons": (),
+                "classifier_version": "test",
+            },
+        ) is None
+        HistoricalPatternBuilder().rebuild_patterns()
+
+        real_replace = export_mod.os.replace
+
+        def _fail_on_repertorio(src, dst):
+            if Path(src).name == ".repertorio.csv.tmp":
+                raise PermissionError("sin permiso para reemplazar repertorio")
+            return real_replace(src, dst)
+
+        monkeypatch.setattr(export_mod.os, "replace", _fail_on_repertorio)
+
+        with pytest.raises(PermissionError):
+            export_context_pack(str(db_path), str(out_dir))
+
+        after = {name: (out_dir / name).read_bytes() for name in names}
+        assert after == before
+        assert not list(out_dir.glob(".*.tmp")), "no deben quedar temporales"
+        assert not list(out_dir.glob(".*.bak")), "no deben quedar copias de seguridad"
+
 
 class TestAutomaticExportTrigger:
     """Tarea 3: analyze_files() debe exportar el paquete tras reconstruir
@@ -303,4 +423,5 @@ class TestAutomaticExportTrigger:
         result = HistoricalBudgetAnalyzer().analyze_files([], source_folder=str(tmp_path))
 
         assert result["errores"] >= 1
+        assert result["publication_error"], "el fallo de publicacion debe quedar visible"
         assert "run_id" in result

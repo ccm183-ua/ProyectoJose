@@ -66,6 +66,9 @@ def test_diagnostics_detect_contaminated_memory_and_unknown_issue(tmp_path, monk
             "analysis_status": "EXCLUDED_INCOMPLETE_DATA",
             "usable_for_learning": True,
             "learning_status": "INCLUDED",
+            "approved_by": "test",
+            "approved_at": "2026-01-01 10:00:00",
+            "file_sha256": "hash_bad.xlsx",
             "learning_status_source": "MANUAL",
             "total": 0.0,
         }

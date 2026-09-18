@@ -15,6 +15,37 @@ def _now_str() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
+_UNPROVEN_INCLUSION_ERROR = (
+    "La inclusión en memoria solo puede hacerse con "
+    "approve_budget_for_learning, que registra quién aprueba "
+    "y cuándo."
+)
+
+
+def _reusable_inclusion_without_proof(
+    *,
+    learning_status: Optional[str] = None,
+    usable_for_learning: object = False,
+    approved_by: Optional[str] = None,
+    approved_at: Optional[str] = None,
+    file_sha256: Optional[str] = None,
+) -> bool:
+    """True si el estado pedido es inclusión reutilizable y le falta prueba.
+
+    H06: una fila solo entra en memoria reutilizable (`INCLUDED` o
+    `usable_for_learning`) con actor, fecha y hash de contenido revisado no
+    vacíos. Se comprueba en la frontera de persistencia para que ningún
+    escritor exportado pueda saltarse la regla.
+    """
+    if (learning_status or "").strip().upper() != "INCLUDED" and not usable_for_learning:
+        return False
+    return not (
+        (approved_by or "").strip()
+        and (approved_at or "").strip()
+        and (file_sha256 or "").strip()
+    )
+
+
 def create_analysis_run(carpeta_origen: str) -> Tuple[Optional[int], Optional[str]]:
     with database.get_connection() as conn:
         try:
@@ -201,6 +232,14 @@ def upsert_historical_budget(data: Dict) -> Tuple[Optional[int], Optional[str]]:
     fecha_mod = (data.get("fecha_modificacion_excel") or "").strip()
     if not ruta or not fecha_mod:
         return (None, "ruta_excel y fecha_modificacion_excel son obligatorios.")
+    if _reusable_inclusion_without_proof(
+        learning_status=data.get("learning_status"),
+        usable_for_learning=data.get("usable_for_learning"),
+        approved_by=data.get("approved_by"),
+        approved_at=data.get("approved_at"),
+        file_sha256=data.get("file_sha256"),
+    ):
+        return (None, _UNPROVEN_INCLUSION_ERROR)
     with database.get_connection() as conn:
         try:
             conn.execute(
@@ -846,6 +885,13 @@ def set_historical_budget_manual_status(
     analysis_status: str,
     usable_for_learning: bool,
 ) -> Optional[str]:
+    """Escritor manual de estado técnico: no puede conceder memoria reutilizable.
+
+    No recibe actor, fecha ni hash de contenido, así que no tiene forma de
+    sellar una aprobación; incluir exige `approve_budget_for_learning`.
+    """
+    if _reusable_inclusion_without_proof(usable_for_learning=usable_for_learning):
+        return _UNPROVEN_INCLUSION_ERROR
     with database.get_connection() as conn:
         try:
             conn.execute(
@@ -875,24 +921,20 @@ def set_historical_budget_learning_status(
     decision_source: str = "MANUAL",
     decision_reason: str = "",
 ) -> Optional[str]:
+    """Escritor genérico de estado de aprendizaje: solo puede excluir.
+
+    La inclusión en memoria reutilizable tiene un único camino legítimo,
+    `approve_budget_for_learning`, que sella actor, fecha y contenido
+    revisado. Aceptar aquí `INCLUDED`/`usable_for_learning=True` permitiría
+    persistir una inclusión sin esa prueba (H06).
+    """
+    target_status = (learning_status or "").strip().upper()
+    if _reusable_inclusion_without_proof(
+        learning_status=target_status, usable_for_learning=usable_for_learning
+    ):
+        return _UNPROVEN_INCLUSION_ERROR
     with database.get_connection() as conn:
         try:
-            target_status = (learning_status or "").strip().upper()
-            wants_learning = target_status == "INCLUDED" or bool(usable_for_learning)
-            if wants_learning:
-                cur = conn.execute(
-                    "SELECT analysis_status FROM historical_budget WHERE id=?",
-                    (historical_budget_id,),
-                )
-                row = cur.fetchone()
-                if not row:
-                    return "No se encontro el presupuesto historico indicado."
-                analysis_status = (row[0] or "").strip().upper()
-                if analysis_status not in ("VALID", "VALID_WITH_WARNINGS"):
-                    return (
-                        "No se puede incluir en memoria: el estado tecnico del "
-                        f"presupuesto es {analysis_status or 'desconocido'}."
-                    )
             conn.execute(
                 """UPDATE historical_budget
                    SET learning_status=?,
@@ -940,7 +982,9 @@ def approve_budget_for_learning(historical_budget_id: int, approved_by: str) -> 
 
     Actualiza learning_status/usable_for_learning/approved_at/approved_by en
     una única transacción: si algo falla, no queda un estado a medias con
-    solo alguno de los cuatro campos actualizado.
+    solo alguno de los cuatro campos actualizado. Exige que la fila ya tenga
+    `file_sha256`: la aprobación queda ligada a la versión de contenido
+    revisada, no a un presupuesto sin hash comparable.
     """
     approved_by_clean = (approved_by or "").strip()
     if not approved_by_clean:
@@ -948,7 +992,7 @@ def approve_budget_for_learning(historical_budget_id: int, approved_by: str) -> 
     with database.get_connection() as conn:
         try:
             row = conn.execute(
-                "SELECT analysis_status FROM historical_budget WHERE id=?",
+                "SELECT analysis_status, file_sha256 FROM historical_budget WHERE id=?",
                 (historical_budget_id,),
             ).fetchone()
             if not row:
@@ -958,6 +1002,11 @@ def approve_budget_for_learning(historical_budget_id: int, approved_by: str) -> 
                 return (
                     "No se puede aprobar para memoria: el estado técnico del "
                     f"presupuesto es {analysis_status or 'desconocido'}."
+                )
+            if not (row[1] or "").strip():
+                return (
+                    "No se puede aprobar para memoria: el presupuesto no tiene "
+                    "hash de contenido revisado."
                 )
             now = _now_str()
             conn.execute(

@@ -27,6 +27,9 @@ def _seed_historical_budget(tmp_path, nombre, learning_status, analysis_status="
             "analysis_status": analysis_status,
             "usable_for_learning": usable_for_learning,
             "learning_status": learning_status,
+            "approved_by": "test",
+            "approved_at": "2026-01-01 10:00:00",
+            "file_sha256": f"hash_{nombre}",
         }
     )
     assert err is None
