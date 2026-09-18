@@ -9,7 +9,7 @@
 ## Global Constraints
 
 - El exportador **nunca** escribe en la base de datos. Conexión en modo `ro`, como `audit_historical_memory.py`.
-- Ningún fichero del paquete contiene datos de cliente: ni nombres de comunidad, ni direcciones, ni CIF, ni teléfonos.
+- El paquete **se minimiza best-effort, no se anonimiza**: `scrub_text` retira un conjunto estrecho de patrones y algunos campos nunca se exportan (cliente, administración, CIF, dirección postal, nombre del Excel), pero pueden quedar nombres propios, formatos de dirección no reconocidos o identificadores embebidos. El paquete incluye `LIMITES.md` con lo que no garantiza, y los cuatro ficheros de datos se revisan a mano antes de compartirlos.
 - Solo se exportan partidas de presupuestos con `learning_status='INCLUDED'` y `precio_unitario > 0`.
 - **El esquema de salida no tiene campo de precio.** La imposibilidad de que el modelo fije precios es estructural, no una instrucción del prompt.
 - El exportador es determinista: la misma base produce el mismo paquete, byte a byte (orden estable, sin marcas de tiempo dentro de los ficheros de datos).
@@ -20,7 +20,7 @@
 | Decisión | Valor |
 |---|---|
 | Quién fija los precios | La aplicación, cruzando contra evidencia histórica. Claude nunca. |
-| Contenido del paquete | Patrones evidenciados + repertorio completo + vocabulario + estructura de ejemplo |
+| Contenido del paquete | Patrones evidenciados + repertorio completo + vocabulario + estructura de ejemplo + `LIMITES.md` (límites de la minimización) |
 | Partidas fuera del repertorio | Permitidas, con marca obligatoria de "sin precedente histórico" |
 | Cantidades sin medida | Claude pregunta; si no hay dato, estado explícito `pendiente` |
 | Formato de intercambio | XML |
@@ -36,7 +36,7 @@
 
 ## Estructura de archivos
 
-- Crear: `scripts/export_context_pack.py` — exportador y filtro de datos personales.
+- Crear: `scripts/export_context_pack.py` — exportador y minimizador best-effort del texto de partida (no anonimización).
 - Crear: `docs/esquema-partidas-ia.md` — el contrato del fichero de salida.
 - Crear: `docs/skill-presupuestos/SKILL.md` — la skill para Claude.
 - Modificar: `src/core/settings.py` — nueva ruta por defecto del paquete.
@@ -106,7 +106,11 @@ Módulos de ejecución (`execution_module`), acciones y elementos del vocabulari
 
 Un `historical_budget` `INCLUDED` representativo (preferir uno con varias partidas, no de una línea), con sus partidas en orden, pasado por el filtro. Muestra el orden de ejecución de obra y cómo se agrupa.
 
-- [ ] **Step 5: Tests del exportador**
+- [ ] **Step 5: `LIMITES.md` — qué no garantiza el filtro**
+
+Documento corto que declara que la minimización es best-effort y no una anonimización: qué se elimina por campos y por patrones, qué puede quedar en el texto libre, y la obligación de revisar a mano los cuatro ficheros de datos antes de compartir el paquete.
+
+- [ ] **Step 6: Tests del exportador**
 
 ```python
 summary = export_context_pack(db_path, out_dir)
@@ -114,9 +118,10 @@ assert summary["patrones"] == 33
 assert summary["repertorio"] > 0
 # Determinismo: dos ejecuciones producen ficheros identicos
 assert hash_dir(out_dir_a) == hash_dir(out_dir_b)
-# Ningun fichero contiene datos de cliente
+# Minimizacion best-effort: nada de direcciones reconocibles y LIMITES.md lo declara
 for f in Path(out_dir).iterdir():
     assert not RE_DIRECCION.search(f.read_text(encoding="utf-8"))
+assert "no esta anonimizado" in (out_dir / "LIMITES.md").read_text(encoding="utf-8").lower()
 ```
 
 Los recuentos exactos se fijan contra una base sembrada por el test, no contra producción.
