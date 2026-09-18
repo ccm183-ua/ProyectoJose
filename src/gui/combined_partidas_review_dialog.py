@@ -44,6 +44,12 @@ class CombinedPartidasReviewDialog(QDialog):
         self._build_ui()
         self._populate()
 
+    def _is_partial(self) -> bool:
+        return bool(
+            self._cobertura.get("modulos_pendientes")
+            or self._cobertura.get("error_ia")
+        )
+
     def _coverage_summary_text(self) -> str:
         """Resume la cobertura del orquestador en uno de cuatro estados.
 
@@ -53,17 +59,30 @@ class CombinedPartidasReviewDialog(QDialog):
         n_hist = int(self._cobertura.get("partidas_historicas", 0) or 0)
         n_ia = int(self._cobertura.get("partidas_ia", 0) or 0)
         if n_hist and n_ia:
-            return (
+            base = (
                 f"Mezcla: {n_hist} de referencias históricas + {n_ia} estimadas por IA. "
                 "Revisa las estimadas antes de aceptar."
             )
-        if n_hist:
-            return f"Todas las partidas ({n_hist}) provienen de referencias históricas."
-        if n_ia:
-            return f"Todas las partidas ({n_ia}) son estimaciones de IA. Revísalas antes de aceptar."
-        failure_reason = self._cobertura.get("failure_reason", "")
-        sufijo = f" ({failure_reason})" if failure_reason and failure_reason != "OK" else ""
-        return f"Resultado incompleto: no se ha generado cobertura.{sufijo}"
+        elif n_hist:
+            base = f"Todas las partidas ({n_hist}) provienen de referencias históricas."
+        elif n_ia:
+            base = f"Todas las partidas ({n_ia}) son estimaciones de IA. Revísalas antes de aceptar."
+        else:
+            failure_reason = self._cobertura.get("failure_reason", "")
+            sufijo = f" ({failure_reason})" if failure_reason and failure_reason != "OK" else ""
+            base = f"Resultado incompleto: no se ha generado cobertura.{sufijo}"
+
+        if self._is_partial():
+            pendientes = ", ".join(
+                str(m).replace("_", " ").strip()
+                for m in (self._cobertura.get("modulos_pendientes") or [])
+            )
+            motivo = self._cobertura.get("error_ia") or "sin detalle"
+            return (
+                f"Resultado parcial: quedan módulos sin resolver ({pendientes or '—'}). "
+                f"Motivo: {motivo}. Se conservan las partidas ya obtenidas. {base}"
+            )
+        return base
 
     def _build_rows(self):
         # Fixes histórico evidenciado, Tarea 6: conserva el source real
@@ -100,7 +119,8 @@ class CombinedPartidasReviewDialog(QDialog):
         if self._cobertura:
             cobertura_lbl = QLabel(self._coverage_summary_text(), panel)
             cobertura_lbl.setWordWrap(True)
-            cobertura_lbl.setStyleSheet(f"color: {theme.TEXT_TERTIARY}; background: transparent;")
+            color = theme.WARNING if self._is_partial() else theme.TEXT_TERTIARY
+            cobertura_lbl.setStyleSheet(f"color: {color}; background: transparent;")
             lay.addWidget(cobertura_lbl)
         if self._merge_duplicates_note:
             dup = QLabel(self._merge_duplicates_note, panel)
