@@ -167,11 +167,8 @@ class AISettingsDialog(QDialog):
             self._clear_deepseek = False
             self._deepseek_status.setText("Clave DeepSeek: se guardará una nueva clave")
 
-    def _test_button(self, provider: str) -> QPushButton:
-        return self._btn_test_deepseek if provider == AI_PROVIDER_DEEPSEEK else self._btn_test_gemini
-
     def _set_test_button_busy(self, provider: str, busy: bool) -> None:
-        button = self._test_button(provider)
+        button = self._btn_test_deepseek if provider == AI_PROVIDER_DEEPSEEK else self._btn_test_gemini
         button.setText("Probando…" if busy else self._test_idle_text[provider])
         button.setEnabled(not busy)
 
