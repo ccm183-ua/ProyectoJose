@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import threading
-
-from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -21,16 +18,15 @@ from src.core.ai_clients import DeepSeekAIClient, GeminiAIClient, mask_secret
 from src.core.ai_settings_persistence import api_key_status_text, save_ai_settings_from_dialog
 from src.core.settings import AI_PROVIDER_DEEPSEEK, AI_PROVIDER_GEMINI, Settings
 from src.gui import theme
+from src.utils.helpers import run_in_background
 
 
 class AISettingsDialog(QDialog):
-    _test_done = Signal(str, bool, str)
-
     def __init__(self, parent=None, settings: Settings | None = None):
         super().__init__(parent)
         self.setWindowTitle("Configuración IA")
         self._settings = settings or Settings()
-        self._test_done.connect(self._on_test_done)
+        self._closed = False
         self._build_ui()
 
     def _build_ui(self):
@@ -112,6 +108,11 @@ class AISettingsDialog(QDialog):
         buttons.addWidget(self._btn_test_deepseek)
         buttons.addStretch()
 
+        self._test_idle_text = {
+            AI_PROVIDER_GEMINI: self._btn_test_gemini.text(),
+            AI_PROVIDER_DEEPSEEK: self._btn_test_deepseek.text(),
+        }
+
         btn_cancel = QPushButton("Cancelar", self)
         btn_cancel.clicked.connect(self.reject)
         buttons.addWidget(btn_cancel)
@@ -166,33 +167,43 @@ class AISettingsDialog(QDialog):
             self._clear_deepseek = False
             self._deepseek_status.setText("Clave DeepSeek: se guardará una nueva clave")
 
-    def _set_test_buttons_enabled(self, enabled: bool) -> None:
-        self._btn_test_gemini.setEnabled(enabled)
-        self._btn_test_deepseek.setEnabled(enabled)
+    def _set_test_button_busy(self, provider: str, busy: bool) -> None:
+        button = self._btn_test_deepseek if provider == AI_PROVIDER_DEEPSEEK else self._btn_test_gemini
+        button.setText("Probando…" if busy else self._test_idle_text[provider])
+        button.setEnabled(not busy)
 
     def _test_provider(self, provider: str) -> None:
-        self._set_test_buttons_enabled(False)
+        if provider == AI_PROVIDER_DEEPSEEK:
+            api_key = self._deepseek_key.text().strip() or self._settings.get_deepseek_api_key()
+            client = DeepSeekAIClient(api_key, self._deepseek_model.text().strip())
+            name = "DeepSeek"
+        else:
+            api_key = self._gemini_key.text().strip() or self._settings.get_gemini_api_key()
+            client = GeminiAIClient(api_key, self._gemini_model.text().strip())
+            name = "Gemini"
 
-        def run():
-            if provider == AI_PROVIDER_DEEPSEEK:
-                api_key = self._deepseek_key.text().strip() or self._settings.get_deepseek_api_key()
-                client = DeepSeekAIClient(api_key, self._deepseek_model.text().strip())
-                name = "DeepSeek"
-            else:
-                api_key = self._gemini_key.text().strip() or self._settings.get_gemini_api_key()
-                client = GeminiAIClient(api_key, self._gemini_model.text().strip())
-                name = "Gemini"
-            ok, message = client.test_connection()
-            self._test_done.emit(name, ok, message)
+        self._set_test_button_busy(provider, True)
+        run_in_background(
+            client.test_connection,
+            lambda ok_outer, payload: self._on_test_done(provider, name, ok_outer, payload),
+        )
 
-        threading.Thread(target=run, daemon=True).start()
-
-    def _on_test_done(self, name: str, ok: bool, message: str) -> None:
-        self._set_test_buttons_enabled(True)
+    def _on_test_done(self, provider: str, name: str, ok_outer: bool, payload) -> None:
+        if self._closed:
+            return
+        self._set_test_button_busy(provider, False)
+        if not ok_outer:
+            QMessageBox.warning(self, name, str(payload))
+            return
+        ok, message = payload
         if ok:
             QMessageBox.information(self, name, "Conexión correcta")
         else:
             QMessageBox.warning(self, name, message or "No se pudo probar la conexión.")
+
+    def done(self, result) -> None:
+        self._closed = True
+        super().done(result)
 
     def _save(self) -> None:
         save_ai_settings_from_dialog(

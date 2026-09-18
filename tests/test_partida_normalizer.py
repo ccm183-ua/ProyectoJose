@@ -170,3 +170,20 @@ def test_ai_description_from_alternate_key():
     }
     normalized = normalize_partida_for_excel(partida, source="ai_completion")
     assert "yeso" in normalized["descripcion"].lower() or "falso" in normalized["descripcion"].lower()
+
+
+def test_precio_unitario_editado_gana_sobre_el_alias_precio():
+    """Un dict ya normalizado y reeditado conserva el precio revisado, no el alias viejo."""
+    partida = {
+        "titulo": "REPARACION FACHADA.",
+        "descripcion": "d",
+        "unidad": "m2",
+        "cantidad": 2,
+        "precio": 10.0,
+        "precio_unitario": 37.5,
+        "source": "historical_exact",
+    }
+    normalized = normalize_partida_for_excel(partida)
+    assert normalized["precio"] == 37.5
+    assert normalized["precio_unitario"] == 37.5
+    assert normalized["total"] == 75.0
