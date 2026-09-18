@@ -20,6 +20,8 @@ sustituye esa revision.
 """
 
 import csv
+import io
+import os
 import re
 import sqlite3
 from pathlib import Path
@@ -129,7 +131,7 @@ def _fmt(value) -> str:
     return str(value)
 
 
-def write_patrones_csv(conn: sqlite3.Connection, path: Path) -> int:
+def _render_patrones_csv(conn: sqlite3.Connection) -> Tuple[str, int]:
     """Precio evidenciado: unica fuente que puede aportar precio al
     validador. Concepto scrubbed igual que en repertorio.csv y estructura.md
     porque suggested_partida_pattern.concepto_normalizado viene tal cual del
@@ -144,22 +146,22 @@ def write_patrones_csv(conn: sqlite3.Connection, path: Path) -> int:
            ORDER BY em.nombre, p.concepto_normalizado"""
     ).fetchall()
 
-    with open(path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f, lineterminator="\n")
+    buffer = io.StringIO()
+    writer = csv.writer(buffer, lineterminator="\n")
+    writer.writerow([
+        "concepto", "modulo", "unidad", "precio_mediana", "precio_min",
+        "precio_max", "frecuencia", "presupuestos_distintos", "calidad_evidencia",
+    ])
+    for concepto, modulo, unidad, mediana, pmin, pmax, freq, distinct, calidad in rows:
+        concepto, _ = scrub_text(concepto or "")
         writer.writerow([
-            "concepto", "modulo", "unidad", "precio_mediana", "precio_min",
-            "precio_max", "frecuencia", "presupuestos_distintos", "calidad_evidencia",
+            concepto, modulo, unidad or "", _fmt(mediana), _fmt(pmin),
+            _fmt(pmax), freq or 0, distinct or 0, calidad or "",
         ])
-        for concepto, modulo, unidad, mediana, pmin, pmax, freq, distinct, calidad in rows:
-            concepto, _ = scrub_text(concepto or "")
-            writer.writerow([
-                concepto, modulo, unidad or "", _fmt(mediana), _fmt(pmin),
-                _fmt(pmax), freq or 0, distinct or 0, calidad or "",
-            ])
-    return len(rows)
+    return buffer.getvalue(), len(rows)
 
 
-def write_repertorio_csv(conn: sqlite3.Connection, path: Path) -> int:
+def _render_repertorio_csv(conn: sqlite3.Connection) -> Tuple[str, int]:
     """Como se redacta y que se cobro de verdad: incluye lineas compuestas,
     a diferencia de patrones.csv. Referencia orientativa, nunca evidencia."""
     rows = conn.execute(
@@ -172,16 +174,16 @@ def write_repertorio_csv(conn: sqlite3.Connection, path: Path) -> int:
            ORDER BY hp.concepto_original, hp.unidad"""
     ).fetchall()
 
-    with open(path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f, lineterminator="\n")
-        writer.writerow(["concepto", "unidad", "precio_unitario", "tipo_linea", "modulo_principal"])
-        for concepto, unidad, precio, tipo_linea, modulo in rows:
-            concepto, _ = scrub_text(concepto or "")
-            writer.writerow([concepto, unidad or "", _fmt(precio), tipo_linea, modulo])
-    return len(rows)
+    buffer = io.StringIO()
+    writer = csv.writer(buffer, lineterminator="\n")
+    writer.writerow(["concepto", "unidad", "precio_unitario", "tipo_linea", "modulo_principal"])
+    for concepto, unidad, precio, tipo_linea, modulo in rows:
+        concepto, _ = scrub_text(concepto or "")
+        writer.writerow([concepto, unidad or "", _fmt(precio), tipo_linea, modulo])
+    return buffer.getvalue(), len(rows)
 
 
-def write_vocabulario_md(conn: sqlite3.Connection, path: Path) -> int:
+def _render_vocabulario_md(conn: sqlite3.Connection) -> Tuple[str, int]:
     """Las listas cerradas: fuente de verdad de lo que el futuro validador
     aceptara. Modulos y unidades vienen de la BD; acciones y elementos se
     importan del clasificador real (Fase 2) para no poder desincronizarse."""
@@ -235,11 +237,10 @@ def write_vocabulario_md(conn: sqlite3.Connection, path: Path) -> int:
     )
     lines.append("")
 
-    path.write_text("\n".join(lines), encoding="utf-8")
-    return len(modulos)
+    return "\n".join(lines), len(modulos)
 
 
-def write_estructura_md(conn: sqlite3.Connection, path: Path) -> int:
+def _render_estructura_md(conn: sqlite3.Connection) -> Tuple[str, int]:
     """Un presupuesto real INCLUDED, el mas representativo por numero de
     partidas, para mostrar orden y agrupacion de una obra real."""
     budget = conn.execute(
@@ -255,8 +256,7 @@ def write_estructura_md(conn: sqlite3.Connection, path: Path) -> int:
     lines = ["# Estructura de un presupuesto real", ""]
     if budget is None:
         lines.append("(sin presupuestos incluidos todavia)")
-        path.write_text("\n".join(lines), encoding="utf-8")
-        return 0
+        return "\n".join(lines), 0
 
     budget_id = budget[0]
     partidas = conn.execute(
@@ -274,39 +274,74 @@ def write_estructura_md(conn: sqlite3.Connection, path: Path) -> int:
         lines.append(f"| {orden} | {concepto} | {unidad or ''} | {_fmt(cantidad)} |")
     lines.append("")
 
-    path.write_text("\n".join(lines), encoding="utf-8")
-    return len(partidas)
+    return "\n".join(lines), len(partidas)
 
 
-def write_limites_md(path: Path) -> int:
+def _render_limites_md() -> Tuple[str, int]:
     """Declara en el propio paquete que no es una salida anonimizada y que
     hay que revisarlo antes de compartirlo. Sin este fichero, el nombre de la
     carpeta podria leerse como una garantia de anonimizacion."""
-    path.write_text(_LIMITES_MD, encoding="utf-8")
-    return 1
+    return _LIMITES_MD, 1
+
+
+def _publish_files(out: Path, contents: Dict[str, str]) -> None:
+    """Publica el paquete por staging: escribe cada fichero a un temporal de
+    la misma carpeta y solo despues lo mueve a su nombre final. Si algo falla
+    antes del primer movimiento, la version anterior queda intacta entera."""
+    staged: List[Tuple[Path, Path]] = []
+    try:
+        for name, content in contents.items():
+            tmp = out / f".{name}.tmp"
+            tmp.write_text(content, encoding="utf-8")
+            staged.append((tmp, out / name))
+        for tmp, target in staged:
+            os.replace(tmp, target)
+    except BaseException:
+        for tmp, _target in staged:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+        raise
 
 
 def export_context_pack(db_path: str, out_dir: str) -> Dict[str, int]:
     """Exporta el paquete de contexto completo. Solo lectura: abre la BD en
-    modo ro y no llama a init_schema ni a ninguna migracion."""
+    modo ro y no llama a init_schema ni a ninguna migracion.
+
+    Renderiza todos los ficheros desde una unica transaccion de lectura antes
+    de publicar ninguno: o se publica una version coherente entera, o la
+    version anterior permanece intacta."""
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
 
     conn = _connect_ro(db_path)
     try:
-        n_patrones = write_patrones_csv(conn, out / "patrones.csv")
-        n_repertorio = write_repertorio_csv(conn, out / "repertorio.csv")
-        n_modulos = write_vocabulario_md(conn, out / "vocabulario.md")
-        n_estructura = write_estructura_md(conn, out / "estructura.md")
+        conn.isolation_level = None
+        conn.execute("BEGIN")
+        rendered = {
+            "patrones.csv": _render_patrones_csv(conn),
+            "repertorio.csv": _render_repertorio_csv(conn),
+            "vocabulario.md": _render_vocabulario_md(conn),
+            "estructura.md": _render_estructura_md(conn),
+            LIMITES_FILENAME: _render_limites_md(),
+        }
+        conn.execute("COMMIT")
+    except BaseException:
+        try:
+            conn.execute("ROLLBACK")
+        except sqlite3.Error:
+            pass
+        raise
     finally:
         conn.close()
 
-    write_limites_md(out / LIMITES_FILENAME)
+    _publish_files(out, {name: content for name, (content, _count) in rendered.items()})
 
     return {
-        "patrones": n_patrones,
-        "repertorio": n_repertorio,
-        "vocabulario_modulos": n_modulos,
-        "estructura_partidas": n_estructura,
-        "limites": 1,
+        "patrones": rendered["patrones.csv"][1],
+        "repertorio": rendered["repertorio.csv"][1],
+        "vocabulario_modulos": rendered["vocabulario.md"][1],
+        "estructura_partidas": rendered["estructura.md"][1],
+        "limites": rendered[LIMITES_FILENAME][1],
     }

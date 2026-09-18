@@ -273,18 +273,12 @@ class HistoricalBudgetAnalyzer:
         # Exportar el paquete de contexto para IA (Tarea 3 del plan
         # docs/superpowers/plans/2026-08-04-paquete-contexto-ia.md), solo si
         # hay ruta configurada. Es el momento exacto en que el conocimiento
-        # historico cambia; un fallo aqui no debe tumbar el analisis.
-        from src.core.settings import Settings as _Settings
-
-        context_pack_dir = _Settings().get_default_path(_Settings.PATH_CONTEXT_PACK)
-        if context_pack_dir:
-            try:
-                from src.core import database as _database
-                from scripts.export_context_pack import export_context_pack
-
-                export_context_pack(str(_database.get_db_path()), context_pack_dir)
-            except Exception:
-                summary["errores"] += 1
+        # historico cambia; un fallo aqui no debe tumbar el analisis, pero si
+        # quedar visible en el resumen como publicacion fallida.
+        publication_error = self.publish_context_pack()
+        if publication_error:
+            summary["errores"] += 1
+            summary["publication_error"] = publication_error
 
         finish_analysis_run(
             run_id,
@@ -297,6 +291,28 @@ class HistoricalBudgetAnalyzer:
             },
         )
         return summary
+
+    def publish_context_pack(self) -> Optional[str]:
+        """Publica el paquete de contexto si hay carpeta configurada.
+
+        Devuelve None si no hay ruta o si la exportacion fue correcta, o el
+        mensaje de error si fallo. Nunca propaga la excepcion: publicar es un
+        efecto secundario de haber cambiado la memoria historica, no su
+        resultado principal, pero el fallo debe poder mostrarse al usuario.
+        """
+        from src.core.settings import Settings
+
+        context_pack_dir = Settings().get_default_path(Settings.PATH_CONTEXT_PACK)
+        if not context_pack_dir:
+            return None
+        try:
+            from src.core import database
+            from scripts.export_context_pack import export_context_pack
+
+            export_context_pack(str(database.get_db_path()), context_pack_dir)
+            return None
+        except Exception as exc:
+            return str(exc) or "Error al exportar el paquete de contexto."
 
     def analyze_budget(
         self,

@@ -13,6 +13,8 @@ repertorio, vocabulario, estructura) desde una base de solo lectura.
 from datetime import datetime
 from pathlib import Path
 
+import pytest
+
 from scripts.export_context_pack import export_context_pack, scrub_text
 from scripts.rebuild_historical_patterns import sha256_file
 from src.core.historical_budget_analyzer import HistoricalBudgetAnalyzer
@@ -274,6 +276,31 @@ class TestExportContextPack:
         assert "no garantiza" in text
         assert "revisa" in text
 
+    def test_failure_while_rendering_keeps_previous_pack_intact(self, tmp_path, monkeypatch):
+        """H09: si la publicacion falla a mitad, la version anterior sigue
+        completa e identificable; no se mezcla una version nueva con otra
+        antigua."""
+        import scripts.export_context_pack as export_mod
+
+        db_path = _seed_full_pack(tmp_path, monkeypatch)
+        out_dir = tmp_path / "pack"
+        export_context_pack(str(db_path), str(out_dir))
+
+        names = ("patrones.csv", "repertorio.csv", "vocabulario.md", "estructura.md", "LIMITES.md")
+        before = {name: (out_dir / name).read_bytes() for name in names}
+
+        def _boom(_conn):
+            raise RuntimeError("fallo al renderizar repertorio")
+
+        monkeypatch.setattr(export_mod, "_render_repertorio_csv", _boom)
+
+        with pytest.raises(RuntimeError):
+            export_context_pack(str(db_path), str(out_dir))
+
+        after = {name: (out_dir / name).read_bytes() for name in names}
+        assert after == before
+        assert not list(out_dir.glob(".*.tmp")), "no deben quedar temporales"
+
 
 class TestAutomaticExportTrigger:
     """Tarea 3: analyze_files() debe exportar el paquete tras reconstruir
@@ -321,4 +348,5 @@ class TestAutomaticExportTrigger:
         result = HistoricalBudgetAnalyzer().analyze_files([], source_folder=str(tmp_path))
 
         assert result["errores"] >= 1
+        assert result["publication_error"], "el fallo de publicacion debe quedar visible"
         assert "run_id" in result

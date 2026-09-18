@@ -86,3 +86,40 @@ def test_include_selected_approves_with_current_user(qapp, monkeypatch):
     dlg._include_selected()
 
     assert calls == [(7, dlg._current_user())]
+
+
+def test_rebuild_patterns_republishes_context_pack(qapp, monkeypatch):
+    """H09: incluir/excluir/reconstruir cambia la memoria y debe republicar el
+    paquete, no dejar el que se exporto en el ultimo analisis."""
+    dlg = _make_dashboard(qapp, monkeypatch)
+    published = []
+    dlg._analyzer = type(
+        "FakeAnalyzer",
+        (),
+        {"publish_context_pack": lambda self: published.append(True)},
+    )()
+    monkeypatch.setattr(dlg, "_refresh_kpis", lambda: None)
+    monkeypatch.setattr(
+        dash_mod,
+        "HistoricalPatternBuilder",
+        lambda: type("FakeBuilder", (), {"rebuild_patterns": lambda self: {"patterns_inserted": 1}})(),
+    )
+
+    HistoricalMemoryDashboard._rebuild_patterns(dlg, silent=True)
+
+    assert published == [True]
+
+
+def test_publish_context_pack_warns_when_publication_fails(qapp, monkeypatch):
+    dlg = _make_dashboard(qapp, monkeypatch)
+    dlg._analyzer = type(
+        "FakeAnalyzer",
+        (),
+        {"publish_context_pack": lambda self: "disco lleno"},
+    )()
+
+    dlg._publish_context_pack()
+
+    warnings = [c for c in _NoUiMessageBox.calls if c[0] == "warning"]
+    assert warnings
+    assert "disco lleno" in warnings[0][1][2]

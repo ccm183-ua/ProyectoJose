@@ -1378,6 +1378,7 @@ class HistoricalMemoryDashboard(QDialog):
             if confirm != QMessageBox.StandardButton.Yes:
                 return
         result = HistoricalPatternBuilder().rebuild_patterns()
+        self._publish_context_pack()
         if not silent:
             QMessageBox.information(
                 self,
@@ -1385,6 +1386,22 @@ class HistoricalMemoryDashboard(QDialog):
                 f"Patrones reconstruidos: {int(result.get('patterns_inserted', 0))}",
             )
         self._refresh_kpis()
+
+    def _publish_context_pack(self):
+        """Actualiza el paquete exportado tras cambiar la memoria historica.
+
+        Cualquier alta, baja, reconstruccion o reanalisis cambia que partidas
+        son reutilizables; si no se republica, Claude sigue viendo la version
+        anterior. Un fallo de publicacion se avisa, no se silencia.
+        """
+        error = self._analyzer.publish_context_pack()
+        if error:
+            QMessageBox.warning(
+                self,
+                "Paquete de contexto",
+                "La memoria historica cambio, pero no se pudo publicar el "
+                f"paquete de contexto:\n{error}",
+            )
 
     def _confirm_clear_all_historical_analysis(self):
         confirm = QMessageBox.question(
@@ -1413,6 +1430,7 @@ class HistoricalMemoryDashboard(QDialog):
             "Borrado completo de presupuestos analizados desde el panel de memoria.",
             {"historical_budgets_removed": n},
         )
+        self._publish_context_pack()
         self._reload()
         QMessageBox.information(
             self,

@@ -755,8 +755,15 @@ class HistoricalAnalysisResultsDialog(QDialog):
         except (OSError, ValueError):
             pass
 
-    @staticmethod
-    def _rebuild_patterns():
+    def _rebuild_patterns(self):
         from src.core.historical_pattern_builder import HistoricalPatternBuilder
 
         HistoricalPatternBuilder().rebuild_patterns()
+        error = self._analyzer.publish_context_pack()
+        if error:
+            QMessageBox.warning(
+                self,
+                "Paquete de contexto",
+                "La memoria historica cambio, pero no se pudo publicar el "
+                f"paquete de contexto:\n{error}",
+            )
