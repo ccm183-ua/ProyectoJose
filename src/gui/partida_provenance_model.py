@@ -4,9 +4,9 @@ Modelo de procedencia por partida (Fase 4, Tarea 12): traduce el par
 sin depender de PySide6 para poder probarlo sin arrancar la GUI.
 
 No sustituye las columnas "Origen"/"Motivo/Fuente" ya existentes en
-combined_partidas_review_dialog.py; añade Fuente/Nivel/Rango histórico/
-Diferencias como vocabulario de evidencia (Tarea 8/10) todavía no cableado
-en la tabla real.
+combined_partidas_review_dialog.py; Fuente/Nivel/Rango histórico/Diferencias
+son vocabulario de evidencia (Tarea 8/10) que hoy alimenta el detalle de
+procedencia bajo demanda de ese diálogo, no columnas permanentes de la tabla.
 """
 
 from typing import Dict, List, Optional

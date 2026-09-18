@@ -1,13 +1,20 @@
 """
-Fixes histórico evidenciado, Tarea 6: procedencia real (Fuente/Nivel/Rango
-histórico/Diferencias) visible en la tabla de revisión combinada, y el
-`source` real (historical_exact/historical_comparable) debe sobrevivir a la
-confirmación en vez de colapsarse al genérico 'historical' (Tarea 5).
+Fixes histórico evidenciado, Tarea 6: la procedencia real (Fuente/Nivel/Rango
+histórico/Diferencias/Confianza) se consulta en el detalle bajo demanda de la
+tabla de revisión combinada, y el `source` real
+(historical_exact/historical_comparable) debe sobrevivir a la confirmación en
+vez de colapsarse al genérico 'historical' (Tarea 5).
 """
+
+import sys
+import traceback
 
 import pytest
 
 try:
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QLabel, QPushButton
+
     from src.gui.combined_partidas_review_dialog import CombinedPartidasReviewDialog
 
     _HAS_PYSIDE6 = True
@@ -16,22 +23,87 @@ except ImportError:
 
 pytestmark = pytest.mark.skipif(not _HAS_PYSIDE6, reason="PySide6 no disponible")
 
-_PROVENANCE_COLUMNS = {"Fuente": 10, "Nivel": 11, "Rango histórico": 12, "Diferencias": 13}
+_ESSENTIAL_HEADERS = [
+    "Usar",
+    "Origen",
+    "Título",
+    "Descripción",
+    "Ud",
+    "Cantidad",
+    "Precio",
+    "Total",
+    "Motivo/Fuente",
+]
 _PRICE_COL = 6
 _TOTAL_COL = 7
 
 
-def _cell(dlg, row, header):
-    return dlg._table.item(row, _PROVENANCE_COLUMNS[header]).text()
+def _detail(dlg, row, key):
+    return dlg._provenance_details(row)[key]
 
 
-def test_table_has_provenance_columns(qapp):
+def test_populate_does_not_raise_attribute_error(qapp):
+    """Cargar filas no debe lanzar AttributeError desde _on_item_changed.
+
+    Regresión H14: al fijar la celda de cantidad, la de precio todavía no existe.
+    """
+    captured = []
+    previous = sys.excepthook
+    sys.excepthook = lambda *exc: captured.append("".join(traceback.format_exception(*exc)))
+    try:
+        CombinedPartidasReviewDialog(
+            None,
+            historical_partidas=[dict(_partida_2x10(), source="historical_exact")],
+            ai_partidas=[_partida_2x10()],
+        )
+    finally:
+        sys.excepthook = previous
+    assert captured == []
+
+
+def test_essential_columns_fit_without_horizontal_scroll(qapp):
+    """Los campos de decisión caben juntos en el tamaño mínimo del diálogo."""
+    dlg = CombinedPartidasReviewDialog(
+        None,
+        historical_partidas=[dict(_partida_2x10(), source="historical_exact")],
+        ai_partidas=[],
+    )
+    headers = [dlg._table.horizontalHeaderItem(c).text() for c in range(dlg._table.columnCount())]
+    assert headers == _ESSENTIAL_HEADERS
+
+    dlg.resize(900, 520)  # mínimo declarado en _build_ui
+    dlg.show()
+    qapp.processEvents()
+    assert dlg._table.horizontalScrollBar().maximum() == 0
+    dlg.close()
+
+
+def test_only_applicable_cells_are_editable(qapp):
+    """Las columnas informativas no ofrecen editor; solo lo hacen las aplicables."""
+    dlg = CombinedPartidasReviewDialog(
+        None,
+        historical_partidas=[dict(_partida_2x10(), source="historical_exact")],
+        ai_partidas=[_partida_2x10()],
+    )
+    expected = [2, 3, 4, 5, 6]  # Título, Descripción, Ud, Cantidad, Precio
+    for row in range(dlg._table.rowCount()):
+        editable = [
+            c
+            for c in range(dlg._table.columnCount())
+            if dlg._table.item(row, c) is not None
+            and bool(dlg._table.item(row, c).flags() & Qt.ItemFlag.ItemIsEditable)
+        ]
+        assert editable == expected
+
+
+def test_provenance_is_not_an_always_visible_column(qapp):
     dlg = CombinedPartidasReviewDialog(None, historical_partidas=[], ai_partidas=[])
-    labels = [dlg._table.horizontalHeaderItem(c).text() for c in _PROVENANCE_COLUMNS.values()]
-    assert labels == ["Fuente", "Nivel", "Rango histórico", "Diferencias"]
+    headers = [dlg._table.horizontalHeaderItem(c).text() for c in range(dlg._table.columnCount())]
+    for removed in ("Fuente", "Nivel", "Rango histórico", "Diferencias", "Confianza"):
+        assert removed not in headers
 
 
-def test_exact_evidence_row_shows_source_level_and_range(qapp):
+def test_provenance_detail_shows_exact_evidence(qapp):
     hist = [
         {
             "titulo": "Reparacion fachada",
@@ -48,13 +120,13 @@ def test_exact_evidence_row_shows_source_level_and_range(qapp):
         }
     ]
     dlg = CombinedPartidasReviewDialog(None, historical_partidas=hist, ai_partidas=[])
-    assert _cell(dlg, 0, "Fuente") == "Histórico"
-    assert _cell(dlg, 0, "Nivel") == "Exacto"
-    assert _cell(dlg, 0, "Rango histórico") == "50.00 – 50.00 – 50.00"
-    assert _cell(dlg, 0, "Diferencias") == "—"
+    assert _detail(dlg, 0, "Fuente") == "Histórico"
+    assert _detail(dlg, 0, "Nivel") == "Exacto"
+    assert _detail(dlg, 0, "Rango histórico") == "50.00 – 50.00 – 50.00"
+    assert _detail(dlg, 0, "Diferencias") == "—"
 
 
-def test_comparable_evidence_row_shows_differences(qapp):
+def test_provenance_detail_lists_comparable_differences(qapp):
     hist = [
         {
             "titulo": "Reparacion fachada",
@@ -71,16 +143,50 @@ def test_comparable_evidence_row_shows_differences(qapp):
         }
     ]
     dlg = CombinedPartidasReviewDialog(None, historical_partidas=hist, ai_partidas=[])
-    assert _cell(dlg, 0, "Nivel") == "Comparable"
-    assert _cell(dlg, 0, "Rango histórico") == "40.00 – 45.00 – 50.00"
-    assert _cell(dlg, 0, "Diferencias") == "material"
+    assert _detail(dlg, 0, "Nivel") == "Comparable"
+    assert _detail(dlg, 0, "Rango histórico") == "40.00 – 45.00 – 50.00"
+    assert _detail(dlg, 0, "Diferencias") == "material"
 
 
-def test_ai_completion_row_shows_no_comparable_evidence(qapp):
+def test_provenance_detail_has_no_comparable_evidence_for_ai(qapp):
     ai = [{"titulo": "Estimacion IA", "descripcion": "", "unidad": "ud", "cantidad": 1, "precio_unitario": 10.0}]
     dlg = CombinedPartidasReviewDialog(None, historical_partidas=[], ai_partidas=ai)
-    assert _cell(dlg, 0, "Fuente") == "IA — borrador"
-    assert _cell(dlg, 0, "Rango histórico") == "Sin evidencia privada comparable"
+    assert _detail(dlg, 0, "Fuente") == "IA — borrador"
+    assert _detail(dlg, 0, "Rango histórico") == "Sin evidencia privada comparable"
+
+
+def test_provenance_detail_includes_confidence(qapp):
+    hist = [dict(_partida_2x10(), source="historical_exact", confidence=0.8)]
+    dlg = CombinedPartidasReviewDialog(None, historical_partidas=hist, ai_partidas=[])
+    assert _detail(dlg, 0, "Confianza") == "0.8"
+
+
+def test_provenance_detail_has_a_button(qapp):
+    dlg = CombinedPartidasReviewDialog(None, historical_partidas=[], ai_partidas=[])
+    assert "Ver procedencia" in [b.text() for b in dlg.findChildren(QPushButton)]
+
+
+def test_provenance_detail_dialog_is_built_from_selected_row(qapp):
+    hist = [
+        {
+            "titulo": "Reparacion fachada",
+            "descripcion": "d",
+            "unidad": "m2",
+            "cantidad": 1,
+            "precio_unitario": 50.0,
+            "source": "historical_exact",
+            "evidence_level": "exact",
+            "evidence_price_min": 50.0,
+            "evidence_price_median": 50.0,
+            "evidence_price_max": 50.0,
+        }
+    ]
+    dlg = CombinedPartidasReviewDialog(None, historical_partidas=hist, ai_partidas=[])
+    detail = dlg._build_provenance_dialog(0)
+    texts = [lbl.text() for lbl in detail.findChildren(QLabel)]
+    assert any("Exacto" in t for t in texts)
+    assert any("50.00 – 50.00 – 50.00" in t for t in texts)
+    detail.close()
 
 
 def test_apply_preserves_real_evidence_source_not_generic_historical(qapp):
