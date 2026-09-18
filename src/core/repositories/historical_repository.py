@@ -875,24 +875,22 @@ def set_historical_budget_learning_status(
     decision_source: str = "MANUAL",
     decision_reason: str = "",
 ) -> Optional[str]:
+    """Escritor genérico de estado de aprendizaje: solo puede excluir.
+
+    La inclusión en memoria reutilizable tiene un único camino legítimo,
+    `approve_budget_for_learning`, que sella actor, fecha y contenido
+    revisado. Aceptar aquí `INCLUDED`/`usable_for_learning=True` permitiría
+    persistir una inclusión sin esa prueba (H06).
+    """
+    target_status = (learning_status or "").strip().upper()
+    if target_status == "INCLUDED" or bool(usable_for_learning):
+        return (
+            "La inclusión en memoria solo puede hacerse con "
+            "approve_budget_for_learning, que registra quién aprueba "
+            "y cuándo."
+        )
     with database.get_connection() as conn:
         try:
-            target_status = (learning_status or "").strip().upper()
-            wants_learning = target_status == "INCLUDED" or bool(usable_for_learning)
-            if wants_learning:
-                cur = conn.execute(
-                    "SELECT analysis_status FROM historical_budget WHERE id=?",
-                    (historical_budget_id,),
-                )
-                row = cur.fetchone()
-                if not row:
-                    return "No se encontro el presupuesto historico indicado."
-                analysis_status = (row[0] or "").strip().upper()
-                if analysis_status not in ("VALID", "VALID_WITH_WARNINGS"):
-                    return (
-                        "No se puede incluir en memoria: el estado tecnico del "
-                        f"presupuesto es {analysis_status or 'desconocido'}."
-                    )
             conn.execute(
                 """UPDATE historical_budget
                    SET learning_status=?,
@@ -940,7 +938,9 @@ def approve_budget_for_learning(historical_budget_id: int, approved_by: str) -> 
 
     Actualiza learning_status/usable_for_learning/approved_at/approved_by en
     una única transacción: si algo falla, no queda un estado a medias con
-    solo alguno de los cuatro campos actualizado.
+    solo alguno de los cuatro campos actualizado. Exige que la fila ya tenga
+    `file_sha256`: la aprobación queda ligada a la versión de contenido
+    revisada, no a un presupuesto sin hash comparable.
     """
     approved_by_clean = (approved_by or "").strip()
     if not approved_by_clean:
@@ -948,7 +948,7 @@ def approve_budget_for_learning(historical_budget_id: int, approved_by: str) -> 
     with database.get_connection() as conn:
         try:
             row = conn.execute(
-                "SELECT analysis_status FROM historical_budget WHERE id=?",
+                "SELECT analysis_status, file_sha256 FROM historical_budget WHERE id=?",
                 (historical_budget_id,),
             ).fetchone()
             if not row:
@@ -958,6 +958,11 @@ def approve_budget_for_learning(historical_budget_id: int, approved_by: str) -> 
                 return (
                     "No se puede aprobar para memoria: el estado técnico del "
                     f"presupuesto es {analysis_status or 'desconocido'}."
+                )
+            if not (row[1] or "").strip():
+                return (
+                    "No se puede aprobar para memoria: el presupuesto no tiene "
+                    "hash de contenido revisado."
                 )
             now = _now_str()
             conn.execute(

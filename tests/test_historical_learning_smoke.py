@@ -275,7 +275,7 @@ def test_historical_learning_smoke_flow(tmp_path, monkeypatch):
         decision_reason="Test include pending budget",
     )
     assert err is not None
-    assert "No se puede incluir en memoria" in err
+    assert "approve_budget_for_learning" in err
     hb_excluded_after = get_historical_budget_by_path(str(excluded_path))
     assert hb_excluded_after is not None
     assert hb_excluded_after["analysis_status"] == AnalysisStatus.EXCLUDED_INCOMPLETE_DATA
