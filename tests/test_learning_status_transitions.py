@@ -191,6 +191,20 @@ def test_upsert_rejects_reusable_inclusion_without_approval_proof(tmp_path, monk
     assert budget_id is None
     _assert_no_unproven_inclusion()
 
+    budget_id, err = upsert_historical_budget(
+        {
+            "ruta_excel": str(tmp_path / "included_without_usable.xlsx"),
+            "fecha_modificacion_excel": datetime.now().isoformat(),
+            "analysis_status": "VALID",
+            "usable_for_learning": False,
+            "learning_status": "INCLUDED",
+            "learning_status_source": "MANUAL",
+        }
+    )
+    assert err is not None
+    assert budget_id is None
+    _assert_no_unproven_inclusion()
+
     _, err = upsert_historical_budget(
         {
             "ruta_excel": path,
