@@ -43,6 +43,11 @@ class SearchSelectWidget(QWidget):
     def set_items(self, items: list[tuple]):
         self._items = list(items)
 
+    @property
+    def editor(self):
+        """Control enfocable que representa la seleccion (validacion/foco)."""
+        return self._display
+
     def get_selected_id(self):
         return self._selected_id
 

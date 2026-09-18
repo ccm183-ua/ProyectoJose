@@ -91,12 +91,11 @@ class AdminFormDialog(QDialog):
         theme.fit_dialog(self, 400, 380)
 
     def _on_ok(self):
-        if not self._ctrls["nombre"].text().strip():
-            QMessageBox.information(self, "Aviso", "El nombre es obligatorio.")
-            return
+        nombre = self._ctrls["nombre"].text().strip()
         if not run_validations(self, [
-            ("Email", validate_email(self._ctrls["email"].text().strip())),
-            ("Teléfono", validate_phone(self._ctrls["telefono"].text().strip())),
+            (self._ctrls["nombre"], "Nombre", None if nombre else "El nombre es obligatorio."),
+            (self._ctrls["email"], "Email", validate_email(self._ctrls["email"].text().strip())),
+            (self._ctrls["telefono"], "Teléfono", validate_phone(self._ctrls["telefono"].text().strip())),
         ]):
             return
         self.accept()

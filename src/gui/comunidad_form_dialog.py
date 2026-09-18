@@ -142,16 +142,17 @@ class ComunidadFormDialog(QDialog):
         theme.fit_dialog(self, 420, 430)
 
     def _on_ok(self):
-        if not self._ctrls["nombre"].text().strip():
-            QMessageBox.information(self, "Aviso", "El nombre de la comunidad es obligatorio.")
-            return
-        if not self._admin_widget.get_selected_id():
-            QMessageBox.information(self, "Aviso", "Debe seleccionar una administración.")
-            return
+        nombre = self._ctrls["nombre"].text().strip()
         if not run_validations(self, [
-            ("CIF", validate_cif(self._ctrls["cif"].text().strip())),
-            ("Email", validate_email(self._ctrls["email"].text().strip())),
-            ("Teléfono", validate_phone(self._ctrls["telefono"].text().strip())),
+            (self._ctrls["nombre"], "Nombre", None if nombre else "El nombre de la comunidad es obligatorio."),
+            (self._ctrls["cif"], "CIF", validate_cif(self._ctrls["cif"].text().strip())),
+            (self._ctrls["email"], "Email", validate_email(self._ctrls["email"].text().strip())),
+            (self._ctrls["telefono"], "Teléfono", validate_phone(self._ctrls["telefono"].text().strip())),
+            (
+                self._admin_widget.editor,
+                "Administración",
+                None if self._admin_widget.get_selected_id() else "Debe seleccionar una administración.",
+            ),
         ]):
             return
         self.accept()
