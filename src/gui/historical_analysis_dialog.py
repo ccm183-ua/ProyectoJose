@@ -34,10 +34,10 @@ class HistoricalAnalysisDialog(QDialog):
         self._analyzer = HistoricalBudgetAnalyzer()
         self._settings = Settings()
         self._build_ui()
-        # Precargar la última carpeta analizada para no tener que volver a buscarla.
-        last_folder = self._settings.get_default_path(Settings.PATH_HISTORICAL_FOLDER)
-        if last_folder:
-            self._folder_list.addItem(last_folder)
+        # Precargar todas las carpetas del conjunto recordado para no tener
+        # que volver a buscarlas y dejar claro el alcance que se reanaliza.
+        for folder in self._settings.get_historical_folders():
+            self._folder_list.addItem(folder)
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
@@ -51,7 +51,9 @@ class HistoricalAnalysisDialog(QDialog):
             self,
             "La aplicación extraerá partidas de los presupuestos seleccionados y las guardará\n"
             "en una base histórica reutilizable. Los presupuestos ya analizados no se volverán\n"
-            "a procesar salvo que el Excel haya cambiado.",
+            "a procesar salvo que el Excel haya cambiado.\n\n"
+            "Las carpetas de la lista quedan recordadas como el conjunto de fuentes: se\n"
+            "revisarán al arrancar la aplicación, no solo en esta ejecución.",
         )
         text.setWordWrap(True)
         layout.addWidget(text)
@@ -145,8 +147,9 @@ class HistoricalAnalysisDialog(QDialog):
             )
             return
 
-        # Recordar la última carpeta para el auto-análisis en el arranque.
-        self._settings.set_default_path(Settings.PATH_HISTORICAL_FOLDER, folders[-1])
+        # Recordar el conjunto completo de carpetas: el auto-análisis del
+        # arranque debe cubrir todas las fuentes, no solo la última añadida.
+        self._settings.set_historical_folders(folders)
 
         self._run_btn.setEnabled(False)
         self._status_label.setText("Analizando...")

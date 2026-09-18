@@ -160,6 +160,31 @@ class TestDefaultPaths:
         assert s.get_api_key() == "mi-clave"
 
 
+class TestHistoricalFolders:
+    """H19: el análisis multicarpetas conserva el conjunto completo de fuentes."""
+
+    def test_roundtrip_stores_all_folders_in_order(self, temp_dir):
+        s = Settings(config_dir=temp_dir)
+        s.set_historical_folders(["/obras/a", "/obras/b", "/obras/c"])
+        assert s.get_historical_folders() == ["/obras/a", "/obras/b", "/obras/c"]
+
+    def test_deduplicates_and_drops_empty(self, temp_dir):
+        s = Settings(config_dir=temp_dir)
+        s.set_historical_folders(["/a", "/a", "  ", "/b"])
+        assert s.get_historical_folders() == ["/a", "/b"]
+
+    def test_falls_back_to_legacy_single_folder(self, temp_dir):
+        s = Settings(config_dir=temp_dir)
+        s.set_default_path(Settings.PATH_HISTORICAL_FOLDER, "/obras/legacy")
+        assert s.get_historical_folders() == ["/obras/legacy"]
+
+    def test_clearing_leaves_no_folders(self, temp_dir):
+        s = Settings(config_dir=temp_dir)
+        s.set_historical_folders(["/a"])
+        s.set_historical_folders([])
+        assert s.get_historical_folders() == []
+
+
 class TestAIProviderSettings:
     def test_provider_defaults_to_gemini(self, temp_dir):
         s = Settings(config_dir=temp_dir)

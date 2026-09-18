@@ -62,9 +62,10 @@ class MainFrame(QMainWindow):
     def _schedule_startup_historical_refresh(self):
         """Mantiene la memoria histórica al día al arrancar, en segundo plano.
 
-        - Si hay una carpeta de análisis recordada, hace un escaneo incremental
+        - Si hay carpetas de análisis recordadas, hace un escaneo incremental
           (los Excel sin cambios se omiten por mtime, así que es barato) que
-          además reconstruye los patrones de sugerencia.
+          además reconstruye los patrones de sugerencia. Se recorren todas las
+          carpetas del conjunto, no solo la última añadida.
         - Si no hay carpeta configurada, al menos reconstruye los patrones a
           partir de lo ya ingerido (cubre el caso de datos cacheados sin
           patrones). Es silencioso y nunca interrumpe el arranque.
@@ -75,12 +76,16 @@ class MainFrame(QMainWindow):
         from src.core.settings import Settings
         from src.utils.helpers import run_in_background
 
-        folder = Settings().get_default_path(Settings.PATH_HISTORICAL_FOLDER)
+        folders = [
+            folder
+            for folder in Settings().get_historical_folders()
+            if _os.path.isdir(folder)
+        ]
 
         def _work():
-            if folder and _os.path.isdir(folder):
+            if folders:
                 from src.core.historical_budget_analyzer import HistoricalBudgetAnalyzer
-                return HistoricalBudgetAnalyzer().analyze_folder(folder, recursive=True)
+                return HistoricalBudgetAnalyzer().analyze_folders(folders, recursive=True)
             from src.core.historical_pattern_builder import HistoricalPatternBuilder
             return HistoricalPatternBuilder().rebuild_patterns()
 
