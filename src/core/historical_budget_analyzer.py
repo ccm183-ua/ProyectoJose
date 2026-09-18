@@ -124,14 +124,23 @@ def _apply_existing_manual_learning_decision(budget_payload: Dict, existing: Opt
         budget_payload["approved_by"] = ""
         return
 
+    approved_by = (existing.get("approved_by") or "").strip()
+    approved_at = (existing.get("approved_at") or "").strip()
+    if not approved_by or not approved_at:
+        # H06: una inclusión sin actor ni fecha no es prueba de revisión, así
+        # que no se hereda y el payload se queda en PENDING_REVIEW.
+        budget_payload["approved_at"] = ""
+        budget_payload["approved_by"] = ""
+        return
+
     if budget_payload.get("analysis_status") in (AnalysisStatus.VALID, AnalysisStatus.VALID_WITH_WARNINGS):
         budget_payload["usable_for_learning"] = True
         budget_payload["learning_status"] = "INCLUDED"
         budget_payload["learning_status_source"] = "MANUAL"
         budget_payload["learning_decision_reason"] = existing.get("learning_decision_reason") or "Decision manual preservada tras reanalisis."
         budget_payload["learning_decision_at"] = existing.get("learning_decision_at") or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        budget_payload["approved_by"] = existing.get("approved_by") or ""
-        budget_payload["approved_at"] = existing.get("approved_at") or ""
+        budget_payload["approved_by"] = approved_by
+        budget_payload["approved_at"] = approved_at
 
 
 class HistoricalBudgetAnalyzer:

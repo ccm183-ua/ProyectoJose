@@ -128,6 +128,9 @@ def _seed_full_pack(tmp_path, monkeypatch):
                 "analysis_status": "VALID",
                 "usable_for_learning": True,
                 "learning_status": "INCLUDED",
+                "approved_by": "test",
+                "approved_at": "2026-01-01 10:00:00",
+                "file_sha256": f"hash_{nombre}",
             }
         )
         assert berr is None

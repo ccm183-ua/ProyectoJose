@@ -1,10 +1,12 @@
 from datetime import datetime
 
 from src.core import database
+from src.core.historical_budget_analyzer import _apply_existing_manual_learning_decision
 from src.core.repositories import (
     approve_budget_for_learning,
     get_historical_budget_by_path,
     set_historical_budget_learning_status,
+    set_historical_budget_manual_status,
     upsert_historical_budget,
 )
 
@@ -130,7 +132,7 @@ def _assert_no_unproven_inclusion():
         bad = conn.execute(
             """SELECT id, approved_by, approved_at, file_sha256
                FROM historical_budget
-               WHERE usable_for_learning=1
+               WHERE (learning_status='INCLUDED' OR usable_for_learning=1)
                  AND (COALESCE(approved_by, '')=''
                       OR COALESCE(approved_at, '')=''
                       OR COALESCE(file_sha256, '')='')"""
@@ -147,6 +149,17 @@ def test_no_exported_route_persists_reusable_inclusion_without_proof(tmp_path, m
 
     assert set_historical_budget_learning_status(budget_id, "INCLUDED", True) is not None
     assert set_historical_budget_learning_status(budget_id, "EXCLUDED", True) is not None
+    assert set_historical_budget_manual_status(budget_id, "VALID", True) is not None
+    assert upsert_historical_budget(
+        {
+            "ruta_excel": str(tmp_path / "inclusion_sin_prueba.xlsx"),
+            "fecha_modificacion_excel": datetime.now().isoformat(),
+            "analysis_status": "VALID",
+            "usable_for_learning": True,
+            "learning_status": "INCLUDED",
+            "learning_status_source": "MANUAL",
+        }
+    )[1] is not None
     _assert_no_unproven_inclusion()
 
     assert approve_budget_for_learning(budget_id, "SERGIO") is None
@@ -155,6 +168,107 @@ def test_no_exported_route_persists_reusable_inclusion_without_proof(tmp_path, m
     assert (row["approved_at"] or "").strip()
     assert (row["file_sha256"] or "").strip()
     _assert_no_unproven_inclusion()
+
+
+def test_upsert_rejects_reusable_inclusion_without_approval_proof(tmp_path, monkeypatch):
+    """H06: el escritor genérico no admite una fila reutilizable sin actor,
+    fecha y hash de contenido revisado."""
+    monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "datos_learning_upsert_invariant.db"))
+    path, existing_id = _create_pending_budget(tmp_path)
+
+    budget_id, err = upsert_historical_budget(
+        {
+            "ruta_excel": str(tmp_path / "sin_prueba.xlsx"),
+            "fecha_modificacion_excel": datetime.now().isoformat(),
+            "analysis_status": "VALID",
+            "usable_for_learning": True,
+            "learning_status": "INCLUDED",
+            "learning_status_source": "MANUAL",
+            "file_sha256": "hash_sin_actor_ni_fecha",
+        }
+    )
+    assert err is not None
+    assert budget_id is None
+    _assert_no_unproven_inclusion()
+
+    _, err = upsert_historical_budget(
+        {
+            "ruta_excel": path,
+            "fecha_modificacion_excel": datetime.now().isoformat(),
+            "analysis_status": "VALID",
+            "usable_for_learning": True,
+            "learning_status": "INCLUDED",
+            "learning_status_source": "MANUAL",
+            "approved_by": "SERGIO",
+            "approved_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "file_sha256": "",
+        }
+    )
+    assert err is not None
+    row = get_historical_budget_by_path(path)
+    assert row is not None
+    assert row["learning_status"] == "PENDING_REVIEW"
+    assert row["usable_for_learning"] is False
+    assert existing_id
+    _assert_no_unproven_inclusion()
+
+
+def test_manual_status_writer_cannot_grant_reusable_inclusion(tmp_path, monkeypatch):
+    """H06: el escritor de estado manual solo alcanza estados no
+    reutilizables; incluir exige approve_budget_for_learning."""
+    monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "datos_learning_manual_status.db"))
+    path, budget_id = _create_pending_budget(tmp_path)
+
+    err = set_historical_budget_manual_status(budget_id, "VALID", True)
+    assert err is not None
+    row = get_historical_budget_by_path(path)
+    assert row is not None
+    assert row["usable_for_learning"] is False
+    _assert_no_unproven_inclusion()
+
+    assert set_historical_budget_manual_status(budget_id, "VALID", False) is None
+    row = get_historical_budget_by_path(path)
+    assert row is not None
+    assert row["analysis_status"] == "VALID"
+    assert row["usable_for_learning"] is False
+
+
+def test_reentry_requires_approval_proof_before_keeping_inclusion(tmp_path, monkeypatch):
+    """H06: reanalizar no puede heredar una inclusión sin actor ni fecha; con
+    la aprobación sellada, sí la conserva."""
+    monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "datos_learning_reentry.db"))
+    path, budget_id = _create_pending_budget(tmp_path)
+    assert approve_budget_for_learning(budget_id, "SERGIO") is None
+    approved = get_historical_budget_by_path(path)
+    assert approved is not None
+
+    def _payload():
+        return {
+            "file_sha256": approved["file_sha256"],
+            "analysis_status": "VALID",
+            "usable_for_learning": False,
+            "learning_status": "PENDING_REVIEW",
+            "learning_status_source": "AUTO",
+            "approved_at": "",
+            "approved_by": "",
+        }
+
+    preserved = _payload()
+    _apply_existing_manual_learning_decision(preserved, approved)
+    assert preserved["learning_status"] == "INCLUDED"
+    assert preserved["usable_for_learning"] is True
+    assert preserved["approved_by"] == "SERGIO"
+    assert preserved["approved_at"]
+
+    for missing in ("approved_by", "approved_at"):
+        unproven = dict(approved)
+        unproven[missing] = ""
+        payload = _payload()
+        _apply_existing_manual_learning_decision(payload, unproven)
+        assert payload["learning_status"] == "PENDING_REVIEW"
+        assert payload["usable_for_learning"] is False
+        assert not (payload["approved_by"] or "").strip()
+        assert not (payload["approved_at"] or "").strip()
 
 
 def test_approve_rejects_budget_without_content_hash(tmp_path, monkeypatch):

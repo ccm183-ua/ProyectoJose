@@ -15,6 +15,37 @@ def _now_str() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
+_UNPROVEN_INCLUSION_ERROR = (
+    "La inclusión en memoria solo puede hacerse con "
+    "approve_budget_for_learning, que registra quién aprueba "
+    "y cuándo."
+)
+
+
+def _reusable_inclusion_without_proof(
+    *,
+    learning_status: Optional[str] = None,
+    usable_for_learning: object = False,
+    approved_by: Optional[str] = None,
+    approved_at: Optional[str] = None,
+    file_sha256: Optional[str] = None,
+) -> bool:
+    """True si el estado pedido es inclusión reutilizable y le falta prueba.
+
+    H06: una fila solo entra en memoria reutilizable (`INCLUDED` o
+    `usable_for_learning`) con actor, fecha y hash de contenido revisado no
+    vacíos. Se comprueba en la frontera de persistencia para que ningún
+    escritor exportado pueda saltarse la regla.
+    """
+    if (learning_status or "").strip().upper() != "INCLUDED" and not usable_for_learning:
+        return False
+    return not (
+        (approved_by or "").strip()
+        and (approved_at or "").strip()
+        and (file_sha256 or "").strip()
+    )
+
+
 def create_analysis_run(carpeta_origen: str) -> Tuple[Optional[int], Optional[str]]:
     with database.get_connection() as conn:
         try:
@@ -201,6 +232,14 @@ def upsert_historical_budget(data: Dict) -> Tuple[Optional[int], Optional[str]]:
     fecha_mod = (data.get("fecha_modificacion_excel") or "").strip()
     if not ruta or not fecha_mod:
         return (None, "ruta_excel y fecha_modificacion_excel son obligatorios.")
+    if _reusable_inclusion_without_proof(
+        learning_status=data.get("learning_status"),
+        usable_for_learning=data.get("usable_for_learning"),
+        approved_by=data.get("approved_by"),
+        approved_at=data.get("approved_at"),
+        file_sha256=data.get("file_sha256"),
+    ):
+        return (None, _UNPROVEN_INCLUSION_ERROR)
     with database.get_connection() as conn:
         try:
             conn.execute(
@@ -846,6 +885,13 @@ def set_historical_budget_manual_status(
     analysis_status: str,
     usable_for_learning: bool,
 ) -> Optional[str]:
+    """Escritor manual de estado técnico: no puede conceder memoria reutilizable.
+
+    No recibe actor, fecha ni hash de contenido, así que no tiene forma de
+    sellar una aprobación; incluir exige `approve_budget_for_learning`.
+    """
+    if _reusable_inclusion_without_proof(usable_for_learning=usable_for_learning):
+        return _UNPROVEN_INCLUSION_ERROR
     with database.get_connection() as conn:
         try:
             conn.execute(
@@ -883,12 +929,10 @@ def set_historical_budget_learning_status(
     persistir una inclusión sin esa prueba (H06).
     """
     target_status = (learning_status or "").strip().upper()
-    if target_status == "INCLUDED" or bool(usable_for_learning):
-        return (
-            "La inclusión en memoria solo puede hacerse con "
-            "approve_budget_for_learning, que registra quién aprueba "
-            "y cuándo."
-        )
+    if _reusable_inclusion_without_proof(
+        learning_status=target_status, usable_for_learning=usable_for_learning
+    ):
+        return _UNPROVEN_INCLUSION_ERROR
     with database.get_connection() as conn:
         try:
             conn.execute(

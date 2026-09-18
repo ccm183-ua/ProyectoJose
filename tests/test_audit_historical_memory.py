@@ -25,6 +25,8 @@ def test_reports_price_eligibility_and_duplicate_hashes(tmp_path, monkeypatch):
             "analysis_status": "VALID",
             "usable_for_learning": True,
             "learning_status": "INCLUDED",
+            "approved_by": "test",
+            "approved_at": "2026-01-01 10:00:00",
             "file_sha256": "c" * 64,
         }
     )
