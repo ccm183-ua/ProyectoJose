@@ -208,7 +208,9 @@ def main():
 
     import pythoncom, win32com.client
     pythoncom.CoInitialize()
-    excel = win32com.client.Dispatch("Excel.Application")
+    # DispatchEx, no Dispatch: Dispatch se adjunta a la instancia de Excel que
+    # ya tenga abierta el usuario, y el Quit() final cerraría sus libros sin guardar.
+    excel = win32com.client.DispatchEx("Excel.Application")
     excel.Visible = False
     excel.DisplayAlerts = False
 
@@ -372,7 +374,10 @@ main()
                 logger.debug("No se pudo inicializar COM (pythoncom)")
 
             import win32com.client
-            excel = win32com.client.Dispatch("Excel.Application")
+            # DispatchEx, no Dispatch: Dispatch se adjunta a la instancia de Excel que
+            # ya tenga abierta el usuario, y el Quit() del finally cerraría sus libros
+            # sin guardar (DisplayAlerts=False suprime incluso el aviso).
+            excel = win32com.client.DispatchEx("Excel.Application")
             excel.Visible = False
             excel.DisplayAlerts = False
 
