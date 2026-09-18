@@ -31,8 +31,11 @@ def _no_modal_dialogs(monkeypatch):
 
 
 class _RaisingOrchestrator:
+    def __init__(self, exc_type=RuntimeError):
+        self._exc_type = exc_type
+
     def generate(self, **kwargs):
-        raise RuntimeError("fallo inesperado del proveedor IA")
+        raise self._exc_type("fallo inesperado del proveedor IA")
 
 
 class _OkOrchestrator:
@@ -118,8 +121,9 @@ def _complete_result():
     }
 
 
-def test_unhandled_exception_in_worker_yields_sanitized_error_and_reenables_controls(qapp):
-    dlg = _make_dialog(qapp, _RaisingOrchestrator())
+@pytest.mark.parametrize("exc_type", [RuntimeError, TimeoutError])
+def test_unhandled_exception_in_worker_yields_sanitized_error_and_reenables_controls(qapp, exc_type):
+    dlg = _make_dialog(qapp, _RaisingOrchestrator(exc_type))
     dlg._set_buttons_enabled(False)
 
     dlg._run_generation("Sustituir bajante")
@@ -162,6 +166,53 @@ def test_error_without_partidas_shows_warning_and_reenables_controls(qapp):
 
     assert dlg.get_result() is None
     assert dlg._btn_generar.isEnabled()
+
+
+# H16 (S1-E): Cancelar, Esc y la X deben comportarse igual durante la
+# generación; el botón no puede quedar deshabilitado por un camino y libre por
+# los otros.
+def test_cancel_stays_enabled_while_generating(qapp):
+    dlg = _make_dialog(qapp, _OkOrchestrator({"partidas": []}))
+
+    dlg._set_buttons_enabled(False)
+
+    assert dlg._btn_cancelar.isEnabled()
+    assert not dlg._btn_generar.isEnabled()
+
+
+# H16 (S1-E): mientras hay trabajo en vuelo el texto no puede cambiar respecto a
+# la copia que tiene el worker, o el presupuesto se aceptaría contra una versión
+# distinta de la que ve el usuario.
+def test_description_is_read_only_while_generating_and_editable_after(qapp):
+    dlg = _make_dialog(
+        qapp,
+        _OkOrchestrator({"partidas": [], "error": "sin cobertura", "cobertura": {}}),
+    )
+
+    dlg._set_buttons_enabled(False)
+    assert dlg._txt_descripcion.isReadOnly()
+
+    dlg._run_generation("Sustituir bajante")
+
+    assert not dlg._txt_descripcion.isReadOnly()
+
+
+# H16 (S1-E): cerrar durante la generación descarta el resultado tardío y deja el
+# diálogo rechazado; no puede aceptarse por un resultado que llega después.
+def test_closing_during_generation_discards_late_result_and_leaves_no_result(qapp):
+    result = {
+        "partidas": [{"titulo": "X", "source": "historical"}],
+        "source": "historico",
+        "error": None,
+        "cobertura": {"partidas_historicas": 1},
+    }
+    dlg = _make_dialog(qapp, _OkOrchestrator(result))
+
+    dlg.reject()  # equivalente a Esc o a la X de la ventana
+    dlg._run_generation("Sustituir bajante")
+
+    assert dlg.get_result() is None
+    assert dlg.result() == 0  # QDialog.Rejected
 
 
 # H03 (S1-C): un resultado parcial ya no se acepta en silencio; el usuario

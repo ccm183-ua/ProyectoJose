@@ -175,7 +175,7 @@ class VoiceBudgetDialog(QDialog):
             QMessageBox.warning(self, "Descripción vacía", "Escribe o dicta la descripción de la obra.")
             return
         self._set_buttons_enabled(False)
-        self._lbl_status.setText("Generando presupuesto…")
+        self._lbl_status.setText("Generando presupuesto… Puedes cerrar; el resultado en curso se descartará.")
         self._descripcion = descripcion
         threading.Thread(
             target=self._run_generation,
@@ -295,6 +295,6 @@ class VoiceBudgetDialog(QDialog):
 
     def _set_buttons_enabled(self, enabled: bool):
         self._btn_generar.setEnabled(enabled)
-        self._btn_cancelar.setEnabled(enabled)
+        self._txt_descripcion.setReadOnly(not enabled)
         if self._stt.is_available():
             self._btn_dictar.setEnabled(enabled)
