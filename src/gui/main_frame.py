@@ -20,6 +20,12 @@ from src.core.historical_suggestions_dedupe import (
 )
 from src.core.partida_normalizer import normalize_partida_for_excel
 from src.core.services import BudgetService, DatabaseService
+from src.core.services.budget_partidas_flow import (
+    OUTCOME_APPLIED,
+    OUTCOME_CANCELLED,
+    OUTCOME_EMPTY,
+    OUTCOME_FAILED,
+)
 from src.gui import theme
 from src.gui.historical_suggestions_dialog import (
     HistoricalSuggestionContextDialog,
@@ -30,6 +36,13 @@ from src.gui.historical_suggestions_dialog import (
 def _same_path(a: str, b: str) -> bool:
     """Compara rutas normalizando separadores y mayúsculas (Windows)."""
     return os.path.normcase(os.path.normpath(a)) == os.path.normcase(os.path.normpath(b))
+
+
+_MOTIVO_SIN_FINALIZAR = {
+    OUTCOME_CANCELLED: "Has cancelado la elaboración de las partidas.",
+    OUTCOME_FAILED: "No se han podido escribir las partidas en el Excel.",
+    OUTCOME_EMPTY: "No se ha añadido ninguna partida.",
+}
 
 
 class MainFrame(QMainWindow):
@@ -383,27 +396,58 @@ class MainFrame(QMainWindow):
 
         # Flujo unificado: descripción libre (voz o texto) → orquestador → revisión combinada.
         # El flujo clásico (_offer_partidas) se mantiene como fallback automático.
-        self._offer_partidas_unified(result.excel_path, project_data)
-        finalized = self._budget_svc.finalize_budget(
-            result.excel_path,
-            project_data=project_data,
-            comunidad_data=comunidad_data,
-            admin_data=admin_data,
+        outcome = self._offer_partidas_unified(result.excel_path, project_data)
+        if outcome == OUTCOME_APPLIED:
+            finalized = self._budget_svc.finalize_budget(
+                result.excel_path,
+                project_data=project_data,
+                comunidad_data=comunidad_data,
+                admin_data=admin_data,
+            )
+            if not finalized:
+                QMessageBox.warning(
+                    self,
+                    "Aviso",
+                    "El presupuesto se creó, pero no se pudo guardar su detalle completo en la base de datos.",
+                )
+            else:
+                # Bucle de retroalimentación: el presupuesto recién creado se registra
+                # en el histórico como 'own_final_budget', pendiente de revisión. No
+                # se auto-incluye en el aprendizaje aunque el análisis salga VALID:
+                # una partida completada por IA no debe convertirse en precio real
+                # sin aprobación humana explícita.
+                self._schedule_historical_feedback(result.excel_path)
+        else:
+            self._handle_unfinished_budget(result.excel_path, result.folder_path, outcome)
+        self._open_dashboard(refresh=True)
+
+    def _handle_unfinished_budget(self, excel_path, folder_path, outcome):
+        """Ofrece conservar o descartar un presupuesto que no se finaliza."""
+        motivo = _MOTIVO_SIN_FINALIZAR.get(
+            outcome, "La elaboración de las partidas no llegó a completarse.",
         )
-        if not finalized:
+        keep = QMessageBox.question(
+            self,
+            "Presupuesto sin terminar",
+            (
+                f"{motivo}\n\n"
+                "El presupuesto NO se ha marcado como terminado ni se ha registrado "
+                "en la memoria histórica.\n\n"
+                "¿Quieres conservar el borrador?\n\n"
+                f"{excel_path}\n\n"
+                "Si respondes No, se eliminará el archivo recién creado."
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if keep == QMessageBox.StandardButton.Yes:
+            return
+        if not self._budget_svc.discard_budget(excel_path, folder_path):
             QMessageBox.warning(
                 self,
                 "Aviso",
-                "El presupuesto se creó, pero no se pudo guardar su detalle completo en la base de datos.",
+                f"No se pudo completar el descarte. Revisa el estado de:\n{excel_path}",
             )
-        else:
-            # Bucle de retroalimentación: el presupuesto recién creado se registra
-            # en el histórico como 'own_final_budget', pendiente de revisión. No
-            # se auto-incluye en el aprendizaje aunque el análisis salga VALID:
-            # una partida completada por IA no debe convertirse en precio real
-            # sin aprobación humana explícita.
-            self._schedule_historical_feedback(result.excel_path)
-        self._open_dashboard(refresh=True)
 
     def _schedule_historical_feedback(self, excel_path):
         """Registra en segundo plano un presupuesto finalizado como histórico
@@ -521,7 +565,7 @@ class MainFrame(QMainWindow):
 
         return None
 
-    def _offer_ai_partidas(self, excel_path, project_data, historical_context=None):
+    def _offer_ai_partidas(self, excel_path, project_data, historical_context=None) -> str:
         from src.gui.ai_budget_dialog import AIBudgetDialog
         from src.gui.partidas_dialog import SuggestedPartidasDialog
 
@@ -531,49 +575,21 @@ class MainFrame(QMainWindow):
             historical_context=historical_context or {},
         )
         if ai_dlg.exec() != 1:
-            QMessageBox.information(
-                self, "Éxito",
-                f"Presupuesto creado (sin partidas IA):\n{excel_path}",
-            )
-            return
+            return OUTCOME_CANCELLED
 
         result = ai_dlg.get_result()
 
         if not result or not result.get('partidas'):
-            QMessageBox.information(
-                self, "Éxito",
-                f"Presupuesto creado (sin partidas IA):\n{excel_path}",
-            )
-            return
+            return OUTCOME_EMPTY
 
         partidas_dlg = SuggestedPartidasDialog(self, result)
         if partidas_dlg.exec() != 1:
-            QMessageBox.information(
-                self, "Éxito",
-                f"Presupuesto creado (sin partidas IA):\n{excel_path}",
-            )
-            return
+            return OUTCOME_CANCELLED
 
         selected = partidas_dlg.get_selected_partidas()
+        return self._insert_final_partidas_once(excel_path, selected, project_data)
 
-        if selected:
-            if self._budget_svc.insert_partidas(excel_path, selected, project_data):
-                QMessageBox.information(
-                    self, "Éxito",
-                    f"Presupuesto creado con {len(selected)} partidas:\n{excel_path}",
-                )
-            else:
-                QMessageBox.warning(
-                    self, "Aviso",
-                    f"Presupuesto creado pero hubo un error al insertar las partidas.\n{excel_path}",
-                )
-        else:
-            QMessageBox.information(
-                self, "Éxito",
-                f"Presupuesto creado (sin partidas):\n{excel_path}",
-            )
-
-    def _offer_partidas_unified(self, excel_path, project_data):
+    def _offer_partidas_unified(self, excel_path, project_data) -> str:
         """Punto de entrada único de creación de partidas con IA.
 
         El cliente describe la obra en lenguaje natural (voz o texto). El
@@ -599,19 +615,14 @@ class MainFrame(QMainWindow):
         )
         if dlg.exec() != 1:
             # El usuario cerró el diálogo unificado: presupuesto sin partidas IA.
-            QMessageBox.information(
-                self, "Éxito",
-                f"Presupuesto creado (sin partidas IA):\n{excel_path}",
-            )
-            return
+            return OUTCOME_CANCELLED
 
         result = dlg.get_result() or {}
         partidas = result.get("partidas", []) or []
 
         if not partidas:
             # El orquestador no pudo generar nada: probar el flujo clásico.
-            self._offer_partidas(excel_path, project_data)
-            return
+            return self._offer_partidas(excel_path, project_data)
 
         historicas, ia_estimadas = split_generated_partidas_for_review(partidas, MODE_CREATE)
 
@@ -622,21 +633,16 @@ class MainFrame(QMainWindow):
             cobertura=result.get("cobertura"),
         )
         if review.exec() != 1:
-            QMessageBox.information(
-                self, "Éxito",
-                f"Presupuesto creado (sin partidas):\n{excel_path}",
-            )
-            return
+            return OUTCOME_CANCELLED
 
-        self._insert_final_partidas_once(
+        return self._insert_final_partidas_once(
             excel_path, review.get_selected_partidas(), project_data,
         )
 
-    def _offer_partidas(self, excel_path, project_data):
+    def _offer_partidas(self, excel_path, project_data) -> str:
         confirmed_context = self._request_historical_context(project_data)
         if confirmed_context is None:
-            self._offer_ai_partidas(excel_path, project_data)
-            return
+            return self._offer_ai_partidas(excel_path, project_data)
 
         historical_result = self._try_historical_suggestions(project_data, confirmed_context)
         if historical_result and self._should_offer_context_retry(historical_result):
@@ -675,7 +681,7 @@ class MainFrame(QMainWindow):
                     next_step.exec()
                     user_action = next_step.get_result()
                     if user_action == HistoricalSelectionNextStepDialog.CANCEL:
-                        return
+                        return OUTCOME_CANCELLED
                     if user_action == HistoricalSelectionNextStepDialog.CREATE_ONLY:
                         review = CombinedPartidasReviewDialog(
                             self,
@@ -683,13 +689,12 @@ class MainFrame(QMainWindow):
                             ai_partidas=[],
                         )
                         if review.exec() != 1:
-                            return
-                        self._insert_final_partidas_once(
+                            return OUTCOME_CANCELLED
+                        return self._insert_final_partidas_once(
                             excel_path,
                             review.get_selected_partidas(),
                             project_data,
                         )
-                        return
                     completion_dlg = AICompleteHistoricalBudgetDialog(
                         self,
                         project_data=project_data,
@@ -698,7 +703,7 @@ class MainFrame(QMainWindow):
                         historical_result=historical_result,
                     )
                     if completion_dlg.exec() != 1:
-                        return
+                        return OUTCOME_CANCELLED
                     completion_action = completion_dlg.get_action()
                     completion_result = completion_dlg.get_result()
                     ai_partidas_raw = (
@@ -733,13 +738,12 @@ class MainFrame(QMainWindow):
                         merge_duplicates_note=merge_note,
                     )
                     if review.exec() != 1:
-                        return
-                    self._insert_final_partidas_once(
+                        return OUTCOME_CANCELLED
+                    return self._insert_final_partidas_once(
                         excel_path,
                         review.get_selected_partidas(),
                         project_data,
                     )
-                    return
                 # Si acepta sin seleccionar, continuar a IA opcional
                 ask_ai_no_sel = QMessageBox.question(
                     self,
@@ -749,10 +753,10 @@ class MainFrame(QMainWindow):
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 )
                 if ask_ai_no_sel == QMessageBox.StandardButton.Yes:
-                    self._offer_ai_partidas(
+                    return self._offer_ai_partidas(
                         excel_path, project_data, historical_context=historical_result
                     )
-                return
+                return OUTCOME_EMPTY
             # Si cancela el diálogo histórico, preguntar IA sin contexto.
             ask_ai = QMessageBox.question(
                 self,
@@ -761,33 +765,28 @@ class MainFrame(QMainWindow):
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
             if ask_ai == QMessageBox.StandardButton.Yes:
-                self._offer_ai_partidas(excel_path, project_data, historical_context=None)
-            return
+                return self._offer_ai_partidas(excel_path, project_data, historical_context=None)
+            return OUTCOME_CANCELLED
 
-        self._offer_ai_partidas(excel_path, project_data)
+        return self._offer_ai_partidas(excel_path, project_data)
 
-    def _insert_final_partidas_once(self, excel_path: str, selected: list, project_data: dict):
+    def _insert_final_partidas_once(
+        self, excel_path: str, selected: list, project_data: dict,
+    ) -> str:
         from src.core.services.budget_partidas_flow import MODE_CREATE, apply_reviewed_partidas
 
-        if selected:
-            if apply_reviewed_partidas(self._budget_svc, excel_path, selected, MODE_CREATE, project_data):
-                QMessageBox.information(
-                    self,
-                    "Éxito",
-                    f"Presupuesto creado con {len(selected)} partidas:\n{excel_path}",
-                )
-            else:
-                QMessageBox.warning(
-                    self,
-                    "Aviso",
-                    f"Presupuesto creado pero hubo un error al insertar las partidas.\n{excel_path}",
-                )
-        else:
-            QMessageBox.information(
-                self,
-                "Éxito",
-                f"Presupuesto creado (sin partidas):\n{excel_path}",
-            )
+        if not selected:
+            return OUTCOME_EMPTY
+        if not apply_reviewed_partidas(
+            self._budget_svc, excel_path, selected, MODE_CREATE, project_data,
+        ):
+            return OUTCOME_FAILED
+        QMessageBox.information(
+            self,
+            "Éxito",
+            f"Presupuesto creado con {len(selected)} partidas:\n{excel_path}",
+        )
+        return OUTCOME_APPLIED
 
     @staticmethod
     def _should_offer_context_retry(suggestion_result: dict) -> bool:

@@ -52,6 +52,7 @@ from src.core.repositories.historial_repository import (
     actualizar_acceso,
     actualizar_total,
     eliminar_historial,
+    eliminar_historial_por_ruta,
     buscar_historial,
 )
 from src.core.repositories.presupuesto_cache_repository import (
@@ -169,6 +170,7 @@ __all__ = [
     "actualizar_acceso",
     "actualizar_total",
     "eliminar_historial",
+    "eliminar_historial_por_ruta",
     "buscar_historial",
     "get_presupuesto_por_ruta",
     "get_presupuesto_por_id",
