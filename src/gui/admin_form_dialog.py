@@ -124,7 +124,11 @@ class AdminFormDialog(QDialog):
         return [(c["id"], f"{c['nombre']}  —  {c['telefono']}") for c in self._all_contactos]
 
     def _on_delete_contacto(self, id_):
-        resp = QMessageBox.question(self, "Confirmar", "¿Eliminar este contacto?")
+        resp = QMessageBox.warning(
+            self, "Confirmar eliminación",
+            "¿Eliminar este contacto?\n\nEsta acción no se puede deshacer.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
         if resp != QMessageBox.StandardButton.Yes:
             return None
         err = repo.delete_contacto(id_)

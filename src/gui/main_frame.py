@@ -188,8 +188,6 @@ class MainFrame(QMainWindow):
         act_paths.triggered.connect(self._open_default_paths)
 
         m_tools = menubar.addMenu("&Herramientas")
-        act_ai_tools = m_tools.addAction("Configuración IA...")
-        act_ai_tools.triggered.connect(self._open_ai_settings)
         act_hist = m_tools.addAction("Analizar presupuestos terminados...")
         act_hist.triggered.connect(self._open_historical_analysis)
         act_memory = m_tools.addAction("Panel de memoria historica...")

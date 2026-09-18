@@ -619,6 +619,15 @@ class HistoricalAnalysisResultsDialog(QDialog):
         budget_id = int(data.get("id") or 0)
         if budget_id <= 0:
             return
+        file_name = os.path.basename(data.get("ruta_excel", "")) or "este archivo"
+        resp = QMessageBox.question(
+            self,
+            "Confirmar exclusión de memoria histórica",
+            f"¿Excluir '{file_name}' del aprendizaje?\n"
+            "Dejará de sugerir precio en presupuestos futuros.",
+        )
+        if resp != QMessageBox.StandardButton.Yes:
+            return
         err = set_historical_budget_learning_status(
             budget_id,
             "EXCLUDED",

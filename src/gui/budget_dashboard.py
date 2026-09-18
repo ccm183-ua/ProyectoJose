@@ -521,6 +521,15 @@ class BudgetDashboardFrame(QMainWindow):
             if not self._explorer_mode:
                 self._apply_extra_columns_visibility(table)
 
+    def _show_no_results_row(self, table, query):
+        """Si la búsqueda no da resultados, muestra un aviso en vez de dejar la tabla en blanco."""
+        table.setRowCount(1)
+        table.setSpan(0, 0, 1, table.columnCount())
+        item = QTableWidgetItem(f"Sin resultados para «{query.strip()}» · Borra el texto de búsqueda para ver todo")
+        item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        table.setItem(0, 0, item)
+
     def _show_empty_state(self, message):
         self._notebook.blockSignals(True)
         self._notebook.clear()
@@ -606,6 +615,12 @@ class BudgetDashboardFrame(QMainWindow):
         query = search_ctrl.text() if search_ctrl else ""
         filtered = self._filter_rows(rows, query)
 
+        if not filtered and rows and query.strip():
+            self._show_no_results_row(table, query)
+            table.setSortingEnabled(True)
+            self._update_buttons()
+            return
+
         table.setRowCount(len(filtered))
         for i, proj in enumerate(filtered):
             has_excel = bool(proj.get("ruta_excel")) and os.path.exists(
@@ -631,7 +646,7 @@ class BudgetDashboardFrame(QMainWindow):
             item_proyecto = table.item(i, 1)
             if item_proyecto and has_warning:
                 item_proyecto.setToolTip(motivo)
-                item_proyecto.setForeground(QColor("#CC8B00"))
+                item_proyecto.setForeground(theme.qcolor(theme.WARNING))
 
             # Columna 2: Cliente
             cliente = proj.get("cliente", "")
@@ -692,7 +707,7 @@ class BudgetDashboardFrame(QMainWindow):
             item_fuente = table.item(i, 10)
             if item_fuente:
                 item_fuente.setForeground(
-                    QColor("#2E7D32") if fuente_display == "Finalizado" else QColor("#3563A6")
+                    theme.qcolor(theme.SUCCESS) if fuente_display == "Finalizado" else theme.qcolor(theme.INFO)
                 )
 
             # Columna 11: Finalizado (sí/no)
@@ -701,7 +716,7 @@ class BudgetDashboardFrame(QMainWindow):
             table.setItem(i, 11, _SortableItem(finalizado_display, 1 if finalizado else 0))
             item_finalizado = table.item(i, 11)
             if item_finalizado and finalizado:
-                item_finalizado.setForeground(QColor("#2E7D32"))
+                item_finalizado.setForeground(theme.qcolor(theme.SUCCESS))
 
             # Columna 12: Calidad (0-100)
             calidad = int(proj.get("calidad_datos", 0) or 0)
@@ -712,13 +727,13 @@ class BudgetDashboardFrame(QMainWindow):
             )
             table.setItem(i, 12, item_calidad)
             if calidad >= 80:
-                item_calidad.setForeground(QColor("#1B5E20"))  # Verde oscuro
+                item_calidad.setForeground(theme.qcolor(theme.QUALITY_EXCELLENT))
             elif calidad >= 60:
-                item_calidad.setForeground(QColor("#66BB6A"))  # Verde claro
+                item_calidad.setForeground(theme.qcolor(theme.QUALITY_GOOD))
             elif calidad >= 40:
-                item_calidad.setForeground(QColor("#F9A825"))  # Amarillo
+                item_calidad.setForeground(theme.qcolor(theme.QUALITY_FAIR))
             else:
-                item_calidad.setForeground(QColor("#C62828"))  # Rojo
+                item_calidad.setForeground(theme.qcolor(theme.QUALITY_POOR))
 
             # Color solo en indicadores de calidad/estado (no fila completa)
             datos_ok = proj.get("datos_completos", True)
@@ -728,7 +743,7 @@ class BudgetDashboardFrame(QMainWindow):
                 item_calidad.setToolTip("El archivo Excel ya no existe en la ruta esperada.")
             elif has_warning:
                 # Aviso funcional (no necesariamente error): sin coincidencia de hoja.
-                item_calidad.setForeground(QColor("#CC8B00"))
+                item_calidad.setForeground(theme.qcolor(theme.WARNING))
                 item_calidad.setToolTip(motivo)
             elif not datos_ok:
                 tip = (
@@ -767,6 +782,12 @@ class BudgetDashboardFrame(QMainWindow):
         search_ctrl = self._tab_searches.get(state_name)
         query = search_ctrl.text() if search_ctrl else ""
         filtered = self._filter_explorer_rows(rows, query)
+
+        if not filtered and rows and query.strip():
+            self._show_no_results_row(table, query)
+            table.setSortingEnabled(True)
+            self._update_buttons()
+            return
 
         table.setRowCount(len(filtered))
         for i, entry in enumerate(filtered):
@@ -1205,7 +1226,12 @@ class BudgetDashboardFrame(QMainWindow):
             )
             return
 
+        self._btn_edit.setEnabled(False)
+        self._btn_edit.setText("Generando PDF…")
+
         def _on_pdf_done(ok_outer, payload):
+            self._btn_edit.setEnabled(True)
+            self._btn_edit.setText("Editar ▼")
             if not ok_outer:
                 QMessageBox.critical(self, "Error", f"Error al exportar PDF:\n{payload}")
                 return
@@ -1264,6 +1290,8 @@ class BudgetDashboardFrame(QMainWindow):
 
         svc = BudgetService()
         refreshed_any = False
+        to_open = []
+        unreadable_rutas = set()
         for selected in selected_many:
             ruta = os.path.normpath(selected.get("ruta_excel", ""))
             if not os.path.exists(ruta):
@@ -1276,18 +1304,23 @@ class BudgetDashboardFrame(QMainWindow):
             ):
                 refreshed_any = True
 
-            numero = selected.get("numero", "")
-            data = svc.read_budget(ruta, expected_numero=numero)
+            data = svc.read_budget(ruta, expected_numero=selected.get("numero", ""))
             if not data:
-                resp = QMessageBox.question(
-                    self,
-                    "Lectura incompleta del Excel",
-                    "No se pudieron leer bien los datos del presupuesto.\n\n"
-                    "¿Deseas abrirlo igualmente y completarlo manualmente después?",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                )
-                if resp != QMessageBox.StandardButton.Yes:
-                    continue
+                unreadable_rutas.add(ruta)
+            to_open.append(ruta)
+
+        if unreadable_rutas:
+            resp = QMessageBox.question(
+                self,
+                "Lectura incompleta del Excel",
+                f"{len(unreadable_rutas)} de {len(to_open)} presupuestos seleccionados no se "
+                "pudieron leer bien.\n\n¿Deseas abrirlos igualmente y completarlos manualmente después?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if resp != QMessageBox.StandardButton.Yes:
+                to_open = [r for r in to_open if r not in unreadable_rutas]
+
+        for ruta in to_open:
             opened = self._open_file(ruta)
             if opened:
                 self._watch_excel_changes_and_refresh(
@@ -1417,6 +1450,7 @@ class BudgetDashboardFrame(QMainWindow):
             "Esta acción reemplazará TODAS las partidas actuales del presupuesto "
             "por las que genere la IA.\n\n¿Desea continuar?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
         )
         if confirm != QMessageBox.StandardButton.Yes:
             return
@@ -1471,6 +1505,7 @@ class BudgetDashboardFrame(QMainWindow):
             f"Se regenerarán campos en {len(selected_many)} presupuesto(s).\n\n"
             "¿Desea continuar?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
         )
         if confirm != QMessageBox.StandardButton.Yes:
             return
@@ -1492,6 +1527,7 @@ class BudgetDashboardFrame(QMainWindow):
                 "Esta acción sobrescribirá los campos de cabecera del presupuesto "
                 "(cliente, dirección, fecha, etc.).\n\n¿Desea continuar?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
             )
             if confirm != QMessageBox.StandardButton.Yes:
                 return

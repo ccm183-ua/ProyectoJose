@@ -373,6 +373,7 @@ class HistoricalMemoryDashboard(QDialog):
         )
         self._act_exclude.triggered.connect(self._exclude_selected)
         self._actions_menu.addAction(self._act_exclude)
+        self._actions_menu.addSeparator()
         self._act_reanalyze = QAction("Reanalizar", self)
         self._act_reanalyze.triggered.connect(self._reanalyze_selected)
         self._actions_menu.addAction(self._act_reanalyze)
@@ -1256,10 +1257,20 @@ class HistoricalMemoryDashboard(QDialog):
         return format_generation_candidate_summary(classification)
 
     def _include_selected(self):
+        eligible = [d for d in self._selected_rows_data() if self._can_be_included_in_memory(d)]
+        if not eligible:
+            QMessageBox.information(self, "Incluir en memoria", "No hay presupuestos seleccionados aptos para incluir.")
+            return
+        resp = QMessageBox.question(
+            self,
+            "Confirmar inclusión en memoria histórica",
+            f"¿Incluir {len(eligible)} presupuesto(s) en memoria histórica?\n"
+            "Sus partidas podrán sugerir precio en presupuestos futuros.",
+        )
+        if resp != QMessageBox.StandardButton.Yes:
+            return
         changed = 0
-        for data in self._selected_rows_data():
-            if not self._can_be_included_in_memory(data):
-                continue
+        for data in eligible:
             budget_id = int(data.get("id") or 0)
             err = set_historical_budget_learning_status(
                 budget_id,
@@ -1289,10 +1300,20 @@ class HistoricalMemoryDashboard(QDialog):
             QMessageBox.information(self, "Incluir en memoria", "No hay presupuestos seleccionados aptos para incluir.")
 
     def _exclude_selected(self):
+        eligible = [d for d in self._selected_rows_data() if self._can_be_excluded_in_memory(d)]
+        if not eligible:
+            QMessageBox.information(self, "Excluir de memoria", "No hay presupuestos seleccionados válidos para excluir.")
+            return
+        resp = QMessageBox.question(
+            self,
+            "Confirmar exclusión de memoria histórica",
+            f"¿Excluir {len(eligible)} presupuesto(s) del aprendizaje?\n"
+            "Dejarán de sugerir precio en presupuestos futuros.",
+        )
+        if resp != QMessageBox.StandardButton.Yes:
+            return
         changed = 0
-        for data in self._selected_rows_data():
-            if not self._can_be_excluded_in_memory(data):
-                continue
+        for data in eligible:
             budget_id = int(data.get("id") or 0)
             err = set_historical_budget_learning_status(
                 budget_id,
@@ -1372,6 +1393,8 @@ class HistoricalMemoryDashboard(QDialog):
                 self,
                 "Reconstruir patrones",
                 "Se reconstruiran los patrones historicos con los presupuestos incluidos en memoria.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
             )
             if confirm != QMessageBox.StandardButton.Yes:
                 return

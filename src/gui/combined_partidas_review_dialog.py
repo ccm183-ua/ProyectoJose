@@ -264,7 +264,9 @@ class CombinedPartidasReviewDialog(QDialog):
                 item = self._table.item(i, col)
                 item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
 
-    def _toggle_current_row(self):
+    def _toggle_current_row(self, index=None):
+        if index is not None and index.column() != 0:
+            return
         row = self._table.currentRow()
         if row < 0 or row >= len(self._rows):
             return

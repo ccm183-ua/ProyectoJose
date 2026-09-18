@@ -177,7 +177,11 @@ class ComunidadFormDialog(QDialog):
         return [(a["id"], self._admin_display(a)) for a in self._all_admins]
 
     def _on_delete_admin(self, id_):
-        resp = QMessageBox.question(self, "Confirmar", "¿Eliminar esta administración?")
+        resp = QMessageBox.warning(
+            self, "Confirmar eliminación",
+            "¿Eliminar esta administración?\n\nEsta acción no se puede deshacer.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
         if resp != QMessageBox.StandardButton.Yes:
             return None
         err = repo.delete_administracion(id_)
@@ -210,7 +214,11 @@ class ComunidadFormDialog(QDialog):
         return [(c["id"], f"{c['nombre']}  —  {c['telefono']}") for c in self._all_contactos]
 
     def _on_delete_contacto(self, id_):
-        resp = QMessageBox.question(self, "Confirmar", "¿Eliminar este contacto?")
+        resp = QMessageBox.warning(
+            self, "Confirmar eliminación",
+            "¿Eliminar este contacto?\n\nEsta acción no se puede deshacer.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
         if resp != QMessageBox.StandardButton.Yes:
             return None
         err = repo.delete_contacto(id_)

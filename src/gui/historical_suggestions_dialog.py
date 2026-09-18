@@ -620,7 +620,9 @@ class HistoricalSuggestionsDialog(QDialog):
                 item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
         self._update_dup_notice()
 
-    def _toggle_current_row(self):
+    def _toggle_current_row(self, index=None):
+        if index is not None and index.column() != 0:
+            return
         row = self._table.currentRow()
         if row < 0:
             return
