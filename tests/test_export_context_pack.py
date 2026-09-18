@@ -17,6 +17,7 @@ import pytest
 
 from scripts.export_context_pack import export_context_pack, scrub_text
 from scripts.rebuild_historical_patterns import sha256_file
+from src.core import database
 from src.core.historical_budget_analyzer import HistoricalBudgetAnalyzer
 from src.core.historical_pattern_builder import HistoricalPatternBuilder
 from src.core.settings import Settings
@@ -300,6 +301,77 @@ class TestExportContextPack:
         after = {name: (out_dir / name).read_bytes() for name in names}
         assert after == before
         assert not list(out_dir.glob(".*.tmp")), "no deben quedar temporales"
+
+    def test_failure_while_publishing_rolls_back_already_replaced_files(self, tmp_path, monkeypatch):
+        """H09: si falla el renombrado del segundo fichero, los ya
+        reemplazados vuelven a la generacion anterior; no puede quedar una
+        mezcla de paquete nuevo y viejo."""
+        import scripts.export_context_pack as export_mod
+
+        db_path = _seed_full_pack(tmp_path, monkeypatch)
+        out_dir = tmp_path / "pack"
+        export_context_pack(str(db_path), str(out_dir))
+
+        names = ("patrones.csv", "repertorio.csv", "vocabulario.md", "estructura.md", "LIMITES.md")
+        before = {name: (out_dir / name).read_bytes() for name in names}
+
+        # Nueva generacion con contenido distinto para que la mezcla se note.
+        with database.get_connection() as conn:
+            budget_id = conn.execute(
+                "SELECT id FROM historical_budget WHERE nombre_proyecto='obra_a'"
+            ).fetchone()[0]
+        module_id, module_err = get_or_create_execution_module("fachada")
+        assert module_err is None
+        pid, perr = insert_historical_partida(
+            budget_id,
+            {
+                "orden": 99,
+                "concepto_original": "Impermeabilizacion de cubierta con tela asfaltica",
+                "concepto_normalizado": "impermeabilizacion de cubierta con tela asfaltica",
+                "unidad": "m2",
+                "precio_unitario": 99.0,
+                "cantidad": 1,
+                "total_linea": 99.0,
+            },
+        )
+        assert perr is None
+        assert assign_partida_module(pid, module_id, 0.9, "rules") is None
+        assert upsert_partida_features(
+            pid,
+            {
+                "action": "repair",
+                "element": "facade",
+                "system": None,
+                "unit": "m2",
+                "material": None,
+                "dimensions": (),
+                "conditions": (),
+                "line_kind": "atomic",
+                "primary_module_id": "fachada",
+                "secondary_module_ids": (),
+                "confidence": 0.9,
+                "reasons": (),
+                "classifier_version": "test",
+            },
+        ) is None
+        HistoricalPatternBuilder().rebuild_patterns()
+
+        real_replace = export_mod.os.replace
+
+        def _fail_on_repertorio(src, dst):
+            if Path(src).name == ".repertorio.csv.tmp":
+                raise PermissionError("sin permiso para reemplazar repertorio")
+            return real_replace(src, dst)
+
+        monkeypatch.setattr(export_mod.os, "replace", _fail_on_repertorio)
+
+        with pytest.raises(PermissionError):
+            export_context_pack(str(db_path), str(out_dir))
+
+        after = {name: (out_dir / name).read_bytes() for name in names}
+        assert after == before
+        assert not list(out_dir.glob(".*.tmp")), "no deben quedar temporales"
+        assert not list(out_dir.glob(".*.bak")), "no deben quedar copias de seguridad"
 
 
 class TestAutomaticExportTrigger:

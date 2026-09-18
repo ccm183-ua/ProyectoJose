@@ -286,23 +286,52 @@ def _render_limites_md() -> Tuple[str, int]:
 
 def _publish_files(out: Path, contents: Dict[str, str]) -> None:
     """Publica el paquete por staging: escribe cada fichero a un temporal de
-    la misma carpeta y solo despues lo mueve a su nombre final. Si algo falla
-    antes del primer movimiento, la version anterior queda intacta entera."""
+    la misma carpeta y solo despues lo mueve a su nombre final. Antes de
+    reemplazar cada destino, guarda el anterior; si un renombrado posterior
+    falla, restaura los ya reemplazados para no dejar una mezcla de la
+    generacion nueva con la antigua. Si restaurar una copia tampoco es
+    posible, la deja en su sitio en vez de borrarla."""
     staged: List[Tuple[Path, Path]] = []
+    backups: List[Tuple[Path, Path]] = []
+    replaced: List[Path] = []
+    published = False
     try:
         for name, content in contents.items():
             tmp = out / f".{name}.tmp"
             tmp.write_text(content, encoding="utf-8")
             staged.append((tmp, out / name))
         for tmp, target in staged:
+            backup = out / f".{target.name}.bak"
+            if target.exists():
+                os.replace(target, backup)
+                backups.append((backup, target))
             os.replace(tmp, target)
+            replaced.append(target)
+        published = True
     except BaseException:
+        for target in replaced:
+            try:
+                target.unlink()
+            except OSError:
+                pass
+        for backup, target in backups:
+            try:
+                os.replace(backup, target)
+            except OSError:
+                pass
+        raise
+    finally:
         for tmp, _target in staged:
             try:
                 tmp.unlink()
             except OSError:
                 pass
-        raise
+        if published:
+            for backup, _target in backups:
+                try:
+                    backup.unlink()
+                except OSError:
+                    pass
 
 
 def export_context_pack(db_path: str, out_dir: str) -> Dict[str, int]:
