@@ -183,11 +183,7 @@ class BudgetOrchestrator:
         todas_partidas = partidas_historicas + partidas_ia
         source = self._source_label(len(partidas_historicas), len(partidas_ia))
 
-        # Regla conservadora: el prompt de huecos no exige un campo 'module'
-        # por partida, así que no se puede atribuir con fiabilidad qué hueco
-        # resolvió cada partida IA. Se dan por pendientes todos los huecos si
-        # la llamada de huecos falló o no devolvió ninguna partida.
-        if modulos_gap and (error_ia or not partidas_ia):
+        if modulos_gap and not self._gap_resolved(partidas_ia, error_ia):
             modulos_pendientes = list(modulos_gap)
         else:
             modulos_pendientes = []
@@ -262,7 +258,7 @@ class BudgetOrchestrator:
             for p in partidas_nuevas:
                 p["source"] = "ai_completion"
 
-            resuelto = bool(partidas_nuevas) and not error_ia
+            resuelto = self._gap_resolved(partidas_nuevas, error_ia)
             cobertura["partidas_ia"] = (
                 int(cobertura.get("partidas_ia", 0) or 0) + len(partidas_nuevas)
             )
@@ -288,6 +284,17 @@ class BudgetOrchestrator:
             cobertura["error_ia"] = fallido["error"]
             fallido["cobertura"] = cobertura
             return fallido
+
+    @staticmethod
+    def _gap_resolved(partidas_ia: List[Dict], error_ia: Optional[str]) -> bool:
+        """Regla conservadora única de resolución de huecos.
+
+        El prompt de huecos no exige un campo 'module' por partida, así que no
+        se puede atribuir con fiabilidad qué hueco resolvió cada partida IA. Un
+        hueco solo se da por resuelto si la llamada devolvió partidas y sin
+        error; en caso contrario se avisa de más, nunca de menos.
+        """
+        return bool(partidas_ia) and not error_ia
 
     @staticmethod
     def _source_label(n_historicas: int, n_ia: int) -> str:

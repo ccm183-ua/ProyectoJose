@@ -71,6 +71,14 @@ class _InlineThread:
         self._target(*self._args, **self._kwargs)
 
 
+class _RetryRaisingOrchestrator:
+    def generate(self, **kwargs):
+        return _partial_result()
+
+    def retry_pending(self, descripcion_libre, previous_result, **kwargs):
+        raise RuntimeError("reintento caido")
+
+
 def _make_dialog(qapp, orchestrator):
     dlg = VoiceBudgetDialog(parent=None)
     dlg._orchestrator = orchestrator
@@ -147,7 +155,7 @@ def test_generation_result_ignored_after_dialog_already_closed(qapp):
 
 
 def test_error_without_partidas_shows_warning_and_reenables_controls(qapp):
-    dlg = _make_dialog(qapp, _OkOrchestrator({"partidas": [], "error": "sin cobertura", "cobertura": {}}))
+    dlg = _make_dialog(qapp, _OkOrchestrator({"partidas": [], "status": "error", "error": "sin cobertura", "cobertura": {}}))
     dlg._set_buttons_enabled(False)
 
     dlg._run_generation("Descripción demasiado genérica")
@@ -197,4 +205,21 @@ def test_partial_result_is_accepted_untouched_when_user_continues(qapp, monkeypa
     assert dlg.get_result() == partial
     assert dlg.get_result()["status"] == "partial"
     assert len(dlg.get_result()["partidas"]) == 1
+    assert dlg.result() == 1  # QDialog.Accepted
+
+
+# H03 (S1-C): si el reintento revienta con una excepción inesperada, el motivo
+# mostrado (cobertura['error_ia']) es el nuevo fallo, no el del intento previo.
+def test_retry_exception_surfaces_new_motive_and_keeps_partidas(qapp):
+    dlg = _make_dialog(qapp, _RetryRaisingOrchestrator())
+    dlg._ask_partial_choice = lambda result: False
+    partial = _partial_result()
+
+    dlg._run_retry(partial)
+
+    result = dlg.get_result()
+    assert result["partidas"] == partial["partidas"]
+    assert result["status"] == "partial"
+    assert "reintento caido" in result["cobertura"]["error_ia"]
+    assert result["cobertura"]["modulos_pendientes"] == ["sustitucion_bajante"]
     assert dlg.result() == 1  # QDialog.Accepted

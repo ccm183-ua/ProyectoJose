@@ -429,3 +429,28 @@ def test_generation_without_api_key_and_without_historical_reports_error_status(
     assert result["status"] == "error"
     assert result["partidas"] == []
     assert result["error"] == "No hay API key configurada."
+
+
+# H03 (S1-C): el `except` del reintento materializa el invariante "nunca
+# devolver menos partidas de las ya recibidas" ante una excepción real del
+# generador, no solo ante una respuesta de la IA con campo `error`.
+def test_retry_pending_unexpected_exception_keeps_previous_partidas_and_stays_partial():
+    suggestion_service = _FakeSuggestionService(
+        priced_partidas=[_historical_partida(module="reparacion_fachada")],
+        detected_modules=[
+            {"name": "reparacion_fachada", "confidence": 0.9},
+            {"name": "sustitucion_bajante", "confidence": 0.7},
+        ],
+    )
+    generator = _FakeGenerator(gap_result={"partidas": [], "error": "Timeout"})
+    orch = _make_orchestrator(suggestion_service, generator)
+    partial = orch.generate("Reparar fachada y sustituir bajante")
+
+    generator._raises = RuntimeError("Proveedor IA caido")
+    retried = orch.retry_pending("Reparar fachada y sustituir bajante", partial)
+
+    assert retried["partidas"] == partial["partidas"]
+    assert retried["status"] == "partial"
+    assert retried["cobertura"]["modulos_pendientes"] == ["sustitucion_bajante"]
+    assert "Proveedor IA caido" in retried["error"]
+    assert retried["cobertura"]["error_ia"] == retried["error"]

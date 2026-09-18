@@ -212,6 +212,9 @@ class VoiceBudgetDialog(QDialog):
             result = dict(previous_result)
             result["status"] = "partial"
             result["error"] = f"Error inesperado al reintentar lo pendiente: {exc}"
+            cobertura = dict(previous_result.get("cobertura") or {})
+            cobertura["error_ia"] = result["error"]
+            result["cobertura"] = cobertura
         self._generation_done.emit(result)
 
     def _on_generation_done(self, result: Dict):
@@ -220,7 +223,7 @@ class VoiceBudgetDialog(QDialog):
         self._set_buttons_enabled(True)
         self._lbl_status.setText("")
 
-        if result.get("error") and not result.get("partidas"):
+        if result.get("status") == "error":
             QMessageBox.warning(
                 self,
                 "Error al generar",
