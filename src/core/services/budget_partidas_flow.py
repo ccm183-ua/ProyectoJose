@@ -16,6 +16,11 @@ MODE_CREATE = "create"
 MODE_APPEND = "append"
 MODE_REPLACE = "replace"
 
+OUTCOME_APPLIED = "applied"      # se escribieron partidas en el Excel
+OUTCOME_CANCELLED = "cancelled"  # el usuario canceló la descripción o la revisión
+OUTCOME_FAILED = "failed"        # la escritura en el Excel falló
+OUTCOME_EMPTY = "empty"          # el flujo terminó sin ninguna partida que escribir
+
 
 def split_generated_partidas_for_review(
     partidas: List[Dict],

@@ -9,13 +9,12 @@ from datetime import datetime
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
-from src.core import db_repository
+from src.core import db_repository, folder_scanner
 from src.core.budget_reader import BudgetReader
 from src.core.excel_manager import ExcelManager
 from src.core.file_manager import FileManager
 from src.core.partida_normalizer import normalize_partida_for_excel
 from src.core.template_manager import TemplateManager
-from src.utils.helpers import sanitize_filename
 from src.utils.budget_utils import normalize_date, strip_obra_prefix
 
 logger = logging.getLogger(__name__)
@@ -56,20 +55,24 @@ class BudgetService:
         self,
         project_data: Dict,
         project_name: str,
-        save_dir: str,
+        save_path: str,
         template_path: str,
         comunidad_data: Optional[Dict] = None,
         admin_data: Optional[Dict] = None,
+        overwrite: bool = False,
     ) -> BudgetCreationResult:
         """Crea un presupuesto completo: carpeta, subcarpetas, Excel desde plantilla y registro en historial.
 
         Args:
             project_data: Datos del proyecto (calle, num_calle, codigo_postal, etc.).
-            project_name: Nombre del proyecto para el archivo y la carpeta.
-            save_dir: Directorio donde guardar el presupuesto.
+            project_name: Nombre del proyecto para los datos del Excel y el registro en BD.
+            save_path: Ruta completa del archivo .xlsx de destino, tal como la eligió
+                el usuario. La carpeta de obra es, por definición, la que lo contiene.
             template_path: Ruta a la plantilla Excel.
             comunidad_data: Datos de la comunidad (opcional).
             admin_data: Datos de la administración (opcional).
+            overwrite: True solo si el usuario ya consintió explícitamente sustituir
+                ese archivo exacto.
 
         Returns:
             BudgetCreationResult con el resultado de la operación.
@@ -77,15 +80,29 @@ class BudgetService:
         if not os.path.exists(template_path):
             return BudgetCreationResult(success=False, error="No se encontró la plantilla.")
 
-        folder_name = sanitize_filename(project_name)
-        folder_path = os.path.join(save_dir, folder_name)
-        if not self._files.create_folder(folder_path):
+        folder_path = os.path.dirname(save_path)
+        if folder_scanner.is_state_folder(folder_path):
+            return BudgetCreationResult(
+                success=False,
+                excel_path=save_path,
+                error=(
+                    f"{save_path} está en una carpeta de estado. Guarda el presupuesto "
+                    "dentro de una carpeta de proyecto para que aparezca en el dashboard."
+                ),
+            )
+
+        if os.path.exists(save_path) and not overwrite:
+            return BudgetCreationResult(
+                success=False,
+                excel_path=save_path,
+                error=f"Ya existe un presupuesto en {save_path}. No se ha sobrescrito.",
+            )
+
+        if folder_path and not self._files.create_folder(folder_path):
             return BudgetCreationResult(success=False, error="No se pudo crear la carpeta.")
 
         subfolders = ["FOTOS", "PLANOS", "PROYECTO", "MEDICIONES", "PRESUPUESTOS"]
         self._files.create_subfolders(folder_path, subfolders)
-
-        save_path = os.path.join(folder_path, f"{folder_name}.xlsx")
 
         excel_data = self._build_excel_data(
             project_data, project_name, comunidad_data, admin_data,
@@ -136,6 +153,45 @@ class BudgetService:
             db_repository.actualizar_total(excel_path, data["total"])
 
         return True
+
+    def discard_budget(self, excel_path: str, folder_path: str = "") -> bool:
+        """Deshace un presupuesto recién creado que el usuario decidió no conservar.
+
+        Elimina el Excel y su fila de historial, y luego las subcarpetas y la
+        carpeta de obra solo si quedan vacías. Nunca borra directorios con
+        contenido: `os.rmdir` falla y se ignora, así que un fallo no destruye
+        datos del usuario. Si el Excel no se puede borrar (abierto, permisos),
+        no se toca nada más y devuelve False. Si falla el borrado de la fila de
+        historial, también devuelve False —el Excel y las carpetas vacías sí se
+        eliminan— para que el llamante comunique que el descarte quedó a medias
+        en lugar de reportar un éxito silencioso.
+        """
+        try:
+            os.remove(excel_path)
+        except OSError:
+            logger.exception("No se pudo eliminar el borrador %s", excel_path)
+            return False
+
+        err = db_repository.eliminar_historial_por_ruta(excel_path)
+        if err:
+            logger.error("No se pudo eliminar el historial de %s: %s", excel_path, err)
+
+        if folder_path:
+            try:
+                entries = os.listdir(folder_path)
+            except OSError:
+                entries = []
+            for entry in entries:
+                try:
+                    os.rmdir(os.path.join(folder_path, entry))
+                except OSError:
+                    pass
+            try:
+                os.rmdir(folder_path)
+            except OSError:
+                pass
+
+        return err is None
 
     def open_budget(self, file_path: str) -> bool:
         """Abre un presupuesto, lo registra en historial y devuelve True si fue exitoso."""

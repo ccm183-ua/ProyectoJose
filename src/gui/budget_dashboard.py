@@ -84,14 +84,7 @@ _TAB_ORDER = [
 ]
 
 # Carpetas que son estados de proyecto (para menú "Mover a...")
-_STATE_FOLDERS = [
-    "PTE. PRESUPUESTAR",
-    "PRESUPUESTADO",
-    "EJECUTAR",
-    "EJECUTANDO",
-    "TERMINADO",
-    "ANULADOS",
-]
+_STATE_FOLDERS = list(folder_scanner.STATE_FOLDER_NAMES)
 
 _CENTER_BUDGET_COLS = {0, 6, 7, 8, 9}
 
