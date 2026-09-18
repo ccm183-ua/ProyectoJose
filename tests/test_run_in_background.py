@@ -4,6 +4,8 @@ El helper debe entregar exactamente una respuesta de finalización al callback,
 siempre en el hilo de UI, tanto si el trabajo tuvo éxito como si lanzó.
 """
 
+import threading
+
 import pytest
 
 try:
@@ -48,3 +50,18 @@ def test_worker_result_reaches_callback_exactly_once(qapp):
     received = _run_and_collect(lambda: 42, qapp)
 
     assert received == [(True, 42)]
+
+
+def test_callback_runs_on_the_ui_thread(qapp):
+    seen = []
+
+    def callback(ok, payload):
+        seen.append(threading.current_thread())
+
+    thread = run_in_background(lambda: 1, callback)
+    thread.join(5)
+    assert not thread.is_alive(), "el worker no terminó a tiempo"
+    qapp.processEvents()
+
+    assert seen == [threading.main_thread()]
+    assert seen[0] is not thread
