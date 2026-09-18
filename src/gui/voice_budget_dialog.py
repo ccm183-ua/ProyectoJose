@@ -60,6 +60,7 @@ class VoiceBudgetDialog(QDialog):
         self._orchestrator = BudgetOrchestrator(settings=self._settings)
         self._stt = SpeechToTextService()
         self._result: Optional[Dict] = None
+        self._descripcion = ""
         self._closed = False
 
         self.setWindowTitle("Crear presupuesto")
@@ -174,7 +175,8 @@ class VoiceBudgetDialog(QDialog):
             QMessageBox.warning(self, "Descripción vacía", "Escribe o dicta la descripción de la obra.")
             return
         self._set_buttons_enabled(False)
-        self._lbl_status.setText("Generando presupuesto…")
+        self._lbl_status.setText("Generando presupuesto… Puedes cerrar; el resultado en curso se descartará.")
+        self._descripcion = descripcion
         threading.Thread(
             target=self._run_generation,
             args=(descripcion,),
@@ -192,9 +194,27 @@ class VoiceBudgetDialog(QDialog):
             result = {
                 "partidas": [],
                 "source": "error",
+                "status": "error",
                 "error": f"Error inesperado al generar el presupuesto: {exc}",
                 "cobertura": {},
             }
+        self._generation_done.emit(result)
+
+    def _run_retry(self, previous_result: Dict):
+        try:
+            result = self._orchestrator.retry_pending(
+                descripcion_libre=self._descripcion,
+                previous_result=previous_result,
+                datos_proyecto=self._datos_proyecto,
+                plantilla=self._plantilla,
+            )
+        except Exception as exc:
+            result = dict(previous_result)
+            result["status"] = "partial"
+            result["error"] = f"Error inesperado al reintentar lo pendiente: {exc}"
+            cobertura = dict(previous_result.get("cobertura") or {})
+            cobertura["error_ia"] = result["error"]
+            result["cobertura"] = cobertura
         self._generation_done.emit(result)
 
     def _on_generation_done(self, result: Dict):
@@ -203,7 +223,7 @@ class VoiceBudgetDialog(QDialog):
         self._set_buttons_enabled(True)
         self._lbl_status.setText("")
 
-        if result.get("error") and not result.get("partidas"):
+        if result.get("status") == "error":
             QMessageBox.warning(
                 self,
                 "Error al generar",
@@ -211,8 +231,43 @@ class VoiceBudgetDialog(QDialog):
             )
             return
 
+        # ponytail: sin contador de reintentos; si vuelve a salir parcial, el usuario decide cuándo parar.
+        if result.get("status") == "partial" and self._ask_partial_choice(result):
+            self._set_buttons_enabled(False)
+            self._lbl_status.setText("Reintentando lo pendiente…")
+            threading.Thread(target=self._run_retry, args=(result,), daemon=True).start()
+            return
+
         self._result = result
         self.accept()
+
+    def _ask_partial_choice(self, result: Dict) -> bool:
+        """Pregunta si reintentar lo pendiente o continuar con lo generado.
+
+        Seam propio para que los tests lo sustituyan sin abrir un modal real.
+        """
+        cobertura = result.get("cobertura") or {}
+        pendientes = [
+            str(m).replace("_", " ").strip()
+            for m in (cobertura.get("modulos_pendientes") or [])
+        ]
+        motivo = cobertura.get("error_ia") or "sin detalle"
+        n_partidas = len(result.get("partidas") or [])
+
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Generación parcial")
+        box.setText(
+            f"Se han conservado {n_partidas} partidas, pero quedan módulos sin resolver.\n\n"
+            f"Pendientes: {', '.join(pendientes) or '—'}\n"
+            f"Motivo: {motivo}"
+        )
+        btn_retry = box.addButton(
+            "Reintentar lo pendiente", QMessageBox.ButtonRole.AcceptRole
+        )
+        box.addButton("Continuar con lo generado", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        return box.clickedButton() is btn_retry
 
     # ── Cierre ────────────────────────────────────────────────────────────────
 
@@ -240,6 +295,6 @@ class VoiceBudgetDialog(QDialog):
 
     def _set_buttons_enabled(self, enabled: bool):
         self._btn_generar.setEnabled(enabled)
-        self._btn_cancelar.setEnabled(enabled)
+        self._txt_descripcion.setReadOnly(not enabled)
         if self._stt.is_available():
             self._btn_dictar.setEnabled(enabled)

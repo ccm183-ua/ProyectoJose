@@ -323,3 +323,134 @@ def test_confident_legacy_pattern_without_priced_evidence_goes_to_ai_not_draft()
     assert result["cobertura"]["modulos_ia"] == ["sustitucion_bajante"]
     assert len(generator.calls) == 1
     assert all(p["source"] == "ai_completion" for p in result["partidas"])
+
+
+# H03 (S1-C): un fallo de la IA de huecos con cobertura histórica parcial ya no
+# se descarta. Antes, `error` se anulaba en cuanto había una sola partida
+# histórica, así que el hueco sin resolver pasaba por generación terminada.
+def test_gap_ai_failure_with_historical_coverage_is_reported_as_partial():
+    suggestion_service = _FakeSuggestionService(
+        priced_partidas=[_historical_partida(module="reparacion_fachada")],
+        detected_modules=[
+            {"name": "reparacion_fachada", "confidence": 0.9},
+            {"name": "sustitucion_bajante", "confidence": 0.7},
+        ],
+    )
+    generator = _FakeGenerator(gap_result={"partidas": [], "error": "Timeout"})
+    orch = _make_orchestrator(suggestion_service, generator)
+
+    result = orch.generate("Reparar fachada y sustituir bajante")
+
+    assert result["status"] == "partial"
+    assert result["error"] == "Timeout"
+    assert result["cobertura"]["modulos_pendientes"] == ["sustitucion_bajante"]
+    assert result["cobertura"]["error_ia"] == "Timeout"
+    assert [p["source"] for p in result["partidas"]] == ["historical_exact"]
+
+
+# H03 (S1-C): el reintento sólo reenvía los módulos pendientes y no reconsulta
+# el histórico, así que la fachada ya resuelta no puede duplicarse.
+def test_retry_pending_regenerates_only_pending_modules_without_touching_historical():
+    suggestion_service = _FakeSuggestionService(
+        priced_partidas=[_historical_partida(module="reparacion_fachada")],
+        detected_modules=[
+            {"name": "reparacion_fachada", "confidence": 0.9},
+            {"name": "sustitucion_bajante", "confidence": 0.7},
+        ],
+    )
+    generator = _FakeGenerator(gap_result={"partidas": [], "error": "Timeout"})
+    orch = _make_orchestrator(suggestion_service, generator)
+    partial = orch.generate("Reparar fachada y sustituir bajante")
+
+    generator._gap_result = {
+        "partidas": [
+            {"titulo": "Sustitucion bajante", "unidad": "ml", "precio_unitario": 22.0}
+        ],
+        "error": None,
+    }
+    retried = orch.retry_pending("Reparar fachada y sustituir bajante", partial)
+
+    assert suggestion_service.calls == 1  # el histórico no se reconsulta
+    kind, kwargs = generator.calls[-1]
+    assert kind == "gap"
+    assert kwargs["gap_modules"] == ["sustitucion_bajante"]
+    detected_names = {
+        m["name"] for m in kwargs["historical_context"]["detected_modules"]
+    }
+    assert detected_names == {"reparacion_fachada", "sustitucion_bajante"}
+    assert len(retried["partidas"]) == 2
+    assert [p["source"] for p in retried["partidas"]] == [
+        "historical_exact",
+        "ai_completion",
+    ]
+    assert retried["status"] == "ok"
+    assert retried["error"] is None
+    assert retried["cobertura"]["modulos_pendientes"] == []
+    assert retried["cobertura"]["partidas_ia"] == 1
+
+
+# H03 (S1-C): si el reintento vuelve a fallar, se conserva íntegro el trabajo
+# previo y el resultado sigue marcado como parcial.
+def test_retry_pending_failure_keeps_previous_partidas_and_stays_partial():
+    suggestion_service = _FakeSuggestionService(
+        priced_partidas=[_historical_partida(module="reparacion_fachada")],
+        detected_modules=[
+            {"name": "reparacion_fachada", "confidence": 0.9},
+            {"name": "sustitucion_bajante", "confidence": 0.7},
+        ],
+    )
+    generator = _FakeGenerator(gap_result={"partidas": [], "error": "Timeout"})
+    orch = _make_orchestrator(suggestion_service, generator)
+    partial = orch.generate("Reparar fachada y sustituir bajante")
+
+    retried = orch.retry_pending("Reparar fachada y sustituir bajante", partial)
+
+    assert len(retried["partidas"]) == 1
+    assert retried["partidas"][0]["source"] == "historical_exact"
+    assert retried["status"] == "partial"
+    assert retried["cobertura"]["modulos_pendientes"] == ["sustitucion_bajante"]
+
+
+# H03 (S1-C), segunda validación mínima: sin histórico y sin API key no hay
+# resultado que aparente éxito.
+def test_generation_without_api_key_and_without_historical_reports_error_status():
+    suggestion_service = _FakeSuggestionService(partidas=[], detected_modules=[])
+    generator = _FakeGenerator(
+        full_result={
+            "partidas": [],
+            "error": "No hay API key configurada.",
+            "source": "error",
+        }
+    )
+    orch = _make_orchestrator(suggestion_service, generator)
+
+    result = orch.generate("Obra sin descripcion clara")
+
+    assert result["status"] == "error"
+    assert result["partidas"] == []
+    assert result["error"] == "No hay API key configurada."
+
+
+# H03 (S1-C): el `except` del reintento materializa el invariante "nunca
+# devolver menos partidas de las ya recibidas" ante una excepción real del
+# generador, no solo ante una respuesta de la IA con campo `error`.
+def test_retry_pending_unexpected_exception_keeps_previous_partidas_and_stays_partial():
+    suggestion_service = _FakeSuggestionService(
+        priced_partidas=[_historical_partida(module="reparacion_fachada")],
+        detected_modules=[
+            {"name": "reparacion_fachada", "confidence": 0.9},
+            {"name": "sustitucion_bajante", "confidence": 0.7},
+        ],
+    )
+    generator = _FakeGenerator(gap_result={"partidas": [], "error": "Timeout"})
+    orch = _make_orchestrator(suggestion_service, generator)
+    partial = orch.generate("Reparar fachada y sustituir bajante")
+
+    generator._raises = RuntimeError("Proveedor IA caido")
+    retried = orch.retry_pending("Reparar fachada y sustituir bajante", partial)
+
+    assert retried["partidas"] == partial["partidas"]
+    assert retried["status"] == "partial"
+    assert retried["cobertura"]["modulos_pendientes"] == ["sustitucion_bajante"]
+    assert "Proveedor IA caido" in retried["error"]
+    assert retried["cobertura"]["error_ia"] == retried["error"]
