@@ -86,6 +86,9 @@ class TestHistoricalSuggestionService:
                 "analysis_status": "VALID",
                 "usable_for_learning": True,
                 "learning_status": "INCLUDED",
+                "approved_by": "test",
+                "approved_at": "2026-01-01 10:00:00",
+                "file_sha256": "hash_hist.xlsx",
             }
         )
         assert err is None
@@ -262,6 +265,9 @@ class TestFindComparableEvidence:
                 "analysis_status": "VALID",
                 "usable_for_learning": True,
                 "learning_status": "INCLUDED",
+                "approved_by": "test",
+                "approved_at": "2026-01-01 10:00:00",
+                "file_sha256": f"hash_{name}",
             }
         )
         assert err is None
@@ -382,6 +388,9 @@ class TestPricedPartidas:
                 "analysis_status": "VALID",
                 "usable_for_learning": True,
                 "learning_status": "INCLUDED",
+                "approved_by": "test",
+                "approved_at": "2026-01-01 10:00:00",
+                "file_sha256": f"hash_{name}",
             }
         )
         assert err is None

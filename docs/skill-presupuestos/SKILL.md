@@ -1,6 +1,6 @@
 ---
 name: presupuestos-cubiapp
-description: Redacta presupuestos de obra y reforma en el formato que cubiApp puede importar, usando el paquete de contexto exportado por la aplicacion (patrones de precio evidenciado, repertorio real, vocabulario cerrado y un presupuesto de ejemplo). Usar cuando el usuario pida generar, ampliar o revisar un presupuesto de obra a partir de una descripcion, o mencione "presupuesto cubiApp", "paquete de contexto" o los ficheros patrones.csv/repertorio.csv/vocabulario.md/estructura.md.
+description: Redacta presupuestos de obra y reforma en el formato que cubiApp puede importar, usando el paquete de contexto exportado por la aplicacion (patrones de precio evidenciado, repertorio real, vocabulario cerrado, un presupuesto de ejemplo y los limites del filtro). Usar cuando el usuario pida generar, ampliar o revisar un presupuesto de obra a partir de una descripcion, o mencione "presupuesto cubiApp", "paquete de contexto" o los ficheros patrones.csv/repertorio.csv/vocabulario.md/estructura.md/LIMITES.md.
 ---
 
 # Redactar presupuestos para cubiApp
@@ -13,20 +13,26 @@ precio que pusieras tú no tendría esa trazabilidad y el importador lo
 rechazaría de todas formas: el fichero de salida no tiene ningún campo para
 expresarlo.
 
-## Los cuatro ficheros del paquete de contexto
+## Los cinco ficheros del paquete de contexto
 
-Antes de escribir nada, comprueba que tienes disponibles los cuatro
-ficheros que la aplicación exporta (adjuntos en la conversación o en la
-carpeta compartida). Si falta alguno, pídeselo al usuario antes de
-continuar — sin ellos no puedes redactar con criterio propio de esta
-empresa, solo con conocimiento genérico de construcción.
+Antes de escribir nada, lee `LIMITES.md` y comprueba que tienes
+disponibles los cinco ficheros que la aplicación exporta (adjuntos en la
+conversación o en la carpeta compartida). Si falta alguno, pídeselo al
+usuario antes de continuar — sin ellos no puedes redactar con criterio
+propio de esta empresa, solo con conocimiento genérico de construcción.
 
 | Fichero | Para qué sirve | Para qué NO sirve |
 |---|---|---|
+| `LIMITES.md` | Declara qué minimiza el paquete de contexto y qué no garantiza. Léelo el primero. | No es una garantía de anonimización: los cuatro ficheros de datos (`patrones.csv`, `repertorio.csv`, `vocabulario.md`, `estructura.md`) hay que revisarlos a mano antes de compartirlos. |
 | `patrones.csv` | Conceptos con precio evidenciado por el histórico real (varios presupuestos ya cobrados). Úsalo para saber qué es habitual y de qué módulo. | No lo uses para copiar el precio a ningún sitio — no lo necesitas, ni te lo vamos a pedir. |
 | `repertorio.csv` | Cómo se redacta cada partida en esta empresa, y qué unidad se usa habitualmente para cada concepto. Incluye partidas compuestas (varias acciones a la vez) que no están en patrones.csv. | Referencia de redacción y alcance, **no de precio** — aunque el fichero incluye una columna de precio histórico, es orientativa: no la repitas en tu salida ni la trates como una cifra que puedas ofrecer. |
 | `vocabulario.md` | Lista cerrada de módulos de ejecución (`fachada`, `alicatado`, `carpinteria`...) y de acciones/elementos reconocidos. Cada `<modulo>` que escribas tiene que salir de aquí. | No inventes un módulo nuevo aunque te parezca más preciso — si ninguno encaja bien, usa el que más se acerque y dilo en la conversación. |
 | `estructura.md` | Un presupuesto real ya aprobado, con su orden y agrupación. Úsalo como referencia de cómo se organiza un presupuesto completo (trabajos previos, obra principal, instalaciones, acabados, limpieza). | No copies sus partidas literalmente si no aplican a la obra que te están describiendo. |
+
+El paquete **no está anonimizado**: LIMITES.md declara que el filtro es una
+minimización best-effort. Antes de compartirlo o subirlo a un proveedor,
+revisa a mano los cuatro ficheros de datos y quita cualquier dato de
+cliente que veas.
 
 ## Cómo trabajar la conversación
 

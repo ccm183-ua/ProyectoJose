@@ -17,7 +17,7 @@ import re
 import shutil
 import subprocess
 import sys
-import time
+import threading
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.core import folder_scanner
-from src.core.budget_cache import cleanup_orphaned_cache
+from src.core.budget_cache import _wait_for_excel_change, cleanup_orphaned_cache
 from src.core.project_data_resolver import build_relation_index, resolve_projects
 from src.core.settings import Settings
 from src.gui import theme
@@ -159,10 +159,17 @@ class BudgetDashboardFrame(QMainWindow):
         self._root_path: str = ""
         self._explorer_mode: bool = False
         self._show_extra_columns: bool = True
+        self._excel_watchers: dict[str, threading.Event] = {}
 
         self._build_ui()
         self._center()
         self._load_data()
+
+    def closeEvent(self, event):
+        for stop in list(self._excel_watchers.values()):
+            stop.set()
+        self._excel_watchers.clear()
+        super().closeEvent(event)
 
     def _center(self):
         screen = self.screen()
@@ -612,7 +619,9 @@ class BudgetDashboardFrame(QMainWindow):
                 proj.get("ruta_excel", "")
             )
             motivo = (proj.get("motivo_incompleto") or "").strip()
-            has_warning = bool(motivo)
+            aviso_actualizacion = (proj.get("aviso_actualizacion") or "").strip()
+            warning_text = aviso_actualizacion or motivo
+            has_warning = bool(warning_text)
             nombre = proj.get("nombre_proyecto", "")
             if not has_excel or has_warning:
                 nombre = f"⚠ {nombre}"
@@ -630,7 +639,7 @@ class BudgetDashboardFrame(QMainWindow):
             table.setItem(i, 1, _SortableItem(nombre_display, sort_key))
             item_proyecto = table.item(i, 1)
             if item_proyecto and has_warning:
-                item_proyecto.setToolTip(motivo)
+                item_proyecto.setToolTip(warning_text)
                 item_proyecto.setForeground(QColor("#CC8B00"))
 
             # Columna 2: Cliente
@@ -695,12 +704,21 @@ class BudgetDashboardFrame(QMainWindow):
                     QColor("#2E7D32") if fuente_display == "Finalizado" else QColor("#3563A6")
                 )
 
-            # Columna 11: Finalizado (sí/no)
+            # Columna 11: Finalizado (snapshot) vs versión actual del Excel
             finalizado = bool(proj.get("es_finalizado", False))
-            finalizado_display = "Sí" if finalizado else "No"
+            desactualizado = bool(proj.get("snapshot_desactualizado", False))
+            if finalizado and desactualizado:
+                finalizado_display = "Sí (desactualizado)"
+            elif finalizado:
+                finalizado_display = "Sí"
+            else:
+                finalizado_display = "No"
             table.setItem(i, 11, _SortableItem(finalizado_display, 1 if finalizado else 0))
             item_finalizado = table.item(i, 11)
-            if item_finalizado and finalizado:
+            if item_finalizado and desactualizado:
+                item_finalizado.setForeground(QColor("#CC8B00"))
+                item_finalizado.setToolTip(aviso_actualizacion)
+            elif item_finalizado and finalizado:
                 item_finalizado.setForeground(QColor("#2E7D32"))
 
             # Columna 12: Calidad (0-100)
@@ -727,9 +745,9 @@ class BudgetDashboardFrame(QMainWindow):
                 item_calidad.setForeground(QColor(theme.TEXT_TERTIARY))
                 item_calidad.setToolTip("El archivo Excel ya no existe en la ruta esperada.")
             elif has_warning:
-                # Aviso funcional (no necesariamente error): sin coincidencia de hoja.
+                # Aviso funcional: sin coincidencia de hoja o snapshot desactualizado.
                 item_calidad.setForeground(QColor("#CC8B00"))
-                item_calidad.setToolTip(motivo)
+                item_calidad.setToolTip(warning_text)
             elif not datos_ok:
                 tip = (
                     "No se pudieron obtener los datos completos de este presupuesto. "
@@ -1298,34 +1316,35 @@ class BudgetDashboardFrame(QMainWindow):
             self._load_data()
 
     def _watch_excel_changes_and_refresh(self, ruta_excel: str, estado: str):
-        """Vigila cambios de mtime tras abrir Excel y refresca ese presupuesto."""
+        """Vigila el Excel abierto mientras el dashboard siga vivo.
+
+        No se detiene en el primer guardado ni a los pocos minutos: al detectar
+        un cambio refresca el snapshot y vuelve a vigilar, para que ediciones
+        posteriores tampoco queden presentadas como datos actuales.
+        """
+        if ruta_excel in self._excel_watchers:
+            return
         try:
             baseline = os.path.getmtime(ruta_excel)
         except OSError:
-            baseline = None
+            return
+        stop = threading.Event()
+        self._excel_watchers[ruta_excel] = stop
 
         def _watch():
-            if baseline is None:
-                return {"changed": False}
-            # Ventana de observación ~6 minutos
-            for _ in range(180):
-                time.sleep(2)
-                try:
-                    mtime_now = os.path.getmtime(ruta_excel)
-                except OSError:
-                    continue
-                if mtime_now != baseline:
-                    return {"changed": True}
-            return {"changed": False}
+            return {"changed": _wait_for_excel_change(ruta_excel, stop, baseline)}
 
         def _on_watch_done(ok, payload):
-            if not ok or not payload.get("changed"):
+            self._excel_watchers.pop(ruta_excel, None)
+            if stop.is_set() or not ok:
                 return
+            if payload.get("changed"):
+                from src.core.services import BudgetService
 
-            from src.core.services import BudgetService
-            svc = BudgetService()
-            if svc.finalize_budget(ruta_excel, estado=estado):
+                BudgetService().finalize_budget(ruta_excel, estado=estado)
                 self._load_data()
+            if not stop.is_set():
+                self._watch_excel_changes_and_refresh(ruta_excel, estado)
 
         run_in_background(_watch, _on_watch_done)
 

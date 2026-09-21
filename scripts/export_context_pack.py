@@ -6,13 +6,22 @@ redactar borradores de presupuesto: patrones con precio evidenciado,
 repertorio de conceptos reales, vocabulario cerrado y un presupuesto de
 ejemplo. Solo lectura sobre la base de datos (modo ro, sin migraciones).
 
-scrub_text() es el filtro de datos personales: elimina direcciones,
-referencias a "Comunidad de Propietarios" y CIF/NIF del texto libre de
-partida antes de que salga de la maquina, sin tocar conceptos legitimos
-que contengan numeros o palabras parecidas (medidas, codigos de material).
+scrub_text() es un minimizador best-effort del texto libre de partida: borra
+un conjunto estrecho de patrones (direcciones con "C/"/"Avda.", "Comunidad
+de Propietarios", CIF/NIF y correos) sin tocar conceptos legitimos que
+contengan numeros o palabras parecidas (medidas, codigos de material).
+
+NO es anonimizacion y no se debe presentar como tal: deja fuera formatos de
+direccion o identificadores que no reconoce. El paquete exportado incluye un
+LIMITES.md con lo que no garantiza, para que se revise a mano antes de
+compartirlo. La minimizacion de campos (no exportar cliente, administracion,
+contacto, CIF, direccion postal ni nombre del Excel) reduce el riesgo, pero no
+sustituye esa revision.
 """
 
 import csv
+import io
+import os
 import re
 import sqlite3
 from pathlib import Path
@@ -42,10 +51,46 @@ _RE_COMUNIDAD = re.compile(
 # CIF/NIF: letra + 8 digitos, u 8 digitos + letra.
 _RE_CIF_NIF = re.compile(r"\b[A-Za-z]\d{8}\b|\b\d{8}[A-Za-z]\b")
 
+# Correo electronico. Nunca es parte de un concepto tecnico facturable, asi
+# que eliminarlo no destruye informacion util.
+_RE_EMAIL = re.compile(r"\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b")
+
+
+LIMITES_FILENAME = "LIMITES.md"
+
+_LIMITES_MD = """# Limites del paquete de contexto
+
+Este paquete **no esta anonimizado**. Se genera con una minimizacion
+best-effort del texto libre (direcciones con `C/`/`Avda.`, "Comunidad de
+Propietarios", CIF/NIF y correos), pero ese filtro es deliberadamente
+estrecho: **no garantiza** que desaparezcan todos los identificadores.
+
+Revisa el contenido a mano antes de compartirlo o subirlo a un proveedor.
+
+## Que incluye
+
+- `patrones.csv`: conceptos con precio evidenciado.
+- `repertorio.csv`: conceptos y precios historicos incluidos en memoria.
+- `vocabulario.md`: listas cerradas de modulos, acciones, elementos y unidades.
+- `estructura.md`: orden y agrupacion de un presupuesto real.
+
+## Que NO se exporta (minimizacion de campos)
+
+- Cliente/comunidad, administracion, CIF, telefono y correo de contacto.
+- Direccion postal de cabecera, localidad y nombre/ruta del fichero Excel.
+- Cualquier importe o dato que no provenga de partidas incluidas en memoria.
+
+## Que puede quedar en el texto
+
+- Nombres propios, cargos y direcciones con formatos no reconocidos.
+- Identificadores embebidos en conceptos tecnicos (p. ej. numeros de via).
+"""
+
 
 def scrub_text(text: str) -> Tuple[str, List[str]]:
-    """Elimina datos personales de un texto libre de partida.
+    """Minimiza best-effort datos personales de un texto libre de partida.
 
+    NO es anonimizacion: solo retira los patrones estrechos que reconoce.
     Devuelve el texto limpio y la lista de razones por las que se toco
     (vacia si no se elimino nada), para poder auditar el resultado en vez
     de confiar a ciegas en que el filtro acerto.
@@ -65,6 +110,10 @@ def scrub_text(text: str) -> Tuple[str, List[str]]:
         cleaned = _RE_CIF_NIF.sub("", cleaned)
         reasons.append("cif_nif")
 
+    if _RE_EMAIL.search(cleaned):
+        cleaned = _RE_EMAIL.sub("", cleaned)
+        reasons.append("email")
+
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
     return cleaned, reasons
 
@@ -82,7 +131,7 @@ def _fmt(value) -> str:
     return str(value)
 
 
-def write_patrones_csv(conn: sqlite3.Connection, path: Path) -> int:
+def _render_patrones_csv(conn: sqlite3.Connection) -> Tuple[str, int]:
     """Precio evidenciado: unica fuente que puede aportar precio al
     validador. Concepto scrubbed igual que en repertorio.csv y estructura.md
     porque suggested_partida_pattern.concepto_normalizado viene tal cual del
@@ -97,22 +146,22 @@ def write_patrones_csv(conn: sqlite3.Connection, path: Path) -> int:
            ORDER BY em.nombre, p.concepto_normalizado"""
     ).fetchall()
 
-    with open(path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f, lineterminator="\n")
+    buffer = io.StringIO()
+    writer = csv.writer(buffer, lineterminator="\n")
+    writer.writerow([
+        "concepto", "modulo", "unidad", "precio_mediana", "precio_min",
+        "precio_max", "frecuencia", "presupuestos_distintos", "calidad_evidencia",
+    ])
+    for concepto, modulo, unidad, mediana, pmin, pmax, freq, distinct, calidad in rows:
+        concepto, _ = scrub_text(concepto or "")
         writer.writerow([
-            "concepto", "modulo", "unidad", "precio_mediana", "precio_min",
-            "precio_max", "frecuencia", "presupuestos_distintos", "calidad_evidencia",
+            concepto, modulo, unidad or "", _fmt(mediana), _fmt(pmin),
+            _fmt(pmax), freq or 0, distinct or 0, calidad or "",
         ])
-        for concepto, modulo, unidad, mediana, pmin, pmax, freq, distinct, calidad in rows:
-            concepto, _ = scrub_text(concepto or "")
-            writer.writerow([
-                concepto, modulo, unidad or "", _fmt(mediana), _fmt(pmin),
-                _fmt(pmax), freq or 0, distinct or 0, calidad or "",
-            ])
-    return len(rows)
+    return buffer.getvalue(), len(rows)
 
 
-def write_repertorio_csv(conn: sqlite3.Connection, path: Path) -> int:
+def _render_repertorio_csv(conn: sqlite3.Connection) -> Tuple[str, int]:
     """Como se redacta y que se cobro de verdad: incluye lineas compuestas,
     a diferencia de patrones.csv. Referencia orientativa, nunca evidencia."""
     rows = conn.execute(
@@ -125,16 +174,16 @@ def write_repertorio_csv(conn: sqlite3.Connection, path: Path) -> int:
            ORDER BY hp.concepto_original, hp.unidad"""
     ).fetchall()
 
-    with open(path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f, lineterminator="\n")
-        writer.writerow(["concepto", "unidad", "precio_unitario", "tipo_linea", "modulo_principal"])
-        for concepto, unidad, precio, tipo_linea, modulo in rows:
-            concepto, _ = scrub_text(concepto or "")
-            writer.writerow([concepto, unidad or "", _fmt(precio), tipo_linea, modulo])
-    return len(rows)
+    buffer = io.StringIO()
+    writer = csv.writer(buffer, lineterminator="\n")
+    writer.writerow(["concepto", "unidad", "precio_unitario", "tipo_linea", "modulo_principal"])
+    for concepto, unidad, precio, tipo_linea, modulo in rows:
+        concepto, _ = scrub_text(concepto or "")
+        writer.writerow([concepto, unidad or "", _fmt(precio), tipo_linea, modulo])
+    return buffer.getvalue(), len(rows)
 
 
-def write_vocabulario_md(conn: sqlite3.Connection, path: Path) -> int:
+def _render_vocabulario_md(conn: sqlite3.Connection) -> Tuple[str, int]:
     """Las listas cerradas: fuente de verdad de lo que el futuro validador
     aceptara. Modulos y unidades vienen de la BD; acciones y elementos se
     importan del clasificador real (Fase 2) para no poder desincronizarse."""
@@ -188,11 +237,10 @@ def write_vocabulario_md(conn: sqlite3.Connection, path: Path) -> int:
     )
     lines.append("")
 
-    path.write_text("\n".join(lines), encoding="utf-8")
-    return len(modulos)
+    return "\n".join(lines), len(modulos)
 
 
-def write_estructura_md(conn: sqlite3.Connection, path: Path) -> int:
+def _render_estructura_md(conn: sqlite3.Connection) -> Tuple[str, int]:
     """Un presupuesto real INCLUDED, el mas representativo por numero de
     partidas, para mostrar orden y agrupacion de una obra real."""
     budget = conn.execute(
@@ -208,8 +256,7 @@ def write_estructura_md(conn: sqlite3.Connection, path: Path) -> int:
     lines = ["# Estructura de un presupuesto real", ""]
     if budget is None:
         lines.append("(sin presupuestos incluidos todavia)")
-        path.write_text("\n".join(lines), encoding="utf-8")
-        return 0
+        return "\n".join(lines), 0
 
     budget_id = budget[0]
     partidas = conn.execute(
@@ -227,28 +274,103 @@ def write_estructura_md(conn: sqlite3.Connection, path: Path) -> int:
         lines.append(f"| {orden} | {concepto} | {unidad or ''} | {_fmt(cantidad)} |")
     lines.append("")
 
-    path.write_text("\n".join(lines), encoding="utf-8")
-    return len(partidas)
+    return "\n".join(lines), len(partidas)
+
+
+def _render_limites_md() -> Tuple[str, int]:
+    """Declara en el propio paquete que no es una salida anonimizada y que
+    hay que revisarlo antes de compartirlo. Sin este fichero, el nombre de la
+    carpeta podria leerse como una garantia de anonimizacion."""
+    return _LIMITES_MD, 1
+
+
+def _publish_files(out: Path, contents: Dict[str, str]) -> None:
+    """Publica el paquete por staging: escribe cada fichero a un temporal de
+    la misma carpeta y solo despues lo mueve a su nombre final. Antes de
+    reemplazar cada destino, guarda el anterior; si un renombrado posterior
+    falla, restaura los ya reemplazados para no dejar una mezcla de la
+    generacion nueva con la antigua. Si restaurar una copia tampoco es
+    posible, la deja en su sitio en vez de borrarla."""
+    staged: List[Tuple[Path, Path]] = []
+    backups: List[Tuple[Path, Path]] = []
+    replaced: List[Path] = []
+    published = False
+    try:
+        for name, content in contents.items():
+            tmp = out / f".{name}.tmp"
+            tmp.write_text(content, encoding="utf-8")
+            staged.append((tmp, out / name))
+        for tmp, target in staged:
+            backup = out / f".{target.name}.bak"
+            if target.exists():
+                os.replace(target, backup)
+                backups.append((backup, target))
+            os.replace(tmp, target)
+            replaced.append(target)
+        published = True
+    except BaseException:
+        for target in replaced:
+            try:
+                target.unlink()
+            except OSError:
+                pass
+        for backup, target in backups:
+            try:
+                os.replace(backup, target)
+            except OSError:
+                pass
+        raise
+    finally:
+        for tmp, _target in staged:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+        if published:
+            for backup, _target in backups:
+                try:
+                    backup.unlink()
+                except OSError:
+                    pass
 
 
 def export_context_pack(db_path: str, out_dir: str) -> Dict[str, int]:
     """Exporta el paquete de contexto completo. Solo lectura: abre la BD en
-    modo ro y no llama a init_schema ni a ninguna migracion."""
+    modo ro y no llama a init_schema ni a ninguna migracion.
+
+    Renderiza todos los ficheros desde una unica transaccion de lectura antes
+    de publicar ninguno: o se publica una version coherente entera, o la
+    version anterior permanece intacta."""
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
 
     conn = _connect_ro(db_path)
     try:
-        n_patrones = write_patrones_csv(conn, out / "patrones.csv")
-        n_repertorio = write_repertorio_csv(conn, out / "repertorio.csv")
-        n_modulos = write_vocabulario_md(conn, out / "vocabulario.md")
-        n_estructura = write_estructura_md(conn, out / "estructura.md")
+        conn.isolation_level = None
+        conn.execute("BEGIN")
+        rendered = {
+            "patrones.csv": _render_patrones_csv(conn),
+            "repertorio.csv": _render_repertorio_csv(conn),
+            "vocabulario.md": _render_vocabulario_md(conn),
+            "estructura.md": _render_estructura_md(conn),
+            LIMITES_FILENAME: _render_limites_md(),
+        }
+        conn.execute("COMMIT")
+    except BaseException:
+        try:
+            conn.execute("ROLLBACK")
+        except sqlite3.Error:
+            pass
+        raise
     finally:
         conn.close()
 
+    _publish_files(out, {name: content for name, (content, _count) in rendered.items()})
+
     return {
-        "patrones": n_patrones,
-        "repertorio": n_repertorio,
-        "vocabulario_modulos": n_modulos,
-        "estructura_partidas": n_estructura,
+        "patrones": rendered["patrones.csv"][1],
+        "repertorio": rendered["repertorio.csv"][1],
+        "vocabulario_modulos": rendered["vocabulario.md"][1],
+        "estructura_partidas": rendered["estructura.md"][1],
+        "limites": rendered[LIMITES_FILENAME][1],
     }

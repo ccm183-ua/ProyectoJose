@@ -22,6 +22,7 @@ Principios:
 import logging
 import os
 import re
+import threading
 from datetime import datetime
 from typing import Dict, List, Optional
 
@@ -95,6 +96,31 @@ def _get_file_mtime_iso(filepath: str) -> Optional[str]:
         return datetime.fromtimestamp(stat.st_mtime).isoformat()
     except (OSError, ValueError):
         return None
+
+
+def _wait_for_excel_change(
+    ruta_excel: str,
+    stop_event: threading.Event,
+    baseline: float,
+    poll_seconds: float = 2.0,
+) -> bool:
+    """Espera a que cambie el mtime del Excel o a que se pida parar.
+
+    Sin límite de tiempo: vigila mientras el dashboard siga abierto, para no
+    dejar de observar tras el primer guardado ni pasados unos minutos.
+    Devuelve True si cambió y False si se pidió parar.
+    """
+    current = baseline
+    while not stop_event.is_set():
+        if stop_event.wait(poll_seconds):
+            return False
+        try:
+            mtime_now = os.path.getmtime(ruta_excel)
+        except OSError:
+            continue
+        if mtime_now != current:
+            return True
+    return False
 
 
 def _infer_localidad_from_direccion(direccion: str) -> str:
@@ -189,7 +215,9 @@ def sync_presupuestos(
         cached = get_presupuesto_por_ruta(ruta_excel)
 
         # Si el presupuesto ya está finalizado en DB, el escaneo no debe
-        # sobreescribir su contenido aunque el Excel haya cambiado.
+        # sobreescribir su contenido aunque el Excel haya cambiado. Pero
+        # tampoco puede presentarlo como actual: si el mtime difiere, se
+        # marca como snapshot desactualizado para que la UI lo distinga.
         if cached and cached.get("es_finalizado"):
             if cached.get("estado") != state_name and state_name:
                 cached["estado"] = state_name
@@ -198,6 +226,14 @@ def sync_presupuestos(
                 except Exception:
                     logger.debug("No se pudo actualizar estado finalizado para %s", ruta_excel)
             _fill_entry_from_cache(entry, cached)
+            cached_mtime = (cached.get("fecha_modificacion_excel") or "").strip()
+            if cached_mtime and cached_mtime != mtime_actual:
+                entry["snapshot_desactualizado"] = True
+                entry["aviso_actualizacion"] = (
+                    "El Excel cambió después de finalizar. Se muestra el snapshot "
+                    "finalizado, no la versión actual: actualiza o reabre el "
+                    "presupuesto para revisarla."
+                )
             result.append(entry)
             continue
 
@@ -304,6 +340,8 @@ def _empty_entry(proj: Dict, state_name: str = "") -> Dict:
         "estado": state_name,
         "datos_completos": False,
         "es_finalizado": False,
+        "snapshot_desactualizado": False,
+        "aviso_actualizacion": "",
         "fuente_datos": "scan",
         "calidad_datos": 0,
         "motivo_incompleto": "",

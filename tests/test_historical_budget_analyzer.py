@@ -309,6 +309,9 @@ class TestHistoricalBudgetAnalyzer:
                 "analysis_status": "VALID_WITH_WARNINGS",
                 "usable_for_learning": True,
                 "learning_status": "INCLUDED",
+                "approved_by": "test",
+                "approved_at": "2026-01-01 10:00:00",
+                "file_sha256": "hash_manual_included_invalid.xlsx",
                 "learning_status_source": "MANUAL",
                 "learning_decision_reason": "Incluido tras revision.",
                 "learning_decision_at": "2026-01-01 10:00:00",
@@ -659,3 +662,120 @@ class TestHashDeduplicationAndPendingApproval:
         assert stored["usable_for_learning"] is False
         assert stored["source_kind"] == "external_excel"
         assert stored["file_sha256"], "el hash debe quedar calculado y guardado"
+
+
+class TestReanalysisApprovalVersionBinding:
+    """H06: la aprobación manual solo sobrevive al reanálisis si el contenido
+    revisado (hash) no ha cambiado. Reanalizar el mismo contenido no borra
+    actor/fecha; un contenido distinto no hereda la aprobación."""
+
+    def _seed_approved_budget(self, excel_path, tmp_path):
+        mtime = datetime.fromtimestamp(excel_path.stat().st_mtime).isoformat()
+        budget_id, err = upsert_historical_budget(
+            {
+                "ruta_excel": str(excel_path),
+                "ruta_carpeta": str(tmp_path),
+                "nombre_proyecto": excel_path.name,
+                "numero_proyecto": "001-26",
+                "fecha_modificacion_excel": mtime,
+                "fecha_analisis": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "analisis_ok": True,
+                "analysis_status": "VALID",
+                "usable_for_learning": True,
+                "learning_status": "INCLUDED",
+                "learning_status_source": "MANUAL",
+                "learning_decision_reason": "Aprobado explícitamente por el usuario.",
+                "learning_decision_at": "2026-01-01 10:00:00",
+                "approved_by": "SERGIO",
+                "approved_at": "2026-01-01 10:00:00",
+                "file_sha256": "hashA",
+            }
+        )
+        assert err is None
+        assert budget_id is not None
+        return budget_id
+
+    @staticmethod
+    def _mock_valid_probe_and_reader(analyzer, monkeypatch):
+        monkeypatch.setattr(
+            analyzer.probe,
+            "probe",
+            lambda *_args, **_kwargs: {
+                "is_compatible": True,
+                "score": 24,
+                "header_score": 12,
+                "partida_score": 12,
+                "selected_sheet": "PTO",
+                "selected_sheet_index": 0,
+                "expected_numero": "001-26",
+                "detected_numero": "001-26",
+                "numero_matches": True,
+                "partidas_detectadas": 2,
+                "issues": [],
+            },
+        )
+        monkeypatch.setattr(
+            analyzer.reader,
+            "read",
+            lambda *_args, **_kwargs: {
+                "cabecera": {"numero": "001-26", "obra": "Reparacion bajante", "fecha": "2026-01-01", "cliente": "Test"},
+                "partidas": [
+                    {"numero": "1.1", "concepto": "Desmontaje bajante", "unidad": "ml", "cantidad": 1, "precio": 10, "importe": 10},
+                    {"numero": "1.2", "concepto": "Instalacion bajante", "unidad": "ml", "cantidad": 1, "precio": 15, "importe": 15},
+                ],
+                "subtotal": 25.0,
+                "total": 25.0,
+                "diagnostics": {"selected_sheet": "PTO", "selected_sheet_index": 0, "detected_numero": "001-26", "numero_matches": True},
+            },
+        )
+
+    def test_reanalysis_with_changed_content_drops_manual_approval(self, tmp_path, monkeypatch):
+        import src.core.historical_budget_analyzer as hba_module
+
+        monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "approval_changed.db"))
+        with database.get_connection() as _conn:
+            pass
+
+        excel_path = tmp_path / "aprobado_cambiado.xlsx"
+        excel_path.write_text("contenido v1", encoding="utf-8")
+        self._seed_approved_budget(excel_path, tmp_path)
+
+        analyzer = HistoricalBudgetAnalyzer()
+        self._mock_valid_probe_and_reader(analyzer, monkeypatch)
+        monkeypatch.setattr(hba_module, "sha256_file", lambda _path: "hashB")
+
+        result = analyzer.analyze_budget(str(excel_path), force_reanalyze=True)
+        assert result["status"] == "processed"
+
+        stored = get_historical_budget_by_path(str(excel_path))
+        assert stored["analysis_status"] == "VALID"
+        assert stored["learning_status"] == "PENDING_REVIEW"
+        assert stored["learning_status_source"] == "AUTO"
+        assert stored["usable_for_learning"] is False
+        assert stored["approved_by"] == ""
+        assert stored["approved_at"] == ""
+
+    def test_reanalysis_with_identical_content_keeps_manual_approval(self, tmp_path, monkeypatch):
+        import src.core.historical_budget_analyzer as hba_module
+
+        monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "approval_same.db"))
+        with database.get_connection() as _conn:
+            pass
+
+        excel_path = tmp_path / "aprobado_igual.xlsx"
+        excel_path.write_text("contenido v1", encoding="utf-8")
+        self._seed_approved_budget(excel_path, tmp_path)
+
+        analyzer = HistoricalBudgetAnalyzer()
+        self._mock_valid_probe_and_reader(analyzer, monkeypatch)
+        monkeypatch.setattr(hba_module, "sha256_file", lambda _path: "hashA")
+
+        result = analyzer.analyze_budget(str(excel_path), force_reanalyze=True)
+        assert result["status"] == "processed"
+
+        stored = get_historical_budget_by_path(str(excel_path))
+        assert stored["learning_status"] == "INCLUDED"
+        assert stored["learning_status_source"] == "MANUAL"
+        assert stored["usable_for_learning"] is True
+        assert stored["approved_by"] == "SERGIO"
+        assert stored["approved_at"] == "2026-01-01 10:00:00"
