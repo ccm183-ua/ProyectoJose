@@ -57,8 +57,14 @@ class SpeechToTextService:
         *,
         timeout: float = 8.0,
         phrase_time_limit: float = 45.0,
+        recognition_timeout: float = 10.0,
         language: str = "es-ES",
     ) -> str:
+        """Graba una frase y la transcribe con Google.
+
+        ``timeout``/``phrase_time_limit`` acotan la espera de voz del microfono.
+        ``recognition_timeout`` acota la llamada HTTP al servicio de reconocimiento.
+        """
         if not stt_modules_installed():
             detail = stt_import_error_message()
             extra = f"\n\nDetalle: {detail}" if detail else ""
@@ -66,6 +72,7 @@ class SpeechToTextService:
         import speech_recognition as sr  # type: ignore
 
         r = sr.Recognizer()
+        r.operation_timeout = recognition_timeout
         try:
             with sr.Microphone() as source:
                 r.adjust_for_ambient_noise(source, duration=0.4)
