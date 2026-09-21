@@ -342,7 +342,15 @@ class BudgetOrchestrator:
             if modulo:
                 modulos_con_partidas.add(modulo)
 
-        modulos_gap = sorted(detected_modules - modulos_con_partidas)
-        modulos_cubiertos = sorted(modulos_con_partidas)
+        if historical_result.get("request_is_multi_actuacion"):
+            # La evidencia solo respalda una de las actuaciones de la descripción:
+            # el módulo queda parcialmente cubierto y va también a la IA
+            # (avisar de más antes que omitir en silencio). La partida histórica
+            # se sigue entregando; el usuario descarta duplicados en la revisión.
+            modulos_gap = sorted(detected_modules | modulos_con_partidas)
+            modulos_cubiertos: List[str] = []
+        else:
+            modulos_gap = sorted(detected_modules - modulos_con_partidas)
+            modulos_cubiertos = sorted(modulos_con_partidas)
 
         return partidas_ok, modulos_cubiertos, modulos_gap

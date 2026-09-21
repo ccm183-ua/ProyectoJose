@@ -493,3 +493,18 @@ class TestPricedPartidas:
         assert priced["evidence_price_min"] == 40.0
         assert priced["evidence_price_max"] == 60.0
         assert sorted(priced["evidence_budget_ids"]) == sorted([budget_1, budget_2])
+
+    def test_multi_actuacion_request_is_flagged(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "multi_actuacion.db"))
+        result = HistoricalSuggestionService().suggest_for_project(
+            {}, "Reparacion de viga de hormigon e instalacion de pilar metalico"
+        )
+        assert result["request_is_multi_actuacion"] is True
+
+    def test_single_actuacion_request_is_not_flagged(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "single_actuacion.db"))
+        result = HistoricalSuggestionService().suggest_for_project(
+            {}, "Reparacion de viga de hormigon"
+        )
+        assert result["request_is_multi_actuacion"] is False
+

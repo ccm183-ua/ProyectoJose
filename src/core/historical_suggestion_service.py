@@ -253,6 +253,9 @@ class HistoricalSuggestionService:
         # no sustituye 'partidas' (agregado por patrones, Tarea 9), solo añade
         # trazabilidad por línea individual para el módulo principal detectado.
         request_features = extract_partida_features(text, "", self.classifier.classify_text(text))
+        # La ficha de la petición solo puede evidenciar UNA actuación; si la
+        # descripción trae varias, el orquestador no debe dar el módulo por cubierto.
+        request_is_multi_actuacion = request_features.line_kind == "composite"
         if request_features.line_kind == "composite":
             # La exclusion de 'composite' del comparador es para no fiarse de
             # una LINEA HISTORICA compuesta como precio limpio; una descripcion
@@ -286,6 +289,7 @@ class HistoricalSuggestionService:
             "evidence_report": evidence_report,
             "priced_evidence": priced_evidence,
             "priced_partidas": priced_partidas,
+            "request_is_multi_actuacion": request_is_multi_actuacion,
             "failure_reason": "OK",
         }
         if not module_names and self._has_generic_context_only(detected_signals):
