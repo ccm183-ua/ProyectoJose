@@ -201,6 +201,13 @@ QLineEdit:focus {
 QLineEdit:hover:!focus {
     border-color: #cbd5e1;
 }
+QLineEdit[error="true"] {
+    border: 1px solid #ef4444;
+}
+QLineEdit[error="true"]:focus {
+    border: 2px solid #ef4444;
+    padding: 5px 9px;
+}
 QLineEdit[readOnly="true"] {
     background-color: #f8fafc;
     color: #475569;
