@@ -322,7 +322,7 @@ def test_combined_review_shows_description_with_tooltips_and_normalization():
     assert '"Descripción"' in src
     assert "setToolTip(" in src
     assert "normalize_partida_for_excel" in src
-    assert "setColumnWidth(3, 420)" in src
+    assert "setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)" in src
 
 
 def test_historical_suggestions_usar_column_uses_checkbox_in_source():

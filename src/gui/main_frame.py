@@ -7,6 +7,7 @@ import subprocess
 import sys
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QFileDialog, QMainWindow, QMessageBox,
     QPushButton, QVBoxLayout, QWidget,
@@ -182,12 +183,15 @@ class MainFrame(QMainWindow):
         menubar = self.menuBar()
 
         m_archivo = menubar.addMenu("&Archivo")
-        act_open = m_archivo.addAction("Abrir presupuesto...\tCtrl+O")
+        act_open = m_archivo.addAction("Abrir presupuesto...")
+        act_open.setShortcut(QKeySequence.StandardKey.Open)
         act_open.triggered.connect(self._open_excel)
-        act_new = m_archivo.addAction("Crear nuevo presupuesto...\tCtrl+N")
+        act_new = m_archivo.addAction("Crear nuevo presupuesto...")
+        act_new.setShortcut(QKeySequence.StandardKey.New)
         act_new.triggered.connect(self._create_budget)
         m_archivo.addSeparator()
-        act_exit = m_archivo.addAction("Salir\tCtrl+Q")
+        act_exit = m_archivo.addAction("Salir")
+        act_exit.setShortcut(QKeySequence("Ctrl+Q"))
         act_exit.triggered.connect(self.close)
 
         m_bd = menubar.addMenu("Base de &datos")
@@ -205,8 +209,6 @@ class MainFrame(QMainWindow):
         act_paths.triggered.connect(self._open_default_paths)
 
         m_tools = menubar.addMenu("&Herramientas")
-        act_ai_tools = m_tools.addAction("Configuración IA...")
-        act_ai_tools.triggered.connect(self._open_ai_settings)
         act_hist = m_tools.addAction("Analizar presupuestos terminados...")
         act_hist.triggered.connect(self._open_historical_analysis)
         act_memory = m_tools.addAction("Panel de memoria historica...")
@@ -315,10 +317,11 @@ class MainFrame(QMainWindow):
         if not path:
             return
         try:
-            if self._budget_svc.open_budget(path):
-                QMessageBox.information(self, "Éxito", f"Presupuesto abierto: {os.path.basename(path)}")
-            else:
+            if not self._budget_svc.open_budget(path):
                 QMessageBox.critical(self, "Error", "No se pudo abrir el archivo Excel.")
+                return
+            # Abre el archivo en la aplicación asociada a .xlsx (Excel, WPS...)
+            os.startfile(path)  # type: ignore[attr-defined]
         except Exception as ex:
             QMessageBox.critical(self, "Error", f"Error: {ex}")
 

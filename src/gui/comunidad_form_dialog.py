@@ -142,16 +142,17 @@ class ComunidadFormDialog(QDialog):
         theme.fit_dialog(self, 420, 430)
 
     def _on_ok(self):
-        if not self._ctrls["nombre"].text().strip():
-            QMessageBox.information(self, "Aviso", "El nombre de la comunidad es obligatorio.")
-            return
-        if not self._admin_widget.get_selected_id():
-            QMessageBox.information(self, "Aviso", "Debe seleccionar una administración.")
-            return
+        nombre = self._ctrls["nombre"].text().strip()
         if not run_validations(self, [
-            ("CIF", validate_cif(self._ctrls["cif"].text().strip())),
-            ("Email", validate_email(self._ctrls["email"].text().strip())),
-            ("Teléfono", validate_phone(self._ctrls["telefono"].text().strip())),
+            (self._ctrls["nombre"], "Nombre", None if nombre else "El nombre de la comunidad es obligatorio."),
+            (self._ctrls["cif"], "CIF", validate_cif(self._ctrls["cif"].text().strip())),
+            (self._ctrls["email"], "Email", validate_email(self._ctrls["email"].text().strip())),
+            (self._ctrls["telefono"], "Teléfono", validate_phone(self._ctrls["telefono"].text().strip())),
+            (
+                self._admin_widget.editor,
+                "Administración",
+                None if self._admin_widget.get_selected_id() else "Debe seleccionar una administración.",
+            ),
         ]):
             return
         self.accept()
@@ -177,7 +178,11 @@ class ComunidadFormDialog(QDialog):
         return [(a["id"], self._admin_display(a)) for a in self._all_admins]
 
     def _on_delete_admin(self, id_):
-        resp = QMessageBox.question(self, "Confirmar", "¿Eliminar esta administración?")
+        resp = QMessageBox.warning(
+            self, "Confirmar eliminación",
+            "¿Eliminar esta administración?\n\nEsta acción no se puede deshacer.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
         if resp != QMessageBox.StandardButton.Yes:
             return None
         err = repo.delete_administracion(id_)
@@ -210,7 +215,11 @@ class ComunidadFormDialog(QDialog):
         return [(c["id"], f"{c['nombre']}  —  {c['telefono']}") for c in self._all_contactos]
 
     def _on_delete_contacto(self, id_):
-        resp = QMessageBox.question(self, "Confirmar", "¿Eliminar este contacto?")
+        resp = QMessageBox.warning(
+            self, "Confirmar eliminación",
+            "¿Eliminar este contacto?\n\nEsta acción no se puede deshacer.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
         if resp != QMessageBox.StandardButton.Yes:
             return None
         err = repo.delete_contacto(id_)

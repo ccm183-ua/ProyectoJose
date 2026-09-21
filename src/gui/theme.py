@@ -41,6 +41,13 @@ ERROR_BG = "#fef2f2"
 BORDER_LIGHT = "#e2e8f0"
 BORDER_DEFAULT = "#cbd5e1"
 
+INFO = "#3563A6"
+
+QUALITY_EXCELLENT = "#1B5E20"
+QUALITY_GOOD = "#66BB6A"
+QUALITY_FAIR = "#F9A825"
+QUALITY_POOR = "#C62828"
+
 # === COLORES COMO QColor (para uso programático) ===
 
 def qcolor(hex_str: str) -> QColor:

@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
 from src.core.budget_orchestrator import BudgetOrchestrator
 from src.core.settings import Settings
 from src.core.speech_to_text_service import SpeechToTextService, SpeechToTextUnavailable
+from src.gui import theme
 
 
 class VoiceBudgetDialog(QDialog):
@@ -85,7 +86,7 @@ class VoiceBudgetDialog(QDialog):
             "Explícalo como se lo dirías a tu aparejador.\n"
             "Sé breve y técnico: zona, trabajo, material si procede."
         )
-        hint.setStyleSheet("color: #666; font-size: 12px;")
+        hint.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 12px;")
         hint.setWordWrap(True)
         layout.addWidget(hint)
 
@@ -111,7 +112,7 @@ class VoiceBudgetDialog(QDialog):
         row_voice.addWidget(self._btn_dictar)
 
         self._lbl_status = QLabel("")
-        self._lbl_status.setStyleSheet("color: #888; font-size: 11px;")
+        self._lbl_status.setStyleSheet(f"color: {theme.TEXT_TERTIARY}; font-size: 11px;")
         row_voice.addWidget(self._lbl_status, stretch=1)
         layout.addLayout(row_voice)
 

@@ -154,6 +154,7 @@ class BudgetDashboardFrame(QMainWindow):
         self._tab_data: dict[str, list[dict]] = {}
         self._tab_tables: dict[str, QTableWidget] = {}
         self._tab_searches: dict[str, QLineEdit] = {}
+        self._view_ctx: dict | None = None
         self._state_names: list[str] = []
         self._relation_index: dict = {}
         self._root_path: str = ""
@@ -360,6 +361,7 @@ class BudgetDashboardFrame(QMainWindow):
 
         self._root_path = root_path
         self._subtitle.setText(root_path)
+        self._view_ctx = self._capture_view_context()
         self._show_empty_state("Cargando presupuestos…")
         self._set_toolbar_enabled(False)
 
@@ -371,11 +373,13 @@ class BudgetDashboardFrame(QMainWindow):
         def _on_done(ok, payload):
             self._set_toolbar_enabled(True)
             if not ok:
+                self._view_ctx = None
                 self._show_empty_state(f"Error al cargar: {payload}")
                 return
             rel_index, states = payload
             self._relation_index = rel_index
             if not states:
+                self._view_ctx = None
                 self._show_empty_state("No se encontraron subcarpetas en:\n" + root_path)
                 return
             # Ordenar según _TAB_ORDER
@@ -389,7 +393,22 @@ class BudgetDashboardFrame(QMainWindow):
                     self._btn_open):
             btn.setEnabled(enabled)
 
+    def _capture_view_context(self) -> dict:
+        """Pestaña activa y, por pestaña, texto de búsqueda y orden, para restaurarlos al reconstruir."""
+        tabs = {}
+        for name, table in self._tab_tables.items():
+            search = self._tab_searches.get(name)
+            hdr = table.horizontalHeader()
+            tabs[name] = (
+                search.text() if search else "",
+                hdr.sortIndicatorSection(),
+                hdr.sortIndicatorOrder(),
+            )
+        return {"state": self._current_state(), "explorer": self._explorer_mode, "tabs": tabs}
+
     def _rebuild_tabs(self, states, root_path):
+        ctx = self._view_ctx or self._capture_view_context()
+        self._view_ctx = None
         self._notebook.blockSignals(True)
         self._notebook.clear()
         self._tab_data.clear()
@@ -429,11 +448,23 @@ class BudgetDashboardFrame(QMainWindow):
                 )
                 self._apply_extra_columns_visibility(table)
 
+            saved = ctx["tabs"].get(state_name)
+            if saved:
+                text, section, order = saved
+                if text:
+                    search_ctrl.blockSignals(True)
+                    search_ctrl.setText(text)
+                    search_ctrl.blockSignals(False)
+                if ctx["explorer"] == self._explorer_mode:
+                    table.horizontalHeader().setSortIndicator(section, order)
+
             tab_layout.addWidget(table, 1)
             self._tab_tables[state_name] = table
             self._notebook.addTab(tab_widget, f"  {state_name}  ")
 
         self._notebook.blockSignals(False)
+        if ctx["state"] in states:
+            self._notebook.setCurrentIndex(states.index(ctx["state"]))
 
         for state_name in states:
             if self._explorer_mode:
@@ -479,6 +510,11 @@ class BudgetDashboardFrame(QMainWindow):
         )
 
         table.setSortingEnabled(True)
+        # Orden por defecto: Nº descendente (últimos primero) en presupuestos, nombre ascendente en explorador.
+        hdr.setSortIndicator(
+            0,
+            Qt.SortOrder.AscendingOrder if self._explorer_mode else Qt.SortOrder.DescendingOrder,
+        )
         table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -527,6 +563,15 @@ class BudgetDashboardFrame(QMainWindow):
             # Reaplicar lógica de columnas extra del dashboard de presupuestos
             if not self._explorer_mode:
                 self._apply_extra_columns_visibility(table)
+
+    def _show_no_results_row(self, table, query):
+        """Si la búsqueda no da resultados, muestra un aviso en vez de dejar la tabla en blanco."""
+        table.setRowCount(1)
+        table.setSpan(0, 0, 1, table.columnCount())
+        item = QTableWidgetItem(f"Sin resultados para «{query.strip()}» · Borra el texto de búsqueda para ver todo")
+        item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        table.setItem(0, 0, item)
 
     def _show_empty_state(self, message):
         self._notebook.blockSignals(True)
@@ -605,13 +650,23 @@ class BudgetDashboardFrame(QMainWindow):
         if table is None:
             return
 
+        hdr = table.horizontalHeader()
+        sort_section, sort_order = hdr.sortIndicatorSection(), hdr.sortIndicatorOrder()
+
         # Deshabilitar sort mientras se insertan items
         table.setSortingEnabled(False)
+        table.clearSpans()
 
         rows = self._tab_data.get(state_name, [])
         search_ctrl = self._tab_searches.get(state_name)
         query = search_ctrl.text() if search_ctrl else ""
         filtered = self._filter_rows(rows, query)
+
+        if not filtered and rows and query.strip():
+            self._show_no_results_row(table, query)
+            table.setSortingEnabled(True)
+            self._update_buttons()
+            return
 
         table.setRowCount(len(filtered))
         for i, proj in enumerate(filtered):
@@ -640,7 +695,7 @@ class BudgetDashboardFrame(QMainWindow):
             item_proyecto = table.item(i, 1)
             if item_proyecto and has_warning:
                 item_proyecto.setToolTip(warning_text)
-                item_proyecto.setForeground(QColor("#CC8B00"))
+                item_proyecto.setForeground(theme.qcolor(theme.WARNING))
 
             # Columna 2: Cliente
             cliente = proj.get("cliente", "")
@@ -701,7 +756,7 @@ class BudgetDashboardFrame(QMainWindow):
             item_fuente = table.item(i, 10)
             if item_fuente:
                 item_fuente.setForeground(
-                    QColor("#2E7D32") if fuente_display == "Finalizado" else QColor("#3563A6")
+                    theme.qcolor(theme.SUCCESS) if fuente_display == "Finalizado" else theme.qcolor(theme.INFO)
                 )
 
             # Columna 11: Finalizado (snapshot) vs versión actual del Excel
@@ -716,10 +771,10 @@ class BudgetDashboardFrame(QMainWindow):
             table.setItem(i, 11, _SortableItem(finalizado_display, 1 if finalizado else 0))
             item_finalizado = table.item(i, 11)
             if item_finalizado and desactualizado:
-                item_finalizado.setForeground(QColor("#CC8B00"))
+                item_finalizado.setForeground(theme.qcolor(theme.WARNING))
                 item_finalizado.setToolTip(aviso_actualizacion)
             elif item_finalizado and finalizado:
-                item_finalizado.setForeground(QColor("#2E7D32"))
+                item_finalizado.setForeground(theme.qcolor(theme.SUCCESS))
 
             # Columna 12: Calidad (0-100)
             calidad = int(proj.get("calidad_datos", 0) or 0)
@@ -730,13 +785,13 @@ class BudgetDashboardFrame(QMainWindow):
             )
             table.setItem(i, 12, item_calidad)
             if calidad >= 80:
-                item_calidad.setForeground(QColor("#1B5E20"))  # Verde oscuro
+                item_calidad.setForeground(theme.qcolor(theme.QUALITY_EXCELLENT))
             elif calidad >= 60:
-                item_calidad.setForeground(QColor("#66BB6A"))  # Verde claro
+                item_calidad.setForeground(theme.qcolor(theme.QUALITY_GOOD))
             elif calidad >= 40:
-                item_calidad.setForeground(QColor("#F9A825"))  # Amarillo
+                item_calidad.setForeground(theme.qcolor(theme.QUALITY_FAIR))
             else:
-                item_calidad.setForeground(QColor("#C62828"))  # Rojo
+                item_calidad.setForeground(theme.qcolor(theme.QUALITY_POOR))
 
             # Color solo en indicadores de calidad/estado (no fila completa)
             datos_ok = proj.get("datos_completos", True)
@@ -746,7 +801,7 @@ class BudgetDashboardFrame(QMainWindow):
                 item_calidad.setToolTip("El archivo Excel ya no existe en la ruta esperada.")
             elif has_warning:
                 # Aviso funcional: sin coincidencia de hoja o snapshot desactualizado.
-                item_calidad.setForeground(QColor("#CC8B00"))
+                item_calidad.setForeground(theme.qcolor(theme.WARNING))
                 item_calidad.setToolTip(warning_text)
             elif not datos_ok:
                 tip = (
@@ -759,9 +814,9 @@ class BudgetDashboardFrame(QMainWindow):
 
             self._align_budget_row_items(table, i)
 
-        # Re-habilitar sort y aplicar orden por defecto: Nº descendente (últimos primero)
+        # Re-habilitar sort conservando el orden elegido (por defecto Nº descendente)
         table.setSortingEnabled(True)
-        table.sortItems(0, Qt.SortOrder.DescendingOrder)
+        table.sortItems(sort_section, sort_order)
 
         # Mantener título de pestaña limpio (sin contador de warnings)
         tab_idx = self._state_names.index(state_name) if state_name in self._state_names else -1
@@ -779,12 +834,21 @@ class BudgetDashboardFrame(QMainWindow):
         if table is None:
             return
 
+        hdr = table.horizontalHeader()
+        sort_section, sort_order = hdr.sortIndicatorSection(), hdr.sortIndicatorOrder()
         table.setSortingEnabled(False)
+        table.clearSpans()
 
         rows = self._tab_data.get(state_name, [])
         search_ctrl = self._tab_searches.get(state_name)
         query = search_ctrl.text() if search_ctrl else ""
         filtered = self._filter_explorer_rows(rows, query)
+
+        if not filtered and rows and query.strip():
+            self._show_no_results_row(table, query)
+            table.setSortingEnabled(True)
+            self._update_buttons()
+            return
 
         table.setRowCount(len(filtered))
         for i, entry in enumerate(filtered):
@@ -834,7 +898,7 @@ class BudgetDashboardFrame(QMainWindow):
 
 
         table.setSortingEnabled(True)
-        table.sortItems(0, Qt.SortOrder.AscendingOrder)
+        table.sortItems(sort_section, sort_order)
         self._update_buttons()
 
     # ------------------------------------------------------------------
@@ -851,7 +915,9 @@ class BudgetDashboardFrame(QMainWindow):
             return
 
         row = item.row()
-        table.selectRow(row)
+        # Pulsar sobre una fila ya seleccionada conserva la selección múltiple.
+        if not table.selectionModel().isRowSelected(row):
+            table.selectRow(row)
 
         selected_many = self._get_selected_many()
         if not selected_many:
@@ -1223,7 +1289,12 @@ class BudgetDashboardFrame(QMainWindow):
             )
             return
 
+        self._btn_edit.setEnabled(False)
+        self._btn_edit.setText("Generando PDF…")
+
         def _on_pdf_done(ok_outer, payload):
+            self._btn_edit.setEnabled(True)
+            self._btn_edit.setText("Editar ▼")
             if not ok_outer:
                 QMessageBox.critical(self, "Error", f"Error al exportar PDF:\n{payload}")
                 return
@@ -1282,6 +1353,8 @@ class BudgetDashboardFrame(QMainWindow):
 
         svc = BudgetService()
         refreshed_any = False
+        to_open = []
+        unreadable_rutas = set()
         for selected in selected_many:
             ruta = os.path.normpath(selected.get("ruta_excel", ""))
             if not os.path.exists(ruta):
@@ -1294,18 +1367,23 @@ class BudgetDashboardFrame(QMainWindow):
             ):
                 refreshed_any = True
 
-            numero = selected.get("numero", "")
-            data = svc.read_budget(ruta, expected_numero=numero)
+            data = svc.read_budget(ruta, expected_numero=selected.get("numero", ""))
             if not data:
-                resp = QMessageBox.question(
-                    self,
-                    "Lectura incompleta del Excel",
-                    "No se pudieron leer bien los datos del presupuesto.\n\n"
-                    "¿Deseas abrirlo igualmente y completarlo manualmente después?",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                )
-                if resp != QMessageBox.StandardButton.Yes:
-                    continue
+                unreadable_rutas.add(ruta)
+            to_open.append(ruta)
+
+        if unreadable_rutas:
+            resp = QMessageBox.question(
+                self,
+                "Lectura incompleta del Excel",
+                f"{len(unreadable_rutas)} de {len(to_open)} presupuestos seleccionados no se "
+                "pudieron leer bien.\n\n¿Deseas abrirlos igualmente y completarlos manualmente después?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if resp != QMessageBox.StandardButton.Yes:
+                to_open = [r for r in to_open if r not in unreadable_rutas]
+
+        for ruta in to_open:
             opened = self._open_file(ruta)
             if opened:
                 self._watch_excel_changes_and_refresh(
@@ -1436,6 +1514,7 @@ class BudgetDashboardFrame(QMainWindow):
             "Esta acción reemplazará TODAS las partidas actuales del presupuesto "
             "por las que genere la IA.\n\n¿Desea continuar?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
         )
         if confirm != QMessageBox.StandardButton.Yes:
             return
@@ -1482,27 +1561,129 @@ class BudgetDashboardFrame(QMainWindow):
         else:
             QMessageBox.critical(self, "Error", "Error al añadir partidas.")
 
+    def _resolve_regen_batch(self, selected_many: list[dict]):
+        """Separa los presupuestos con datos inequívocos de los que requieren revisión individual.
+
+        No escribe ni pregunta. Solo se considera inequívoco un Nº con una única
+        entrada en la relación y una comunidad con coincidencia exacta (nunca por
+        parecido de nombre).
+        Devuelve (listos, pendientes): listos = [(ruta, project_data, project_name,
+        comunidad_data)], pendientes = [(nombre, motivo)].
+        """
+        from src.core.excel_relation_reader import ExcelRelationReader
+        from src.core.services import DatabaseService
+        from src.utils.project_name_generator import ProjectNameGenerator
+
+        budgets, relation_error = [], None
+        relation_path = self._settings.get_default_path(Settings.PATH_RELATION_FILE)
+        if relation_path and os.path.isfile(relation_path):
+            try:
+                budgets, relation_error = ExcelRelationReader().read(relation_path)
+            except Exception as exc:
+                relation_error = str(exc)
+        else:
+            relation_error = "no hay Excel de relación configurado"
+
+        ready, pending = [], []
+        for sel in selected_many:
+            ruta = os.path.normpath(sel.get("ruta_excel", ""))
+            nombre = os.path.basename(ruta) or sel.get("nombre_proyecto", "") or "(sin nombre)"
+            if not os.path.exists(ruta):
+                pending.append((nombre, "el archivo no existe"))
+                continue
+            if relation_error or not budgets:
+                pending.append((nombre, "sin acceso a la relación de presupuestos"))
+                continue
+            numero = str(sel.get("numero", "")).strip()
+            matches = [b for b in budgets if str(b.get("numero", "")).strip() == numero]
+            if len(matches) != 1:
+                pending.append((nombre, "Nº sin coincidencia única en la relación"))
+                continue
+            data = {k: v for k, v in matches[0].items() if k != "importe"}
+            cliente = str(data.get("cliente", "")).strip()
+            comunidad = None
+            if cliente:
+                comunidad, _fuzzy = DatabaseService.buscar_comunidad(cliente)
+                if not comunidad:
+                    pending.append((nombre, "comunidad sin coincidencia exacta"))
+                    continue
+            name = ProjectNameGenerator().generate_project_name(data)
+            ready.append((ruta, data, name, comunidad))
+        return ready, pending
+
+    def _write_regenerated_header(self, ruta, project_data, project_name, comunidad_data) -> bool:
+        from src.core.services import BudgetService, DatabaseService
+
+        admin_data = DatabaseService().get_admin_para_comunidad(comunidad_data)
+        excel_data = {
+            "nombre_obra": project_name or "",
+            "numero_proyecto": project_data.get("numero", ""),
+            "fecha": project_data.get("fecha", ""),
+            "cliente": project_data.get("cliente", ""),
+            "calle": project_data.get("calle", ""),
+            "num_calle": project_data.get("num_calle", ""),
+            "codigo_postal": project_data.get("codigo_postal", ""),
+            "tipo": project_data.get("tipo", ""),
+            "admin_cif": comunidad_data.get("cif", "") if comunidad_data else "",
+            "admin_email": admin_data.get("email", "") if admin_data else "",
+            "admin_telefono": admin_data.get("telefono", "") if admin_data else "",
+        }
+        svc = BudgetService()
+        if not svc.update_header_fields(ruta, excel_data):
+            return False
+        svc.finalize_budget(
+            ruta,
+            project_data=project_data,
+            comunidad_data=comunidad_data,
+            admin_data=admin_data,
+            estado=self._current_state() or "",
+        )
+        return True
+
     def _edit_regen_header_selected(self, selected_many: list[dict]):
         if not selected_many:
             return
+        ready, pending = self._resolve_regen_batch(selected_many)
+
+        if not ready:
+            QMessageBox.information(
+                self, "Regenerar campos",
+                "Ninguno de los presupuestos seleccionados puede regenerarse en lote:\n\n"
+                + "\n".join(f"· {n}: {m}" for n, m in pending[:10])
+                + "\n\nUsa «Regenerar campos» sobre cada uno para revisarlo individualmente.",
+            )
+            return
+
+        text = f"Se regenerarán los campos de {len(ready)} presupuesto(s) con datos inequívocos."
+        if pending:
+            shown = "\n".join(f"· {n}: {m}" for n, m in pending[:10])
+            more = f"\n… y {len(pending) - 10} más" if len(pending) > 10 else ""
+            text += (
+                f"\n\n{len(pending)} quedarán pendientes, sin modificarse "
+                f"(revísalos uno a uno):\n{shown}{more}"
+            )
         confirm = QMessageBox.warning(
-            self, "Regenerar campos",
-            f"Se regenerarán campos en {len(selected_many)} presupuesto(s).\n\n"
-            "¿Desea continuar?",
+            self, "Regenerar campos", text + "\n\n¿Desea continuar?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
         )
         if confirm != QMessageBox.StandardButton.Yes:
             return
 
-        for sel in selected_many:
-            ruta = os.path.normpath(sel.get("ruta_excel", ""))
-            if not os.path.exists(ruta):
-                continue
-            self._edit_regen_header(
-                ruta,
-                numero_proyecto=sel.get("numero", ""),
-                ask_confirmation=False,
-            )
+        failed = []
+        for ruta, data, name, comunidad in ready:
+            try:
+                ok = self._write_regenerated_header(ruta, data, name, comunidad)
+            except Exception:
+                ok = False
+            if not ok:
+                failed.append(os.path.basename(ruta))
+
+        summary = f"Regenerados: {len(ready) - len(failed)}\nPendientes: {len(pending)}\nCon error: {len(failed)}"
+        if failed:
+            summary += "\n\nError en:\n" + "\n".join(f"· {n}" for n in failed[:10])
+        QMessageBox.information(self, "Regenerar campos", summary)
+        self._load_data()
 
     def _edit_regen_header(self, ruta, numero_proyecto="", ask_confirmation=True):
         if ask_confirmation:
@@ -1511,11 +1692,10 @@ class BudgetDashboardFrame(QMainWindow):
                 "Esta acción sobrescribirá los campos de cabecera del presupuesto "
                 "(cliente, dirección, fecha, etc.).\n\n¿Desea continuar?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
             )
             if confirm != QMessageBox.StandardButton.Yes:
                 return
-
-        from src.core.services import BudgetService, DatabaseService
 
         project_data, project_name = self._obtain_project_data(
             preselect_numero=numero_proyecto
@@ -1538,32 +1718,7 @@ class BudgetDashboardFrame(QMainWindow):
                 project_data.get("cliente", ""), direccion=direccion_proyecto,
             )
 
-        db_svc = DatabaseService()
-        admin_data = db_svc.get_admin_para_comunidad(comunidad_data)
-
-        excel_data = {
-            "nombre_obra": project_name or "",
-            "numero_proyecto": project_data.get("numero", ""),
-            "fecha": project_data.get("fecha", ""),
-            "cliente": project_data.get("cliente", ""),
-            "calle": project_data.get("calle", ""),
-            "num_calle": project_data.get("num_calle", ""),
-            "codigo_postal": project_data.get("codigo_postal", ""),
-            "tipo": project_data.get("tipo", ""),
-            "admin_cif": comunidad_data.get("cif", "") if comunidad_data else "",
-            "admin_email": admin_data.get("email", "") if admin_data else "",
-            "admin_telefono": admin_data.get("telefono", "") if admin_data else "",
-        }
-
-        svc = BudgetService()
-        if svc.update_header_fields(ruta, excel_data):
-            svc.finalize_budget(
-                ruta,
-                project_data=project_data,
-                comunidad_data=comunidad_data,
-                admin_data=admin_data,
-                estado=self._current_state() or "",
-            )
+        if self._write_regenerated_header(ruta, project_data, project_name, comunidad_data):
             QMessageBox.information(self, "Éxito", "Campos actualizados.")
             self._load_data()
         else:

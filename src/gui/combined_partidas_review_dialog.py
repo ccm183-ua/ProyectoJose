@@ -6,6 +6,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
+    QFormLayout,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -129,7 +130,7 @@ class CombinedPartidasReviewDialog(QDialog):
             lay.addWidget(dup)
 
         self._table = QTableWidget(panel)
-        self._table.setColumnCount(14)
+        self._table.setColumnCount(9)
         self._table.setHorizontalHeaderLabels(
             [
                 "Usar",
@@ -140,29 +141,25 @@ class CombinedPartidasReviewDialog(QDialog):
                 "Cantidad",
                 "Precio",
                 "Total",
-                "Confianza",
                 "Motivo/Fuente",
-                "Fuente",
-                "Nivel",
-                "Rango histórico",
-                "Diferencias",
             ]
         )
-        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        self._table.setColumnWidth(0, 55)
-        self._table.setColumnWidth(1, 110)
-        self._table.setColumnWidth(2, 260)
-        self._table.setColumnWidth(3, 420)
-        self._table.setColumnWidth(4, 70)
-        self._table.setColumnWidth(5, 90)
-        self._table.setColumnWidth(6, 90)
-        self._table.setColumnWidth(7, 90)
-        self._table.setColumnWidth(8, 90)
-        self._table.setColumnWidth(9, 260)
-        self._table.setColumnWidth(10, 110)
-        self._table.setColumnWidth(11, 130)
-        self._table.setColumnWidth(12, 170)
-        self._table.setColumnWidth(13, 200)
+        header = self._table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        for col, width in (
+            (0, 46),   # Usar
+            (1, 90),   # Origen
+            (4, 48),   # Ud
+            (5, 70),   # Cantidad
+            (6, 80),   # Precio
+            (7, 86),   # Total
+            (8, 150),  # Motivo/Fuente
+        ):
+            self._table.setColumnWidth(col, width)
+        # Título (2) y Descripción (3) absorben el ancho restante: con el
+        # mínimo de 900 px no aparece scroll horizontal.
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         self._table.setAlternatingRowColors(True)
         self._table.setSortingEnabled(False)
         self._table.setWordWrap(False)
@@ -184,6 +181,9 @@ class CombinedPartidasReviewDialog(QDialog):
             btn.clicked.connect(fn)
             btns.addWidget(btn)
         btns.addStretch()
+        btn_provenance = QPushButton("Ver procedencia", panel)
+        btn_provenance.clicked.connect(self._show_provenance_detail)
+        btns.addWidget(btn_provenance)
         lay.addLayout(btns)
 
         lay.addWidget(theme.create_divider(panel))
@@ -202,69 +202,67 @@ class CombinedPartidasReviewDialog(QDialog):
         self.resize(1100, 650)
         self.setMinimumSize(900, 520)
 
+    @staticmethod
+    def _table_item(text: str, *, editable: bool, tooltip: str = "") -> QTableWidgetItem:
+        item = QTableWidgetItem(str(text))
+        flags = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
+        if editable:
+            flags |= Qt.ItemFlag.ItemIsEditable
+        item.setFlags(flags)
+        if tooltip:
+            item.setToolTip(tooltip)
+        return item
+
     def _populate(self):
-        self._table.setRowCount(len(self._rows))
-        for i, row in enumerate(self._rows):
-            partida = row["partida"]
-            origin = row["origin"]
-            concepto = str(partida.get("titulo") or partida.get("concepto") or "").strip()
-            descripcion = str(partida.get("descripcion", "")).strip()
-            unidad = str(partida.get("unidad", "ud")).strip()
-            cantidad = float(partida.get("cantidad", 1) or 1)
-            precio = float(partida.get("precio_unitario", 0) or 0)
-            confianza = partida.get("confidence", "")
-            motivo = partida.get("reason") or partida.get("source") or partida.get("module") or ""
-            total = cantidad * precio
+        # Inserción masiva: itemChanged no debe dispararse mientras la fila
+        # está a medias (leería celdas que aún no existen), ni recalcular
+        # totales que se escriben explícitamente más abajo.
+        self._table.blockSignals(True)
+        try:
+            self._table.setRowCount(len(self._rows))
+            for i, row in enumerate(self._rows):
+                partida = row["partida"]
+                origin = row["origin"]
+                concepto = str(partida.get("titulo") or partida.get("concepto") or "").strip()
+                descripcion = str(partida.get("descripcion", "")).strip()
+                unidad = str(partida.get("unidad", "ud")).strip()
+                cantidad = float(partida.get("cantidad", 1) or 1)
+                precio = float(partida.get("precio_unitario", 0) or 0)
+                motivo = partida.get("reason") or partida.get("source") or partida.get("module") or ""
+                total = cantidad * precio
 
-            tooltip = (
-                f"Título: {concepto or '-'}\n"
-                f"Descripción: {descripcion or '-'}\n"
-                f"Origen: {origin}"
-            )
+                tooltip = (
+                    f"Título: {concepto or '-'}\n"
+                    f"Descripción: {descripcion or '-'}\n"
+                    f"Origen: {origin}\n"
+                    f"Usa «Ver procedencia» para el detalle."
+                )
 
-            use_item = QTableWidgetItem()
-            use_item.setFlags(
-                Qt.ItemFlag.ItemIsEnabled
-                | Qt.ItemFlag.ItemIsUserCheckable
-                | Qt.ItemFlag.ItemIsSelectable
-            )
-            use_item.setCheckState(Qt.CheckState.Checked)
-            use_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            use_item.setToolTip(tooltip)
-            self._table.setItem(i, 0, use_item)
+                use_item = QTableWidgetItem()
+                use_item.setFlags(
+                    Qt.ItemFlag.ItemIsEnabled
+                    | Qt.ItemFlag.ItemIsUserCheckable
+                    | Qt.ItemFlag.ItemIsSelectable
+                )
+                use_item.setCheckState(Qt.CheckState.Checked)
+                use_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                use_item.setToolTip(tooltip)
+                self._table.setItem(i, 0, use_item)
 
-            origin_item = QTableWidgetItem(origin)
-            origin_item.setToolTip(tooltip)
-            self._table.setItem(i, 1, origin_item)
+                self._table.setItem(i, 1, self._table_item(origin, editable=False, tooltip=tooltip))
+                self._table.setItem(i, 2, self._table_item(concepto, editable=True, tooltip=tooltip))
+                self._table.setItem(i, 3, self._table_item(descripcion, editable=True, tooltip=tooltip))
+                self._table.setItem(i, 4, self._table_item(unidad, editable=True, tooltip=tooltip))
+                self._table.setItem(i, 5, self._table_item(str(cantidad), editable=True))
+                self._table.setItem(i, 6, self._table_item(str(precio), editable=True))
+                self._table.setItem(i, 7, self._table_item(f"{total:.2f}", editable=False))
+                self._table.setItem(i, 8, self._table_item(str(motivo), editable=False))
+        finally:
+            self._table.blockSignals(False)
 
-            title_item = QTableWidgetItem(concepto)
-            title_item.setToolTip(tooltip)
-            self._table.setItem(i, 2, title_item)
-
-            desc_item = QTableWidgetItem(descripcion)
-            desc_item.setToolTip(tooltip)
-            self._table.setItem(i, 3, desc_item)
-
-            unit_item = QTableWidgetItem(unidad)
-            unit_item.setToolTip(tooltip)
-            self._table.setItem(i, 4, unit_item)
-            self._table.setItem(i, 5, QTableWidgetItem(str(cantidad)))
-            self._table.setItem(i, 6, QTableWidgetItem(str(precio)))
-            self._table.setItem(i, 7, QTableWidgetItem(f"{total:.2f}"))
-            self._table.setItem(i, 8, QTableWidgetItem(str(confianza)))
-            self._table.setItem(i, 9, QTableWidgetItem(str(motivo)))
-
-            provenance = row_for_partida(row.get("raw") or partida)
-            self._table.setItem(i, 10, QTableWidgetItem(provenance["Fuente"]))
-            self._table.setItem(i, 11, QTableWidgetItem(provenance["Nivel"]))
-            self._table.setItem(i, 12, QTableWidgetItem(provenance["Rango histórico"]))
-            self._table.setItem(i, 13, QTableWidgetItem(provenance["Diferencias"]))
-
-            for col in (2, 3, 5, 6):
-                item = self._table.item(i, col)
-                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
-
-    def _toggle_current_row(self):
+    def _toggle_current_row(self, index=None):
+        if index is not None and index.column() != 0:
+            return
         row = self._table.currentRow()
         if row < 0 or row >= len(self._rows):
             return
@@ -354,6 +352,54 @@ class CombinedPartidasReviewDialog(QDialog):
 
     def get_selected_partidas(self):
         return self._selected_partidas
+
+    def _provenance_details(self, row_index: int) -> dict:
+        """Procedencia completa de una fila, sin depender de que sea columna."""
+        row = self._rows[row_index]
+        raw = row.get("raw") or {}
+        provenance = row_for_partida(raw)
+        confidence = raw.get("confidence", "")
+        return {
+            "Origen": str(row.get("origin", "")),
+            "Fuente": provenance["Fuente"],
+            "Nivel": provenance["Nivel"],
+            "Rango histórico": provenance["Rango histórico"],
+            "Diferencias": provenance["Diferencias"],
+            "Confianza": str(confidence) if confidence not in (None, "") else "—",
+        }
+
+    def _build_provenance_dialog(self, row_index: int) -> QDialog:
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Detalle de procedencia")
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(theme.SPACE_XL, theme.SPACE_XL, theme.SPACE_XL, theme.SPACE_XL)
+        lay.setSpacing(theme.SPACE_SM)
+        concepto = self._table.item(row_index, 2).text()
+        lay.addWidget(theme.create_title(dlg, f"Procedencia de: {concepto}", "lg"))
+        form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        for label, value in self._provenance_details(row_index).items():
+            value_lbl = QLabel(value, dlg)
+            value_lbl.setWordWrap(True)
+            form.addRow(QLabel(f"{label}:", dlg), value_lbl)
+        lay.addLayout(form)
+        actions = QHBoxLayout()
+        actions.addStretch()
+        close_btn = QPushButton("Cerrar", dlg)
+        close_btn.clicked.connect(dlg.accept)
+        actions.addWidget(close_btn)
+        lay.addLayout(actions)
+        theme.fit_dialog(dlg, 520, 320)
+        return dlg
+
+    def _show_provenance_detail(self):
+        row_index = self._table.currentRow()
+        if row_index < 0:
+            QMessageBox.information(
+                self, "Procedencia", "Selecciona una partida para ver su procedencia."
+            )
+            return
+        self._build_provenance_dialog(row_index).exec()
 
     def _on_item_changed(self, item: QTableWidgetItem):
         if self._updating_totals or item is None:
