@@ -241,3 +241,34 @@ def test_h12_refresh_preserves_tab_search_and_sort(qapp, monkeypatch, dashboard,
     header = restored_table.horizontalHeader()
     assert header.sortIndicatorSection() == 1
     assert header.sortIndicatorOrder() == Qt.SortOrder.AscendingOrder
+
+def test_h10_load_data_scans_off_ui_thread(qapp, monkeypatch, dashboard, tmp_path):
+    """El escaneo y la resolución de cada Excel ocurren en el hilo de fondo, una sola vez."""
+    import threading
+    import time
+
+    state = "PTE. PRESUPUESTAR"
+    ui_thread = threading.get_ident()
+    scan_threads = []
+
+    def _scan_projects(state_dir):
+        scan_threads.append(threading.get_ident())
+        return [_project("1-26", "1-26 Obra")]
+
+    monkeypatch.setattr(folder_scanner, "scan_projects", _scan_projects)
+    monkeypatch.setattr(folder_scanner, "scan_root", lambda root_path: [state])
+    monkeypatch.setattr(budget_dashboard, "resolve_projects", lambda scanned, index, st: scanned)
+    monkeypatch.setattr(budget_dashboard, "build_relation_index", lambda: {})
+    monkeypatch.setattr(budget_dashboard, "cleanup_orphaned_cache", lambda *a, **k: None)
+    monkeypatch.setattr(Settings, "get_default_path", lambda self, key: str(tmp_path))
+
+    dashboard._load_data()
+    end = time.time() + 5
+    while state not in dashboard._tab_tables and time.time() < end:
+        qapp.processEvents()
+        time.sleep(0.01)
+
+    assert dashboard._tab_tables[state].rowCount() == 1
+    assert len(scan_threads) == 1
+    assert scan_threads[0] != ui_thread
+
