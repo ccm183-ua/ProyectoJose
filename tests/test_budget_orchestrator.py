@@ -21,6 +21,7 @@ class _FakeSuggestionService:
         failure_reason="OK",
         raises=None,
         evidence_report=None,
+        multi_actuacion=False,
     ):
         # 'partidas' = patron textual agregado (Tarea 9), solo indice: ya no
         # decide cobertura. 'priced_partidas' = evidencia real del comparador
@@ -32,6 +33,7 @@ class _FakeSuggestionService:
         self._failure_reason = failure_reason
         self._raises = raises
         self._evidence_report = evidence_report if evidence_report is not None else []
+        self._multi_actuacion = multi_actuacion
         self.calls = 0
 
     def suggest_for_project(self, project_data, user_description=""):
@@ -45,6 +47,7 @@ class _FakeSuggestionService:
             "confidence": self._confidence,
             "failure_reason": self._failure_reason,
             "evidence_report": self._evidence_report,
+            "request_is_multi_actuacion": self._multi_actuacion,
         }
 
 
@@ -133,6 +136,46 @@ def test_partial_coverage_sends_only_gap_modules_to_ai():
     sources = {p["source"] for p in result["partidas"]}
     assert sources == {"historical_exact", "ai_completion"}
     assert result["source"] == "orquestado"
+
+
+# R02: varias actuaciones bajo un mismo módulo y evidencia solo para una. El módulo
+# no se da por cubierto: va también a la IA y la partida histórica se conserva.
+def test_multi_actuacion_with_partial_evidence_sends_module_to_ai():
+    suggestion_service = _FakeSuggestionService(
+        priced_partidas=[_historical_partida(module="estructura")],
+        detected_modules=[{"name": "estructura", "confidence": 0.9}],
+        multi_actuacion=True,
+    )
+    generator = _FakeGenerator(
+        gap_result={"partidas": [{"titulo": "Pilar metalico", "unidad": "ud", "precio_unitario": 300.0}], "error": None}
+    )
+    orch = _make_orchestrator(suggestion_service, generator)
+
+    result = orch.generate("Reparacion de viga de hormigon e instalacion de pilar metalico")
+
+    assert len(generator.calls) == 1
+    kind, kwargs = generator.calls[0]
+    assert kind == "gap"
+    assert kwargs["gap_modules"] == ["estructura"]
+    assert result["cobertura"]["modulos_historico"] == []
+    assert result["cobertura"]["modulos_ia"] == ["estructura"]
+    assert {p["source"] for p in result["partidas"]} == {"historical_exact", "ai_completion"}
+
+
+# Control de R02: con una sola actuación el módulo evidenciado sigue cubierto.
+def test_single_actuacion_with_evidence_keeps_module_covered():
+    suggestion_service = _FakeSuggestionService(
+        priced_partidas=[_historical_partida(module="estructura")],
+        detected_modules=[{"name": "estructura", "confidence": 0.9}],
+        multi_actuacion=False,
+    )
+    generator = _FakeGenerator()
+    orch = _make_orchestrator(suggestion_service, generator)
+
+    result = orch.generate("Reparacion de viga de hormigon")
+
+    assert generator.calls == []
+    assert result["cobertura"]["modulos_historico"] == ["estructura"]
 
 
 # 3. Sin módulos ni histórico: fallback completo (generate(), no generate_for_gap_modules()).
