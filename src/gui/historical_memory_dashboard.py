@@ -68,6 +68,7 @@ from src.core.repositories import (
     upsert_budget_enrichment,
 )
 from src.gui import theme
+from src.utils.helpers import run_in_background
 
 
 class NumericTableWidgetItem(QTableWidgetItem):
@@ -91,6 +92,8 @@ class HistoricalMemoryDashboard(QDialog):
         self._has_any_budgets = False
         self._db_candidate_warning_shown = False
         self._analyzer = HistoricalBudgetAnalyzer()
+        self._busy = False
+        self._closed = False
         self._ai_description_done.connect(self._on_ai_description_done)
         self._build_ui()
         self._ai_description_progress.connect(self._stats_lbl.setText)
@@ -1256,6 +1259,44 @@ class HistoricalMemoryDashboard(QDialog):
     def _ai_batch_confirmation_summary(classification: dict) -> str:
         return format_generation_candidate_summary(classification)
 
+    def _run_busy(self, label: str, work, on_done) -> None:
+        """Ejecuta *work* fuera del hilo de UI con los controles de escritura bloqueados.
+
+        *work* no debe tocar widgets. *on_done(resultado)* corre en el hilo de UI; si el
+        diálogo se cerró mientras tanto, se descarta el resultado (el trabajo ya se hizo).
+        """
+        if self._busy:
+            QMessageBox.information(self, label, "Hay otra operación en curso. Espera a que termine.")
+            return
+        self._busy = True
+        controls = (self._btn_actions, self._btn_maintenance, self._btn_diagnostics)
+        for control in controls:
+            control.setEnabled(False)
+        self._stats_lbl.setText(f"{label}…")
+
+        def _finish(ok, payload):
+            self._busy = False
+            if self._closed:
+                return
+            for control in controls:
+                control.setEnabled(True)
+            self._reload()
+            if not ok:
+                QMessageBox.warning(self, label, f"No se pudo completar la operación:\n{payload}")
+                return
+            on_done(payload)
+
+        run_in_background(work, _finish)
+
+    def _warn_publication_error(self, error) -> None:
+        if error:
+            QMessageBox.warning(
+                self,
+                "Paquete de contexto",
+                "La memoria historica cambio, pero no se pudo publicar el "
+                f"paquete de contexto:\n{error}",
+            )
+
     def _include_selected(self):
         eligible = [d for d in self._selected_rows_data() if self._can_be_included_in_memory(d)]
         if not eligible:
@@ -1269,29 +1310,40 @@ class HistoricalMemoryDashboard(QDialog):
         )
         if resp != QMessageBox.StandardButton.Yes:
             return
-        changed = 0
-        for data in eligible:
-            budget_id = int(data.get("id") or 0)
-            err = approve_budget_for_learning(budget_id, self._current_user())
-            if err:
+        user = self._current_user()
+
+        def _work():
+            changed, errors = 0, []
+            for data in eligible:
+                budget_id = int(data.get("id") or 0)
+                err = approve_budget_for_learning(budget_id, user)
+                if err:
+                    errors.append(err)
+                    continue
+                append_budget_issue(
+                    budget_id,
+                    {
+                        "severity": "WARN",
+                        "code": "MANUALLY_INCLUDED",
+                        "message": "Marcado manualmente como apto para aprendizaje desde panel de memoria.",
+                    },
+                )
+                self._analyzer.reclassify_budget_modules(budget_id)
+                changed += 1
+            rebuild = self._analyzer.rebuild_patterns_and_publish() if changed else None
+            return changed, errors, rebuild
+
+        def _done(result):
+            changed, errors, rebuild = result
+            for err in errors:
                 QMessageBox.warning(self, "Incluir en memoria", err)
-                continue
-            append_budget_issue(
-                budget_id,
-                {
-                    "severity": "WARN",
-                    "code": "MANUALLY_INCLUDED",
-                    "message": "Marcado manualmente como apto para aprendizaje desde panel de memoria.",
-                },
-            )
-            self._analyzer.reclassify_budget_modules(budget_id)
-            changed += 1
-        if changed:
-            self._rebuild_patterns(silent=True)
-            self._reload()
-            QMessageBox.information(self, "Incluir en memoria", f"Presupuestos incluidos: {changed}")
-        else:
-            QMessageBox.information(self, "Incluir en memoria", "No hay presupuestos seleccionados aptos para incluir.")
+            if changed:
+                self._warn_publication_error((rebuild or {}).get("publication_error"))
+                QMessageBox.information(self, "Incluir en memoria", f"Presupuestos incluidos: {changed}")
+            else:
+                QMessageBox.information(self, "Incluir en memoria", "No hay presupuestos seleccionados aptos para incluir.")
+
+        self._run_busy("Incluyendo en memoria", _work, _done)
 
     @staticmethod
     def _current_user() -> str:
@@ -1313,34 +1365,43 @@ class HistoricalMemoryDashboard(QDialog):
         )
         if resp != QMessageBox.StandardButton.Yes:
             return
-        changed = 0
-        for data in eligible:
-            budget_id = int(data.get("id") or 0)
-            err = set_historical_budget_learning_status(
-                budget_id,
-                "EXCLUDED",
-                False,
-                decision_source="MANUAL",
-                decision_reason="Excluido manualmente desde panel de memoria.",
-            )
-            if err:
+        def _work():
+            changed, errors = 0, []
+            for data in eligible:
+                budget_id = int(data.get("id") or 0)
+                err = set_historical_budget_learning_status(
+                    budget_id,
+                    "EXCLUDED",
+                    False,
+                    decision_source="MANUAL",
+                    decision_reason="Excluido manualmente desde panel de memoria.",
+                )
+                if err:
+                    errors.append(err)
+                    continue
+                append_budget_issue(
+                    budget_id,
+                    {
+                        "severity": "WARN",
+                        "code": "MANUALLY_EXCLUDED",
+                        "message": "Excluido manualmente por usuario desde panel de memoria.",
+                    },
+                )
+                changed += 1
+            rebuild = self._analyzer.rebuild_patterns_and_publish() if changed else None
+            return changed, errors, rebuild
+
+        def _done(result):
+            changed, errors, rebuild = result
+            for err in errors:
                 QMessageBox.warning(self, "Excluir de memoria", err)
-                continue
-            append_budget_issue(
-                budget_id,
-                {
-                    "severity": "WARN",
-                    "code": "MANUALLY_EXCLUDED",
-                    "message": "Excluido manualmente por usuario desde panel de memoria.",
-                },
-            )
-            changed += 1
-        if changed:
-            self._rebuild_patterns(silent=True)
-            self._reload()
-            QMessageBox.information(self, "Excluir de memoria", f"Presupuestos excluidos: {changed}")
-        else:
-            QMessageBox.information(self, "Excluir de memoria", "No hay presupuestos seleccionados válidos para excluir.")
+            if changed:
+                self._warn_publication_error((rebuild or {}).get("publication_error"))
+                QMessageBox.information(self, "Excluir de memoria", f"Presupuestos excluidos: {changed}")
+            else:
+                QMessageBox.information(self, "Excluir de memoria", "No hay presupuestos seleccionados válidos para excluir.")
+
+        self._run_busy("Excluyendo de memoria", _work, _done)
 
     def _reanalyze_selected(self):
         data = self._selected_row_data()
@@ -1350,13 +1411,21 @@ class HistoricalMemoryDashboard(QDialog):
         if not excel_path or not os.path.exists(excel_path):
             QMessageBox.warning(self, "Reanalizar", "No se encuentra el fichero Excel en la ruta registrada.")
             return
-        result = self._analyzer.analyze_budget(excel_path, force_reanalyze=True)
-        if result.get("status") == "error":
-            QMessageBox.warning(self, "Reanalizar", result.get("error", "Error desconocido"))
-            return
-        self._rebuild_patterns(silent=True)
-        self._reload()
-        QMessageBox.information(self, "Reanalizar", "Presupuesto reanalizado correctamente.")
+        def _work():
+            result = self._analyzer.analyze_budget(excel_path, force_reanalyze=True)
+            if result.get("status") == "error":
+                return result, None
+            return result, self._analyzer.rebuild_patterns_and_publish()
+
+        def _done(payload):
+            result, rebuild = payload
+            if result.get("status") == "error":
+                QMessageBox.warning(self, "Reanalizar", result.get("error", "Error desconocido"))
+                return
+            self._warn_publication_error((rebuild or {}).get("publication_error"))
+            QMessageBox.information(self, "Reanalizar", "Presupuesto reanalizado correctamente.")
+
+        self._run_busy("Reanalizando presupuesto", _work, _done)
 
     def _run_diagnostics(self):
         report = diagnose_historical_integrity()
@@ -1399,22 +1468,17 @@ class HistoricalMemoryDashboard(QDialog):
             )
             if confirm != QMessageBox.StandardButton.Yes:
                 return
-        result = self._analyzer.rebuild_patterns_and_publish()
-        if not silent:
-            QMessageBox.information(
-                self,
-                "Reconstruir patrones",
-                f"Patrones reconstruidos: {int(result.get('patterns_inserted', 0))}",
-            )
-        self._refresh_kpis()
-        error = result.get("publication_error")
-        if error:
-            QMessageBox.warning(
-                self,
-                "Paquete de contexto",
-                "La memoria historica cambio, pero no se pudo publicar el "
-                f"paquete de contexto:\n{error}",
-            )
+
+        def _done(result):
+            if not silent:
+                QMessageBox.information(
+                    self,
+                    "Reconstruir patrones",
+                    f"Patrones reconstruidos: {int(result.get('patterns_inserted', 0))}",
+                )
+            self._warn_publication_error(result.get("publication_error"))
+
+        self._run_busy("Reconstruyendo patrones", self._analyzer.rebuild_patterns_and_publish, _done)
 
     def _publish_context_pack(self):
         """Actualiza el paquete exportado tras cambiar la memoria historica.
@@ -1492,22 +1556,30 @@ class HistoricalMemoryDashboard(QDialog):
             != QMessageBox.StandardButton.Yes
         ):
             return
-        deleted, err = delete_historical_budgets_by_ids(ids)
-        if err:
-            QMessageBox.critical(self, "Error al borrar", err)
-            return
-        log_historical_memory_event(
-            "HISTORICAL_BUDGETS_DELETED_SELECTION",
-            "Borrado parcial de presupuestos analizados desde el panel.",
-            {"requested": len(ids), "deleted": deleted},
-        )
-        self._rebuild_patterns(silent=True)
-        self._reload()
-        QMessageBox.information(
-            self,
-            "Borrado completado",
-            f"Se eliminaron {deleted} presupuesto(s) del analisis historico.",
-        )
+        def _work():
+            deleted, err = delete_historical_budgets_by_ids(ids)
+            if err:
+                return deleted, err, None
+            log_historical_memory_event(
+                "HISTORICAL_BUDGETS_DELETED_SELECTION",
+                "Borrado parcial de presupuestos analizados desde el panel.",
+                {"requested": len(ids), "deleted": deleted},
+            )
+            return deleted, None, self._analyzer.rebuild_patterns_and_publish()
+
+        def _done(result):
+            deleted, err, rebuild = result
+            if err:
+                QMessageBox.critical(self, "Error al borrar", err)
+                return
+            self._warn_publication_error((rebuild or {}).get("publication_error"))
+            QMessageBox.information(
+                self,
+                "Borrado completado",
+                f"Se eliminaron {deleted} presupuesto(s) del analisis historico.",
+            )
+
+        self._run_busy("Borrando presupuestos", _work, _done)
 
     @staticmethod
     def _file_or_project(data: dict) -> str:
@@ -1689,10 +1761,12 @@ class HistoricalMemoryDashboard(QDialog):
         settings.sync()
 
     def done(self, r: int):
+        self._closed = True
         self._save_column_settings()
         super().done(r)
 
     def closeEvent(self, event):
+        self._closed = True
         self._save_column_settings()
         super().closeEvent(event)
 

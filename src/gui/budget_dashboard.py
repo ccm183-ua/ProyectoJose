@@ -365,10 +365,21 @@ class BudgetDashboardFrame(QMainWindow):
         self._show_empty_state("Cargando presupuestos…")
         self._set_toolbar_enabled(False)
 
+        explorer = self._explorer_mode
+
         def _scan():
+            # Escanear y resolver cada Excel es lo caro: se hace aquí, fuera del hilo de UI.
             rel_index = build_relation_index()
             states = folder_scanner.scan_root(root_path)
-            return rel_index, states
+            data = {}
+            for state in states:
+                state_dir = os.path.join(root_path, state)
+                if explorer:
+                    data[state] = folder_scanner.scan_explorer(state_dir)
+                else:
+                    scanned = folder_scanner.scan_projects(state_dir)
+                    data[state] = resolve_projects(scanned, rel_index, state)
+            return rel_index, states, data
 
         def _on_done(ok, payload):
             self._set_toolbar_enabled(True)
@@ -376,7 +387,7 @@ class BudgetDashboardFrame(QMainWindow):
                 self._view_ctx = None
                 self._show_empty_state(f"Error al cargar: {payload}")
                 return
-            rel_index, states = payload
+            rel_index, states, prefetched = payload
             self._relation_index = rel_index
             if not states:
                 self._view_ctx = None
@@ -384,7 +395,10 @@ class BudgetDashboardFrame(QMainWindow):
                 return
             # Ordenar según _TAB_ORDER
             states = _sort_tabs(states)
-            self._rebuild_tabs(states, root_path)
+            # Si el usuario cambió de modo mientras se cargaba, los datos ya no valen.
+            self._rebuild_tabs(
+                states, root_path, prefetched if explorer == self._explorer_mode else None
+            )
 
         run_in_background(_scan, _on_done)
 
@@ -406,7 +420,8 @@ class BudgetDashboardFrame(QMainWindow):
             )
         return {"state": self._current_state(), "explorer": self._explorer_mode, "tabs": tabs}
 
-    def _rebuild_tabs(self, states, root_path):
+    def _rebuild_tabs(self, states, root_path, prefetched=None):
+        prefetched = prefetched or {}
         ctx = self._view_ctx or self._capture_view_context()
         self._view_ctx = None
         self._notebook.blockSignals(True)
@@ -430,7 +445,11 @@ class BudgetDashboardFrame(QMainWindow):
             self._tab_searches[state_name] = search_ctrl
 
             if self._explorer_mode:
-                explorer_data = folder_scanner.scan_explorer(state_dir)
+                explorer_data = (
+                    prefetched[state_name]
+                    if state_name in prefetched
+                    else folder_scanner.scan_explorer(state_dir)
+                )
                 self._tab_data[state_name] = explorer_data
                 table = self._create_base_table(
                     tab_widget, _EXPLORER_COLUMNS,
@@ -438,8 +457,11 @@ class BudgetDashboardFrame(QMainWindow):
                     self._on_explorer_context_menu, state_name,
                 )
             else:
-                scanned = folder_scanner.scan_projects(state_dir)
-                resolved = resolve_projects(scanned, self._relation_index, state_name)
+                if state_name in prefetched:
+                    resolved = prefetched[state_name]
+                else:
+                    scanned = folder_scanner.scan_projects(state_dir)
+                    resolved = resolve_projects(scanned, self._relation_index, state_name)
                 self._tab_data[state_name] = resolved
                 table = self._create_base_table(
                     tab_widget, _COLUMNS,
