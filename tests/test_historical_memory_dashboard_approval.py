@@ -9,6 +9,7 @@ import pytest
 try:
     from PySide6.QtWidgets import QDialog, QLabel, QPushButton, QToolButton
 
+    from src.gui import busy_operations as busy_mod
     from src.gui import historical_memory_dashboard as dash_mod
     from src.gui.historical_memory_dashboard import HistoricalMemoryDashboard
 
@@ -72,7 +73,8 @@ def _make_dashboard(qapp, monkeypatch):
             "rebuild_patterns_and_publish": lambda self: {"patterns_inserted": 0, "publication_error": None},
         },
     )()
-    monkeypatch.setattr(dash_mod, "run_in_background", _run_inline)
+    monkeypatch.setattr(busy_mod, "run_in_background", _run_inline)
+    monkeypatch.setattr(busy_mod, "QMessageBox", _NoUiMessageBox)
     monkeypatch.setattr(dash_mod, "QMessageBox", _NoUiMessageBox)
     monkeypatch.setattr(dash_mod, "append_budget_issue", lambda *a, **k: None)
     monkeypatch.setattr(dlg, "_rebuild_patterns", lambda silent=False: None)
@@ -181,6 +183,7 @@ def test_h10_rebuild_runs_off_ui_thread_and_locks_controls(qapp, monkeypatch):
 
     dlg = _make_dashboard(qapp, monkeypatch)
     monkeypatch.undo()  # restaura run_in_background real
+    monkeypatch.setattr(busy_mod, "QMessageBox", _NoUiMessageBox)
     monkeypatch.setattr(dash_mod, "QMessageBox", _NoUiMessageBox)
     monkeypatch.setattr(dlg, "_reload", lambda: None)
     ui_thread = threading.get_ident()

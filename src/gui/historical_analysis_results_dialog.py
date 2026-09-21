@@ -37,9 +37,10 @@ from src.core.repositories import (
     set_historical_budget_learning_status,
 )
 from src.gui import theme
+from src.gui.busy_operations import BusyOperationsMixin
 
 
-class HistoricalAnalysisResultsDialog(QDialog):
+class HistoricalAnalysisResultsDialog(BusyOperationsMixin, QDialog):
     def __init__(self, parent=None, run_id: int | None = None):
         super().__init__(parent)
         self.setWindowTitle("Resultados análisis histórico")
@@ -154,6 +155,7 @@ class HistoricalAnalysisResultsDialog(QDialog):
         btn_apply = QPushButton("Aplicar cambios", self)
         btn_apply.clicked.connect(self._apply_learning_decisions)
         actions.addWidget(btn_apply)
+        self._write_buttons = (btn_include_selected, btn_exclude_selected, btn_apply)
 
         btn_close = QPushButton("Cerrar", self)
         btn_close.clicked.connect(self.accept)
@@ -480,6 +482,25 @@ class HistoricalAnalysisResultsDialog(QDialog):
             AnalysisStatus.MANUALLY_EXCLUDED: "Excluido manualmente por decisión del usuario.",
         }.get(status, "Estado no especificado.")
 
+    def _busy_controls(self) -> tuple:
+        return self._write_buttons
+
+    def _set_busy_status(self, text: str) -> None:
+        self._stats_lbl.setText(text)
+
+    def _after_busy(self) -> None:
+        self._reload_rows()
+
+    def _warn_publication_error(self, rebuild) -> None:
+        error = (rebuild or {}).get("publication_error")
+        if error:
+            QMessageBox.warning(
+                self,
+                "Paquete de contexto",
+                "La memoria historica cambio, pero no se pudo publicar el "
+                f"paquete de contexto:\n{error}",
+            )
+
     def _reload_rows(self):
         self._rows = list_historical_budgets_by_run(self._run_id) if self._run_id else []
         self._metrics = get_historical_learning_metrics(self._run_id)
@@ -531,7 +552,7 @@ class HistoricalAnalysisResultsDialog(QDialog):
             QMessageBox.information(self, "Aplicar decisiones", "No hay cambios pendientes.")
             return
 
-        has_changes = False
+        plan: list[tuple[int, bool]] = []
         for data in self._rows:
             status = data.get("analysis_status")
             if status not in (
@@ -563,52 +584,69 @@ class HistoricalAnalysisResultsDialog(QDialog):
             target_learning_status = "INCLUDED" if decision else "EXCLUDED"
             if decision == current and current_learning_status == target_learning_status:
                 continue
+            plan.append((budget_id, decision))
 
-            if decision:
-                # Fixes histórico evidenciado, Tarea 6: mismo camino único de
-                # aprobación que _include_selected (approve_budget_for_learning),
-                # no el genérico set_historical_budget_learning_status.
-                err = approve_budget_for_learning(budget_id, self._current_user())
-                if err:
-                    QMessageBox.warning(self, "Aplicar decisiones", err)
-                    continue
-                append_budget_issue(
-                    budget_id,
-                    {
-                        "severity": "WARN",
-                        "code": "MANUALLY_INCLUDED",
-                        "message": "Marcado manualmente como apto para aprendizaje.",
-                    },
-                )
-                self._analyzer.reclassify_budget_modules(budget_id)
-                has_changes = True
-            else:
-                err = set_historical_budget_learning_status(
-                    budget_id,
-                    "EXCLUDED",
-                    False,
-                    decision_source="MANUAL",
-                    decision_reason="Excluido manualmente desde revision de memoria.",
-                )
-                if err:
-                    QMessageBox.warning(self, "Aplicar decisiones", err)
-                    continue
-                append_budget_issue(
-                    budget_id,
-                    {
-                        "severity": "WARN",
-                        "code": "MANUALLY_EXCLUDED",
-                        "message": "Excluido manualmente por usuario.",
-                    },
-                )
-                has_changes = True
-
-        if has_changes:
-            self._rebuild_patterns()
-            QMessageBox.information(self, "Aplicar decisiones", "Decisiones aplicadas correctamente.")
-        else:
+        if not plan:
             QMessageBox.information(self, "Aplicar decisiones", "No hubo cambios efectivos para aplicar.")
-        self._reload_rows()
+            self._reload_rows()
+            return
+
+        user = self._current_user()
+
+        def _work():
+            errors, has_changes = [], False
+            for budget_id, decision in plan:
+                if decision:
+                    # Fixes histórico evidenciado, Tarea 6: mismo camino único de
+                    # aprobación que _include_selected (approve_budget_for_learning),
+                    # no el genérico set_historical_budget_learning_status.
+                    err = approve_budget_for_learning(budget_id, user)
+                    if err:
+                        errors.append(err)
+                        continue
+                    append_budget_issue(
+                        budget_id,
+                        {
+                            "severity": "WARN",
+                            "code": "MANUALLY_INCLUDED",
+                            "message": "Marcado manualmente como apto para aprendizaje.",
+                        },
+                    )
+                    self._analyzer.reclassify_budget_modules(budget_id)
+                else:
+                    err = set_historical_budget_learning_status(
+                        budget_id,
+                        "EXCLUDED",
+                        False,
+                        decision_source="MANUAL",
+                        decision_reason="Excluido manualmente desde revision de memoria.",
+                    )
+                    if err:
+                        errors.append(err)
+                        continue
+                    append_budget_issue(
+                        budget_id,
+                        {
+                            "severity": "WARN",
+                            "code": "MANUALLY_EXCLUDED",
+                            "message": "Excluido manualmente por usuario.",
+                        },
+                    )
+                has_changes = True
+            rebuild = self._analyzer.rebuild_patterns_and_publish() if has_changes else None
+            return errors, has_changes, rebuild
+
+        def _done(result):
+            errors, has_changes, rebuild = result
+            for err in errors:
+                QMessageBox.warning(self, "Aplicar decisiones", err)
+            if has_changes:
+                self._warn_publication_error(rebuild)
+                QMessageBox.information(self, "Aplicar decisiones", "Decisiones aplicadas correctamente.")
+            else:
+                QMessageBox.information(self, "Aplicar decisiones", "No hubo cambios efectivos para aplicar.")
+
+        self._run_busy("Aplicando decisiones", _work, _done)
 
     def _refresh_kpis(self):
         self._kpi_budgets.setText(f"Presupuestos usados: {int(self._metrics.get('presupuestos_usados', 0))}")
@@ -628,28 +666,38 @@ class HistoricalAnalysisResultsDialog(QDialog):
         )
         if resp != QMessageBox.StandardButton.Yes:
             return
-        err = set_historical_budget_learning_status(
-            budget_id,
-            "EXCLUDED",
-            False,
-            decision_source="MANUAL",
-            decision_reason="Excluido manualmente por usuario.",
-        )
-        if err:
-            QMessageBox.warning(self, "Excluir", err)
-            return
-        append_budget_issue(
-            budget_id,
-            {
-                "severity": "WARN",
-                "code": "MANUALLY_EXCLUDED",
-                "message": "Excluido manualmente por usuario.",
-            },
-        )
-        self._rebuild_patterns()
-        QMessageBox.information(self, "Excluir", "Archivo excluido del aprendizaje.")
+        # El diálogo de detalle es modal: se cierra ya para que no quede activo mientras trabaja el hilo.
         parent_dialog.accept()
-        self._reload_rows()
+
+        def _work():
+            err = set_historical_budget_learning_status(
+                budget_id,
+                "EXCLUDED",
+                False,
+                decision_source="MANUAL",
+                decision_reason="Excluido manualmente por usuario.",
+            )
+            if err:
+                return err, None
+            append_budget_issue(
+                budget_id,
+                {
+                    "severity": "WARN",
+                    "code": "MANUALLY_EXCLUDED",
+                    "message": "Excluido manualmente por usuario.",
+                },
+            )
+            return None, self._analyzer.rebuild_patterns_and_publish()
+
+        def _done(result):
+            err, rebuild = result
+            if err:
+                QMessageBox.warning(self, "Excluir", err)
+                return
+            self._warn_publication_error(rebuild)
+            QMessageBox.information(self, "Excluir", "Archivo excluido del aprendizaje.")
+
+        self._run_busy("Excluyendo de memoria", _work, _done)
 
     def _include_selected(self, data: dict, parent_dialog: QDialog):
         budget_id = int(data.get("id") or 0)
@@ -694,46 +742,65 @@ class HistoricalAnalysisResultsDialog(QDialog):
         if resp != QMessageBox.StandardButton.Yes:
             return
 
-        err = approve_budget_for_learning(budget_id, self._current_user())
-        if err:
-            QMessageBox.warning(self, "Marcar como apto", err)
-            return
-        append_budget_issue(
-            budget_id,
-            {
-                "severity": "WARN",
-                "code": "MANUALLY_INCLUDED",
-                "message": "Marcado manualmente como apto para aprendizaje.",
-            },
-        )
-        reclass_result = self._analyzer.reclassify_budget_modules(budget_id)
-        if not reclass_result.get("ok"):
-            QMessageBox.warning(
-                self,
-                "Marcar como apto",
-                f"Marcado como apto, pero falló la reclasificación: {reclass_result.get('error', 'desconocido')}",
-            )
-        self._rebuild_patterns()
-        QMessageBox.information(self, "Marcar como apto", "Archivo marcado como apto para aprendizaje.")
         parent_dialog.accept()
-        self._reload_rows()
+        user = self._current_user()
+
+        def _work():
+            err = approve_budget_for_learning(budget_id, user)
+            if err:
+                return err, None, None
+            append_budget_issue(
+                budget_id,
+                {
+                    "severity": "WARN",
+                    "code": "MANUALLY_INCLUDED",
+                    "message": "Marcado manualmente como apto para aprendizaje.",
+                },
+            )
+            reclass_result = self._analyzer.reclassify_budget_modules(budget_id)
+            return None, reclass_result, self._analyzer.rebuild_patterns_and_publish()
+
+        def _done(result):
+            err, reclass_result, rebuild = result
+            if err:
+                QMessageBox.warning(self, "Marcar como apto", err)
+                return
+            if not reclass_result.get("ok"):
+                QMessageBox.warning(
+                    self,
+                    "Marcar como apto",
+                    f"Marcado como apto, pero falló la reclasificación: {reclass_result.get('error', 'desconocido')}",
+                )
+            self._warn_publication_error(rebuild)
+            QMessageBox.information(self, "Marcar como apto", "Archivo marcado como apto para aprendizaje.")
+
+        self._run_busy("Marcando como apto", _work, _done)
 
     def _reanalyze_selected(self, data: dict, parent_dialog: QDialog):
         excel_path = data.get("ruta_excel", "")
         if not excel_path:
             return
-        result = self._analyzer.analyze_budget(
-            excel_path,
-            metadata={"analysis_run_id": self._run_id},
-            force_reanalyze=True,
-        )
-        if result.get("status") == "error":
-            QMessageBox.warning(self, "Reanalizar", result.get("error", "Error desconocido"))
-            return
-        self._rebuild_patterns()
-        QMessageBox.information(self, "Reanalizar", "Archivo reanalizado correctamente.")
         parent_dialog.accept()
-        self._reload_rows()
+
+        def _work():
+            result = self._analyzer.analyze_budget(
+                excel_path,
+                metadata={"analysis_run_id": self._run_id},
+                force_reanalyze=True,
+            )
+            if result.get("status") == "error":
+                return result, None
+            return result, self._analyzer.rebuild_patterns_and_publish()
+
+        def _done(payload):
+            result, rebuild = payload
+            if result.get("status") == "error":
+                QMessageBox.warning(self, "Reanalizar", result.get("error", "Error desconocido"))
+                return
+            self._warn_publication_error(rebuild)
+            QMessageBox.information(self, "Reanalizar", "Archivo reanalizado correctamente.")
+
+        self._run_busy("Reanalizando archivo", _work, _done)
 
     @staticmethod
     def _current_user() -> str:
@@ -763,14 +830,3 @@ class HistoricalAnalysisResultsDialog(QDialog):
                 subprocess.run(["xdg-open", excel_path], check=False)
         except (OSError, ValueError):
             pass
-
-    def _rebuild_patterns(self):
-        result = self._analyzer.rebuild_patterns_and_publish()
-        error = result.get("publication_error")
-        if error:
-            QMessageBox.warning(
-                self,
-                "Paquete de contexto",
-                "La memoria historica cambio, pero no se pudo publicar el "
-                f"paquete de contexto:\n{error}",
-            )

@@ -68,7 +68,7 @@ from src.core.repositories import (
     upsert_budget_enrichment,
 )
 from src.gui import theme
-from src.utils.helpers import run_in_background
+from src.gui.busy_operations import BusyOperationsMixin
 
 
 class NumericTableWidgetItem(QTableWidgetItem):
@@ -81,7 +81,7 @@ class NumericTableWidgetItem(QTableWidgetItem):
         return super().__lt__(other)
 
 
-class HistoricalMemoryDashboard(QDialog):
+class HistoricalMemoryDashboard(BusyOperationsMixin, QDialog):
     _ai_description_done = Signal(dict)
     _ai_description_progress = Signal(str)
 
@@ -92,8 +92,6 @@ class HistoricalMemoryDashboard(QDialog):
         self._has_any_budgets = False
         self._db_candidate_warning_shown = False
         self._analyzer = HistoricalBudgetAnalyzer()
-        self._busy = False
-        self._closed = False
         self._ai_description_done.connect(self._on_ai_description_done)
         self._build_ui()
         self._ai_description_progress.connect(self._stats_lbl.setText)
@@ -1259,34 +1257,14 @@ class HistoricalMemoryDashboard(QDialog):
     def _ai_batch_confirmation_summary(classification: dict) -> str:
         return format_generation_candidate_summary(classification)
 
-    def _run_busy(self, label: str, work, on_done) -> None:
-        """Ejecuta *work* fuera del hilo de UI con los controles de escritura bloqueados.
+    def _busy_controls(self) -> tuple:
+        return (self._btn_actions, self._btn_maintenance, self._btn_diagnostics)
 
-        *work* no debe tocar widgets. *on_done(resultado)* corre en el hilo de UI; si el
-        diálogo se cerró mientras tanto, se descarta el resultado (el trabajo ya se hizo).
-        """
-        if self._busy:
-            QMessageBox.information(self, label, "Hay otra operación en curso. Espera a que termine.")
-            return
-        self._busy = True
-        controls = (self._btn_actions, self._btn_maintenance, self._btn_diagnostics)
-        for control in controls:
-            control.setEnabled(False)
-        self._stats_lbl.setText(f"{label}…")
+    def _set_busy_status(self, text: str) -> None:
+        self._stats_lbl.setText(text)
 
-        def _finish(ok, payload):
-            self._busy = False
-            if self._closed:
-                return
-            for control in controls:
-                control.setEnabled(True)
-            self._reload()
-            if not ok:
-                QMessageBox.warning(self, label, f"No se pudo completar la operación:\n{payload}")
-                return
-            on_done(payload)
-
-        run_in_background(work, _finish)
+    def _after_busy(self) -> None:
+        self._reload()
 
     def _warn_publication_error(self, error) -> None:
         if error:
@@ -1761,12 +1739,10 @@ class HistoricalMemoryDashboard(QDialog):
         settings.sync()
 
     def done(self, r: int):
-        self._closed = True
         self._save_column_settings()
         super().done(r)
 
     def closeEvent(self, event):
-        self._closed = True
         self._save_column_settings()
         super().closeEvent(event)
 
