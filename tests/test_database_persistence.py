@@ -202,13 +202,14 @@ def test_find_database_candidates_detects_historical_data(tmp_path, monkeypatch)
 def test_backup_creates_file_and_prune_keeps_last_n(tmp_path, monkeypatch):
     _isolated_config(monkeypatch, tmp_path)
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setenv("CUBIAPP_BACKUP_DIR", str(tmp_path / "backups"))
     monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "backup_source.db"))
     with database.get_connection() as _conn:
         pass
 
     paths = [create_database_backup(f"test_{idx}") for idx in range(4)]
     prune_old_backups(keep_last=2)
-    remaining = list_database_backups()
+    remaining = [p for p in list_database_backups() if "before_migration" not in p.name]
 
     assert all(path.exists() for path in paths[-2:])
     assert len(remaining) == 2
@@ -258,3 +259,41 @@ def test_empty_database_is_detected_as_empty(tmp_path, monkeypatch):
 
     assert info["is_empty"] is True
     assert info["counts"]["historical_budget"] == 0
+
+
+def _backup_env(tmp_path, monkeypatch):
+    _isolated_config(monkeypatch, tmp_path)
+    monkeypatch.setenv("CUBIAPP_BACKUP_DIR", str(tmp_path / "backups"))
+    monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "retencion.db"))
+    with database.get_connection() as _conn:
+        pass
+
+
+def test_orden_de_backups_por_fecha_de_creacion_no_por_mtime(tmp_path, monkeypatch):
+    """copy2 conserva el mtime de la BD original: ordenar por mtime no
+    distinguía los backups. Se ordena por la marca de tiempo del nombre."""
+    _backup_env(tmp_path, monkeypatch)
+    import os
+
+    first = create_database_backup("primero")
+    second = create_database_backup("segundo")
+    os.utime(second, (1, 1))  # mtime antiguo en el más reciente
+    assert list_database_backups()[:2] == [second, first]
+
+
+def test_crear_backup_purga_y_conserva_los_protegidos(tmp_path, monkeypatch):
+    _backup_env(tmp_path, monkeypatch)
+    from src.core import database_backup
+
+    monkeypatch.setattr(database_backup, "BACKUP_KEEP_LAST", 3)
+    migracion = create_database_backup("before_migration_v3_to_v4")
+    borrado = create_database_backup("before_clear_historical")
+    normales = [create_database_backup(f"before_patterns_rebuild_{i}") for i in range(6)]
+
+    restantes = list_database_backups()
+
+    assert migracion.exists() and borrado.exists()
+    assert [p for p in restantes if p in normales] == list(reversed(normales[-3:]))
+    no_protegidos = [p for p in restantes if "before_migration" not in p.name
+                     and "before_clear_historical" not in p.name]
+    assert len(no_protegidos) == 3

@@ -145,6 +145,10 @@ class _NoUiMessageBox:
         return 0
 
     @staticmethod
+    def information(*args, **kwargs):
+        return 0
+
+    @staticmethod
     def question(*args, **kwargs):
         return _NoUiMessageBox.StandardButton.No
 

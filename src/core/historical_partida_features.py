@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Literal, Optional, Tuple
 
 from src.core.historical_partida_classifier import pick_primary_module
-from src.core.work_type_normalizer import normalize_text
+from src.core.work_type_normalizer import keyword_in_text, normalize_text
 
 _DIMENSION_RE = re.compile(r"\b\d+(?:[.,]\d+)?\s*(?:cm|mm|m)\b")
 
@@ -27,25 +27,157 @@ _KeywordTable = Tuple[Tuple[str, Tuple[str, ...]], ...]
 # módulos). "repair" antes que "demolish" porque "picado y reparación..."
 # describe la intervención global, no el paso previo de picado.
 _ACTION_SYNONYMS: _KeywordTable = (
-    ("repair", ("reparacion", "reparar")),
-    ("demolish", ("demolicion", "demoler", "picado", "levantado", "desmontaje")),
-    ("install", ("instalacion", "instalar", "colocacion", "colocar", "montaje")),
-    ("paint", ("pintura", "pintado", "pintar")),
+    # "reposicion"/"reponer" (Decision 30, 2026-11-11): reponer lo dañado
+    # forma parte de la misma reparación ("Reposición de gresite
+    # desprendido"). Hasta ahora llegaba a "reparacion" por un fallo de la
+    # expansión de abreviaturas ("rep"), ya corregido. "repaso" (Decision
+    # 33): repaso de grietas. "saneado" se descartó tras medirlo: en pintura
+    # es un paso de preparación ("saneado de zonas oxidadas + imprimación +
+    # esmalte") y volvía compuestas 3 partidas con patrón, sin ganar ninguna.
+    ("repair", ("reparacion", "reparar", "reposicion", "reponer", "repaso")),
+    # "quitar" (Decision 3, familia demolicion): verbo mayoritario de
+    # retirada/demolicion en el historico real (1.418 lineas), sin falsos
+    # positivos por substring verificados. "tirar" NO se anade: es
+    # substring literal de "retirar" (13 lineas reales, sentido distinto -
+    # retirada de escombros ya generados, no demolicion), y el motor de
+    # coincidencia actual es por substring sin limite de palabra.
+    # Actualizacion (Decision 32, 2026-11-11): los keywords casan ya desde
+    # inicio de palabra, "tirar" no casa con "retirar" y se anade.
+    # "derribar" (Decision 14, familia albanileria): verbo no cubierto por
+    # "demoler". "quitan" (Decision 15): forma conjugada de "quitar" que
+    # el infinitivo no cubre por substring. Ambos sin falsos positivos
+    # verificados.
+    # "desmontar" (Decision 16, familia impermeabilizacion): forma verbal
+    # no cubierta por el sustantivo "desmontaje". "arranque" (Decision 17):
+    # sinonimo de demoler/arrancar. Ambos sin falsos positivos verificados.
+    ("demolish", ("demolicion", "demoler", "picado", "levantado", "desmontaje", "quitar", "derribar", "quitan", "desmontar", "arranque", "tirar")),
+    # "sustitucion" (Decision 21, familia carpinteria): 629 lineas reales,
+    # 0 falsos positivos, sin ninguna accion propia pese a dar nombre al
+    # modulo sustitucion_bajante. Se mapea a install (sustituir implica
+    # instalar lo nuevo), consistente con las lineas de sustitucion_bajante
+    # que ya evidencian precio via "colocacion" aparte.
+    ("install", ("instalacion", "instalar", "colocacion", "colocar", "montaje", "sustitucion")),
+    # "esmalte"/"esmaltado" y "barnizado"/"barnizar" (Decision 23, familia
+    # carpinteria): variantes del mismo concepto de acabado/pintura.
+    # "esmaltado" tiene un falso positivo minoritario aceptado
+    # ("termoesmaltado", ficha tecnica de material, 3 de 34 lineas).
+    # "imprimacion" (Decision 26, familia cerrajeria): a diferencia de
+    # "lijado" (descartado por ser solo preparacion), el patron real
+    # muestra que puede ser el trabajo completo por si solo (recubrimiento
+    # anticorrosivo/de proteccion). 714 lineas, 0 falsos positivos, 76%
+    # concentradas en pintura+cerrajeria con sentido siempre consistente.
+    ("paint", ("pintura", "pintado", "pintar", "esmalte", "esmaltado", "barnizado", "barnizar", "imprimacion")),
     ("waterproof", ("impermeabilizacion", "impermeabilizar")),
+    # Decision 18 (familia impermeabilizacion): "sellado"/"sellar" no
+    # encajaban en ninguna accion existente. Repartido entre varios
+    # modulos (impermeabilizacion, fachada, pintura, sustitucion_bajante)
+    # pero significa siempre lo mismo -- a diferencia de "revestimiento"/
+    # "galeria"/"formacion" (descartados en esta misma familia por ser
+    # terminos genericos usados con sentidos distintos segun el contexto).
+    ("seal", ("sellado", "sellar")),
+    # Decision 24 (familia carpinteria): "enlucido"/"maestreado" son la
+    # misma tecnica de acabado de paramentos (enlucir tras maestrear) --
+    # mismo termino "render" que ya usa _SYSTEM_BY_ELEMENT para
+    # facade_render. 0 falsos positivos verificados en 644+155 lineas.
+    ("render", ("enlucido", "maestreado")),
     ("clean", ("limpieza", "limpiar")),
     ("rent", ("alquiler", "arrendamiento")),
+    # "formacion de/en" (Decision 31, 2026-11-11): ejecutar un elemento de
+    # obra nueva (tabique, rampa, mueble de pladur, pendientes, forjado...).
+    # Va la ÚLTIMA: solo se aplica si no hay otra acción. La Decision 18 lo
+    # descartó por genérico; el sentido distinto real es "formación del
+    # personal" (seguridad y salud), que se excluye en
+    # _ACTION_EXCLUDED_CONTEXTS. Medido: 245 partidas sin acción ganan
+    # "build" y solo 1 de seguridad casaba, ya excluida.
+    ("build", ("formacion de", "formacion en")),
 )
+
+# Acciones que solo se asignan si no hay otra y que no cuentan para detectar
+# partidas compuestas (varias acciones distintas).
+_FALLBACK_ACTIONS = frozenset({"build"})
+
+# Contextos en los que un keyword de acción NO significa esa acción.
+_ACTION_EXCLUDED_CONTEXTS: Dict[str, Tuple[str, ...]] = {
+    "build": ("formacion del personal", "formacion e informacion"),
+}
 
 # Entradas compuestas (p.ej. "revoco en fachada") antes que la genérica
 # ("fachada") para no perder precisión cuando ambas aparecen.
 _ELEMENT_SYNONYMS: _KeywordTable = (
-    ("facade_render", ("revoco en fachada", "revoco de fachada", "revoco fachada", "enfoscado fachada", "enfoscado de fachada")),
+    # Decision 4 (familia demolicion): "paramento vertical exterior" y
+    # "enfoscado de cemento" describen la misma evidencia que "revoco de
+    # fachada" sin usar la palabra "fachada" (patron mas repetido sin
+    # ficha de toda la familia demolicion, frecuencia 8).
+    ("facade_render", ("revoco en fachada", "revoco de fachada", "revoco fachada", "enfoscado fachada", "enfoscado de fachada", "paramento vertical exterior", "enfoscado de cemento")),
     ("facade", ("fachada",)),
     ("downspout", ("bajante",)),
     ("roof", ("cubierta", "tejado")),
     ("structure", ("estructura", "viga", "pilar", "zuncho")),
     ("door", ("puerta", "portal")),
     ("railing", ("barandilla", "pasamanos")),
+    # Decision 5 (familia demolicion): "tabique" sin falsos positivos
+    # verificados contra el historico real.
+    ("partition_wall", ("tabique",)),
+    # Decision 6 (familia demolicion): sin falsos positivos verificados.
+    ("sanitary_ware", ("wc", "lavabo", "sanitario")),
+    # Decision 7 (familia demolicion) + Decision 11 (familia alicatado):
+    # "suelo" colisiona con "entresuelo" (6 lineas reales, es una
+    # planta/piso, no el elemento) frente a 485 lineas reales genuinas de
+    # suelo/pavimento -- se acepta ese riesgo medido, a diferencia de
+    # "tirar" en la Decision 3. "solado"/"pavimento"/"baldosa" no tienen
+    # ese problema (0 falsos positivos verificados).
+    ("flooring", ("suelo", "solado", "pavimento", "baldosa")),
+    # Decision 8 (familia demolicion): variantes singular/plural
+    # necesarias porque el motor compara substrings completos, no por
+    # token ("mueble de cocina" no es substring de "muebles de cocina").
+    ("kitchen_furniture", ("mueble de cocina", "muebles de cocina", "electrodomestico")),
+    # Decision 9 (familia alicatado): el hueco mas grande de toda la
+    # revision -- "azulejo"/"alicatado" no tenian elemento propio pese a
+    # ser el nucleo de esta familia. 0 falsos positivos verificados en
+    # 577 (azulejo) y 1257 (alicatado) lineas reales.
+    ("tile", ("azulejo", "alicatado")),
+    # Decision 10 (familia alicatado): elemento facturable propio,
+    # distinto de tile aunque a veces coincidan en la misma obra. 0 falsos
+    # positivos verificados en 540 lineas reales.
+    ("skirting", ("rodapie",)),
+    # Decision 12 (familia albanileria): sin falsos positivos verificados
+    # en 750 lineas reales.
+    ("plaster", ("yeso",)),
+    # Decision 13 (familia albanileria): canal abierto en pared/muro para
+    # alojar instalaciones (electricidad, fontaneria) -- elemento
+    # facturable propio, distinto de partition_wall. Sin falsos positivos
+    # verificados en 262 lineas reales.
+    ("wall_channel", ("roza",)),
+    # Decision 19 (familia impermeabilizacion): chapa/flashing metalico de
+    # remates. Un falso positivo minoritario aceptado ("rechapado" de
+    # puertas de madera, sentido distinto) frente a 230 lineas reales.
+    ("sheet_metal", ("chapa",)),
+    # Decision 20 (familia impermeabilizacion): albardilla de cubricion de
+    # muros -- elemento facturable propio. Sin falsos positivos
+    # verificados en 21 lineas reales.
+    ("coping", ("albardilla",)),
+    # Decision 22 (familia carpinteria): mobiliario generico, distinto de
+    # kitchen_furniture (mueble de cocina especificamente). Dos falsos
+    # positivos menores aceptados (error de OCR "lmueble") de 693 lineas
+    # reales.
+    ("furniture", ("mueble",)),
+    # Decision 25 (familia cerrajeria): elemento facturable propio, sin
+    # falsos positivos verificados en 421 lineas reales.
+    ("sink", ("fregadero",)),
+    # Decision 27 (familia sustitucion_bajante): agrupa accesorios de
+    # desagüe (rejilla, desague, cazoleta, sumidero) en un unico elemento
+    # facturable. 0 falsos positivos verificados en 186+307+44+59 lineas.
+    ("drain_fitting", ("rejilla", "desague", "cazoleta", "sumidero")),
+    # Decision 28 (familia sustitucion_bajante): agrupa accesorios de
+    # tuberia PVC (manguito, codo) -- tema recurrente aunque cada frase
+    # concreta tenga frecuencia baja. 0 falsos positivos verificados en
+    # 19+45 lineas.
+    ("pipe_fitting", ("manguito", "codo")),
+    # Decision 29 (familia sustitucion_bajante): elemento facturable
+    # propio. Los "falsos positivos" de "electrobomba" siguen siendo una
+    # bomba, no un error real. Sin falsos positivos verificados en 83
+    # lineas.
+    ("pump", ("bomba",)),
 )
 
 # Agrupa categorías de elemento que en realidad son el mismo elemento
@@ -60,6 +192,21 @@ _ELEMENT_FAMILIES = {
     "structure": "structure",
     "door": "door",
     "railing": "railing",
+    "partition_wall": "partition_wall",
+    "sanitary_ware": "sanitary_ware",
+    "flooring": "flooring",
+    "kitchen_furniture": "kitchen_furniture",
+    "tile": "tile",
+    "skirting": "skirting",
+    "plaster": "plaster",
+    "wall_channel": "wall_channel",
+    "sheet_metal": "sheet_metal",
+    "coping": "coping",
+    "furniture": "furniture",
+    "sink": "sink",
+    "drain_fitting": "drain_fitting",
+    "pipe_fitting": "pipe_fitting",
+    "pump": "pump",
 }
 
 # Sistema técnico implícito por elemento: vocabulario cerrado mínimo (Tarea 2,
@@ -107,11 +254,23 @@ class PartidaFeatures:
     is_price_eligible: bool
 
 
-def _match_first(normalized_text: str, table: _KeywordTable) -> Tuple[Optional[str], Optional[str]]:
-    """Primera categoría de la tabla cuyo keyword aparece en el texto."""
+def _match_first(
+    normalized_text: str,
+    table: _KeywordTable,
+    excluded_contexts: Optional[Dict[str, Tuple[str, ...]]] = None,
+) -> Tuple[Optional[str], Optional[str]]:
+    """Primera categoría de la tabla cuyo keyword aparece en el texto.
+
+    ``excluded_contexts`` descarta una categoría si aparece alguna de sus
+    frases de exclusión (p. ej. "formacion del personal" para "build").
+    """
     for category, keywords in table:
+        if excluded_contexts and any(
+            keyword_in_text(ctx, normalized_text) for ctx in excluded_contexts.get(category, ())
+        ):
+            continue
         for keyword in keywords:
-            if keyword in normalized_text:
+            if keyword_in_text(keyword, normalized_text):
                 return category, keyword
     return None, None
 
@@ -120,7 +279,7 @@ def _match_all(normalized_text: str, table: _KeywordTable) -> Tuple[str, ...]:
     return tuple(
         category
         for category, keywords in table
-        if any(keyword in normalized_text for keyword in keywords)
+        if any(keyword_in_text(keyword, normalized_text) for keyword in keywords)
     )
 
 
@@ -148,7 +307,9 @@ def classify_line_kind(
         return "unknown"
 
     normalized = normalize_text(concept)
-    distinct_actions = set(_match_all(normalized, _ACTION_SYNONYMS))
+    # "build" es una acción de último recurso (solo si no hay otra): no puede
+    # ser la segunda acción que convierte una partida en compuesta.
+    distinct_actions = set(_match_all(normalized, _ACTION_SYNONYMS)) - _FALLBACK_ACTIONS
     distinct_elements = _distinct_element_families(normalized)
     if len(distinct_actions) >= 2 or len(distinct_elements) >= 2:
         return "composite"
@@ -163,7 +324,7 @@ def extract_partida_features(concept: str, unit: str, modules: List[Dict]) -> Pa
     normalized = normalize_text(concept)
     reasons: List[str] = []
 
-    action, action_kw = _match_first(normalized, _ACTION_SYNONYMS)
+    action, action_kw = _match_first(normalized, _ACTION_SYNONYMS, _ACTION_EXCLUDED_CONTEXTS)
     if action:
         reasons.append(f"action='{action}' por keyword '{action_kw}'")
 

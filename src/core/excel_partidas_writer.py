@@ -118,6 +118,97 @@ def _shift_formula_row_refs_in_sheet_xml(sheet_xml: str, start_from: int, offset
     return re.sub(r"<f([^>]*)>([^<]*)</f>", _bump_f, sheet_xml)
 
 
+PARTIDAS_FIRST_ROW = 17
+TEMPLATE_SUBTOTAL_ROW = 27
+
+_ROW_ELEMENT_RE = re.compile(r'<row r="(\d+)"[^>]*?(?:/>|>.*?</row>)', re.DOTALL)
+
+
+def _find_partidas_subtotal_row(sheet_xml: str) -> int:
+    """Fila del subtotal de partidas: la celda I con fórmula ``SUM(I17:...)``.
+
+    En la plantilla recién creada es la 27; en un presupuesto que ya tiene
+    partidas está tras la última. Si no se encuentra, se asume la plantilla.
+    """
+    rows = [
+        int(m.group(1))
+        for m in re.finditer(
+            r'<c r="I(\d+)"[^>]*><f[^>]*>\s*SUM\(\s*\$?I\$?'
+            + str(PARTIDAS_FIRST_ROW) + r'\s*:',
+            sheet_xml,
+        )
+    ]
+    rows = [r for r in rows if r > PARTIDAS_FIRST_ROW]
+    return min(rows) if rows else TEMPLATE_SUBTOTAL_ROW
+
+
+def _remove_rows_in_range(sheet_xml: str, first: int, last: int) -> str:
+    """Elimina los elementos <row> con número en [first, last]."""
+    def _drop(match):
+        return "" if first <= int(match.group(1)) <= last else match.group(0)
+
+    return re.sub(
+        r'<row r="(\d+)"[^>]*?(?:/>|>.*?</row>)\n?', _drop, sheet_xml, flags=re.DOTALL
+    )
+
+
+def _remove_merges_starting_in_range(sheet_xml: str, first: int, last: int) -> str:
+    """Elimina las celdas combinadas cuya fila inicial está en [first, last]."""
+    def _drop(match):
+        start_row = int(match.group(1))
+        return "" if first <= start_row <= last else match.group(0)
+
+    return re.sub(r'<mergeCell ref="[A-Z]+(\d+):[A-Z]+\d+"/>', _drop, sheet_xml)
+
+
+def _clear_formula_cell(sheet_xml: str, ref: str) -> str:
+    """Deja vacía (conservando el estilo) una celda que contenga una fórmula."""
+    pattern = r'<c r="' + re.escape(ref) + r'"([^>]*?)>\s*<f[^>]*>[^<]*</f>(?:<v>[^<]*</v>)?\s*</c>'
+
+    def _empty(match):
+        attrs = re.sub(r'\s+t="[^"]*"', "", match.group(1))
+        return f'<c r="{ref}"{attrs}/>'
+
+    return re.sub(pattern, _empty, sheet_xml)
+
+
+def _find_footer_rows(sheet_xml: str, shared_strings, min_row: int) -> dict:
+    """Localiza las filas del pie por la etiqueta de su columna A.
+
+    Devuelve las claves encontradas entre: capitulo ("1.- ACTUACIONES."),
+    total ("Total presupuesto"), iva ("10% I.V.A."), total_iva
+    ("TOTAL PRESUPUESTO, I.V.A. INCLUIDO.") y asciende ("Asciende ...").
+    """
+    found: dict = {}
+    for row_m in _ROW_ELEMENT_RE.finditer(sheet_xml):
+        row_num = int(row_m.group(1))
+        if row_num < min_row:
+            continue
+        cell_m = re.search(
+            r'<c r="A' + str(row_num) + r'"[^>]*?(?:/>|>.*?</c>)',
+            row_m.group(0), re.DOTALL,
+        )
+        if not cell_m:
+            continue
+        text = resolve_cell_text(cell_m.group(0), shared_strings or []).strip().upper()
+        if not text:
+            continue
+        if text.startswith("1.-"):
+            key = "capitulo"
+        elif "I.V.A" in text and "INCLUIDO" in text:
+            key = "total_iva"
+        elif "I.V.A" in text:
+            key = "iva"
+        elif text.startswith("TOTAL PRESUPUESTO"):
+            key = "total"
+        elif text.startswith("ASCIENDE"):
+            key = "asciende"
+        else:
+            continue
+        found.setdefault(key, row_num)
+    return found
+
+
 def _sheet_has_merge_c_to_f(sheet_xml: str) -> bool:
     """True si la hoja declara alguna combinación C*:F* (descripción ancha)."""
     return bool(re.search(r'<mergeCell ref="C\d+:F\d+"', sheet_xml, re.IGNORECASE))
@@ -282,6 +373,7 @@ class PartidasWriter:
                 partidas,
                 asciende_style=wrap_style,
                 partida_desc_style=partida_desc_style,
+                shared_strings=read_shared_strings_from_dict(otros),
             )
 
             fd, tmp_path = tempfile.mkstemp(suffix=".xlsx")
@@ -328,16 +420,23 @@ class PartidasWriter:
         partidas,
         asciende_style="47",
         partida_desc_style="32",
+        shared_strings=None,
     ):
         """
-        Reemplaza las filas de partidas de ejemplo (17-26) con las partidas reales.
+        Reemplaza el bloque de partidas (fila 17 hasta el subtotal, inclusive)
+        con las partidas reales.
+
+        Funciona tanto sobre la plantilla recién creada (partidas de ejemplo
+        17-26, subtotal en 27) como sobre un presupuesto que ya tiene partidas
+        (regenerar / añadir): el subtotal existente se localiza por su fórmula
+        ``SUM(I17:...)`` en lugar de asumir la fila 27.
         """
-        for row_num in range(17, 27):
-            pattern = r'<row r="' + str(row_num) + r'"[^>]*>.*?</row>'
-            sheet_xml = re.sub(pattern, '', sheet_xml, flags=re.DOTALL)
+        shared_strings = shared_strings or []
+        old_subtotal_row = _find_partidas_subtotal_row(sheet_xml)
+        sheet_xml = _remove_rows_in_range(sheet_xml, PARTIDAS_FIRST_ROW, old_subtotal_row)
 
         new_rows_xml = []
-        first_data_row = 17
+        first_data_row = PARTIDAS_FIRST_ROW
         current_row = first_data_row
         ps = str(partida_desc_style)
         chars_per_line = _description_chars_per_line(sheet_xml)
@@ -470,18 +569,25 @@ class PartidasWriter:
         )
         new_rows_xml.append(subtotal_row)
 
-        pattern_27 = r'<row r="27"[^>]*>.*?</row>'
-        sheet_xml = re.sub(pattern_27, '', sheet_xml, flags=re.DOTALL)
-        offset = subtotal_row_num - 27
-
+        # Desplazamiento del resto de la hoja: lo que había tras el subtotal
+        # antiguo pasa a estar tras el subtotal nuevo.
+        offset = subtotal_row_num - old_subtotal_row
         if offset != 0:
-            sheet_xml = self._renumber_rows(sheet_xml, start_from=28, offset=offset)
-            sheet_xml = _shift_formula_row_refs_in_sheet_xml(sheet_xml, start_from=28, offset=offset)
+            sheet_xml = self._renumber_rows(
+                sheet_xml, start_from=old_subtotal_row + 1, offset=offset
+            )
+        # Las referencias al subtotal antiguo (p. ej. "=I27" en el pie) también
+        # se mueven: start_from incluye la propia fila del subtotal.
+        sheet_xml = _shift_formula_row_refs_in_sheet_xml(
+            sheet_xml, start_from=old_subtotal_row, offset=offset
+        )
 
-        for row_num in range(17, 28):
-            sheet_xml = re.sub(
-                r'<mergeCell ref="[A-Z]+' + str(row_num) + r':[A-Z]+' + str(row_num) + r'"/>',
-                '', sheet_xml
+        sheet_xml = _remove_merges_starting_in_range(
+            sheet_xml, PARTIDAS_FIRST_ROW, old_subtotal_row
+        )
+        if offset != 0:
+            sheet_xml = self._renumber_merges(
+                sheet_xml, start_from=old_subtotal_row + 1, offset=offset
             )
         new_merges = []
         row = first_data_row
@@ -489,49 +595,64 @@ class PartidasWriter:
             new_merges.append(f'<mergeCell ref="C{row}:F{row}"/>')
             row += 2
         new_merges.append(f'<mergeCell ref="C{subtotal_row_num}:G{subtotal_row_num}"/>')
-        if offset != 0:
-            sheet_xml = self._renumber_merges(sheet_xml, start_from=28, offset=offset)
         merge_insert = ''.join(new_merges)
         sheet_xml = sheet_xml.replace('</mergeCells>', merge_insert + '</mergeCells>')
 
-        r43 = 43 + offset
-        r45 = 45 + offset
-        r46 = 46 + offset
-        r47 = 47 + offset
-        r49 = 49 + offset
         total_sin_iva = grand_total
         totales = calcular_totales([total_sin_iva])
         iva_amount = totales["iva"]
         total_con_iva = totales["total"]
 
-        sheet_xml = self._update_formula_ref(
-            sheet_xml, r43, 'I', f'I{subtotal_row_num}', total_sin_iva)
-        sheet_xml = self._update_formula_ref(
-            sheet_xml, r45, 'I', f'SUM(I{r43}:I{r43 + 1})', total_sin_iva)
-        sheet_xml = self._update_formula_ref(
-            sheet_xml, r46, 'I', f'I{r45}*0.1', iva_amount)
-        sheet_xml = self._update_formula_ref(
-            sheet_xml, r47, 'I', f'I{r45}+I{r46}', total_con_iva)
-
-        texto_importe = (
-            "Asciende el presupuesto de ejecución material a la expresada "
-            f"cantidad de {euros_en_letras(total_con_iva)} IVA INCLUIDO."
+        footer = _find_footer_rows(sheet_xml, shared_strings, min_row=subtotal_row_num + 1)
+        cap, tot, iva_r, tiva = (
+            footer.get("capitulo"), footer.get("total"),
+            footer.get("iva"), footer.get("total_iva"),
         )
-        sheet_xml = self._replace_cell_text(
-            sheet_xml, f'A{r49}', texto_importe,
-            style=asciende_style, bold=True, font_size=11,
-        )
+        if cap and tot and iva_r and tiva and cap < tot < iva_r < tiva:
+            # Limpia fórmulas sueltas entre capítulo y total (versiones previas
+            # escribían aquí una segunda referencia al subtotal → doble conteo).
+            for r in range(cap + 1, tot):
+                sheet_xml = _clear_formula_cell(sheet_xml, f"I{r}")
+            sheet_xml = self._update_formula_ref(
+                sheet_xml, cap, 'I', f'I{subtotal_row_num}', total_sin_iva)
+            sheet_xml = self._update_formula_ref(
+                sheet_xml, tot, 'I', f'SUM(I{cap}:I{tot - 1})', total_sin_iva)
+            sheet_xml = self._update_formula_ref(
+                sheet_xml, iva_r, 'I', f'I{tot}*10%', iva_amount)
+            sheet_xml = self._update_formula_ref(
+                sheet_xml, tiva, 'I', f'I{tot}+I{iva_r}', total_con_iva)
+        else:
+            logger.warning(
+                "No se localizó el pie de totales (capítulo/total/IVA); "
+                "se conservan sus fórmulas desplazadas: %s", footer,
+            )
 
-        next_original_row = 28 + offset
-        insert_point_pattern = r'(<row r="' + str(next_original_row) + r'")'
-        insert_point = re.search(insert_point_pattern, sheet_xml)
+        asciende_row = footer.get("asciende")
+        if asciende_row:
+            texto_importe = (
+                "Asciende el presupuesto de ejecución material a la expresada "
+                f"cantidad de {euros_en_letras(total_con_iva)} IVA INCLUIDO."
+            )
+            sheet_xml = self._replace_cell_text(
+                sheet_xml, f'A{asciende_row}', texto_importe,
+                style=asciende_style, bold=True, font_size=11,
+            )
+
+        # Las filas nuevas van justo antes de la primera fila posterior al
+        # subtotal (el XML exige filas en orden ascendente).
         all_new_rows = '\n'.join(new_rows_xml)
+        insert_point = None
+        for m in re.finditer(r'<row r="(\d+)"', sheet_xml):
+            if int(m.group(1)) > subtotal_row_num:
+                insert_point = m
+                break
         if insert_point:
             sheet_xml = sheet_xml[:insert_point.start()] + all_new_rows + '\n' + sheet_xml[insert_point.start():]
         else:
             sheet_xml = sheet_xml.replace('</sheetData>', all_new_rows + '\n</sheetData>')
 
-        last_row = 57 + offset
+        all_rows = [int(r) for r in re.findall(r'<row r="(\d+)"', sheet_xml)]
+        last_row = max(all_rows) if all_rows else subtotal_row_num
         sheet_xml = re.sub(
             r'<dimension ref="[^"]+"/>',
             f'<dimension ref="A1:R{last_row}"/>',
@@ -540,27 +661,36 @@ class PartidasWriter:
         return sheet_xml
 
     def _renumber_rows(self, sheet_xml, start_from, offset):
-        """Renumera filas y sus referencias de celda desde start_from aplicando offset."""
+        """Renumera filas >= start_from (y las refs de sus celdas) aplicando offset.
+
+        Se hace en una sola pasada por fila: renombrar con ``str.replace`` fila
+        a fila provocaba renombrados en cascada cuando offset < 0 (la fila 57
+        pasaba a 53, y después la "53" a 49, etc.), dejando filas duplicadas.
+        """
         if offset == 0:
             return sheet_xml
-        rows_found = re.findall(r'<row r="(\d+)"', sheet_xml)
-        rows_to_renumber = sorted(
-            [int(r) for r in rows_found if int(r) >= start_from],
-            reverse=True
-        )
-        for old_row in rows_to_renumber:
+
+        def _bump_row(match):
+            old_row = int(match.group(1))
+            if old_row < start_from:
+                return match.group(0)
             new_row = old_row + offset
-            sheet_xml = sheet_xml.replace(
-                f'<row r="{old_row}"',
-                f'<row r="{new_row}"'
+            row_xml = match.group(0)
+            row_xml = re.sub(
+                r'^<row r="\d+"', f'<row r="{new_row}"', row_xml, count=1
             )
-            for col in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L',
-                        'M', 'N', 'O', 'P', 'Q', 'R']:
-                sheet_xml = sheet_xml.replace(
-                    f'r="{col}{old_row}"',
-                    f'r="{col}{new_row}"'
-                )
-        return sheet_xml
+            return re.sub(
+                r'(<c r="[A-Z]+)' + str(old_row) + r'"',
+                lambda m: f'{m.group(1)}{new_row}"',
+                row_xml,
+            )
+
+        return re.sub(
+            r'<row r="(\d+)"[^>]*?(?:/>|>.*?</row>)',
+            _bump_row,
+            sheet_xml,
+            flags=re.DOTALL,
+        )
 
     def _renumber_merges(self, sheet_xml, start_from, offset):
         """Renumera mergeCell refs que involucran filas >= start_from."""
@@ -766,6 +896,11 @@ class PartidasWriter:
                 new_xf = re.sub(
                     r'<xf\b', '<xf applyAlignment="1"', new_xf, count=1,
                 )
+        # Reutiliza un estilo idéntico creado en una escritura anterior: si no,
+        # cada regeneración de partidas añadía otro <xf> a styles.xml.
+        for idx, existing in enumerate(xfs):
+            if existing.group(0) == new_xf:
+                return str(idx)
         new_idx = count
         new_content = content + new_xf + '\n'
         new_section = (

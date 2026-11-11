@@ -10,7 +10,6 @@ import pytest
 
 from src.core.excel_manager import ExcelManager
 from src.core.template_manager import TemplateManager
-from src.core.validators import DataValidator
 
 # Forzar plataforma offscreen antes de que cualquier test importe PySide6: evita
 # crear ventanas nativas y, sobre todo, evita crear/destruir varias instancias
@@ -70,7 +69,3 @@ def template_manager():
     return TemplateManager()
 
 
-@pytest.fixture
-def validator():
-    """Instancia de DataValidator."""
-    return DataValidator()

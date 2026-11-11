@@ -139,3 +139,93 @@ def test_finalize_budget_succeeds_even_if_canonical_mirror_raises(db_env, tmp_pa
 
     ok = svc.finalize_budget(file_path)
     assert ok is True
+
+
+# ---------------------------------------------------------------------------
+# Regresión: protección de snapshots finalizados
+# ---------------------------------------------------------------------------
+
+def _finalized_partidas(file_path):
+    row = db_repository.get_presupuesto_por_ruta(file_path)
+    assert row is not None
+    from src.core.repositories.presupuesto_cache_repository import get_partidas_de_presupuesto
+    return row, get_partidas_de_presupuesto(row["id"])
+
+
+def _data_without_partidas():
+    data = _sample_data()
+    data["partidas"] = []
+    return data
+
+
+def test_finalize_with_unreadable_partidas_keeps_existing_snapshot(db_env, tmp_path):
+    file_path = str(tmp_path / "obra.xlsx")
+    open(file_path, "w").close()
+    assert _make_service(_sample_data()).finalize_budget(file_path) is True
+
+    # El Excel se edita y BudgetReader ya no reconoce las partidas.
+    ok = _make_service(_data_without_partidas()).finalize_budget(file_path)
+
+    assert ok is False
+    row, partidas = _finalized_partidas(file_path)
+    assert row["es_finalizado"] == 1
+    assert len(partidas) == 1
+    assert row["num_partidas"] == 1
+
+
+def test_refresh_with_unreadable_partidas_keeps_existing_snapshot(db_env, tmp_path):
+    file_path = str(tmp_path / "obra.xlsx")
+    open(file_path, "w").close()
+    assert _make_service(_sample_data()).finalize_budget(file_path) is True
+
+    ok = _make_service(_data_without_partidas()).refresh_budget_cache_entry(file_path)
+
+    assert ok is False
+    _row, partidas = _finalized_partidas(file_path)
+    assert len(partidas) == 1
+
+
+def test_orphan_cleanup_never_deletes_finalized_snapshots(db_env, tmp_path):
+    from src.core.repositories.presupuesto_cache_repository import (
+        limpiar_presupuestos_huerfanos,
+    )
+
+    finalizado = str(tmp_path / "finalizado.xlsx")
+    open(finalizado, "w").close()
+    assert _make_service(_sample_data()).finalize_budget(finalizado) is True
+
+    cache = str(tmp_path / "solo_cache.xlsx")
+    _id, err = db_repository.upsert_presupuesto({
+        "nombre_proyecto": "Solo cache",
+        "ruta_excel": cache,
+        "fecha_modificacion_excel": "2026-01-01T00:00:00",
+    })
+    assert err is None
+
+    # Ninguno de los dos aparece en el escaneo (renombrado, unidad desmontada...).
+    eliminados = limpiar_presupuestos_huerfanos([str(tmp_path / "otro.xlsx")])
+
+    assert eliminados == 1
+    assert db_repository.get_presupuesto_por_ruta(cache) is None
+    _row, partidas = _finalized_partidas(finalizado)
+    assert len(partidas) == 1
+
+
+def test_refinalizar_conserva_la_fecha_de_finalizacion_original(db_env, tmp_path):
+    file_path = str(tmp_path / "obra.xlsx")
+    open(file_path, "w").close()
+    assert _make_service(_sample_data()).finalize_budget(file_path) is True
+    from src.core import database
+
+    with database.get_connection() as conn:
+        conn.execute(
+            "UPDATE presupuesto SET fecha_finalizacion = '2026-01-15 10:00:00' WHERE ruta_excel = ?",
+            (file_path,),
+        )
+        conn.commit()
+
+    assert _make_service(_sample_data()).finalize_budget(file_path) is True
+    assert _make_service(_sample_data()).refresh_budget_cache_entry(file_path) is True
+
+    row = db_repository.get_presupuesto_por_ruta(file_path)
+    assert row["fecha_finalizacion"] == "2026-01-15 10:00:00"

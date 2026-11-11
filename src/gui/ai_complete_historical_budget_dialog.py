@@ -39,6 +39,7 @@ class AICompleteHistoricalBudgetDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Completar presupuesto con IA")
         self._generation_done.connect(self._on_generation_complete)
+        self._closed = False
 
         self._settings = Settings()
         self._project_data = project_data or {}
@@ -183,6 +184,8 @@ class AICompleteHistoricalBudgetDialog(QDialog):
             )
 
     def _on_generation_complete(self, result):
+        if self._closed:
+            return
         self._btn_generate.setEnabled(True)
         self._btn_generate.setText("Buscar partidas complementarias")
         if result.get("error") and not result.get("partidas"):
@@ -195,6 +198,18 @@ class AICompleteHistoricalBudgetDialog(QDialog):
         self._action = "ai_completion"
         self._result = result
         self.accept()
+
+    # ── Cierre ──────────────────────────────────────────────────────────────
+    # Si el usuario cierra o pulsa "Saltar" mientras la IA trabaja, el
+    # resultado tardío no debe abrir avisos ni volver a cerrar el diálogo.
+
+    def reject(self):
+        self._closed = True
+        super().reject()
+
+    def accept(self):
+        self._closed = True
+        super().accept()
 
     def get_action(self) -> str:
         return self._action

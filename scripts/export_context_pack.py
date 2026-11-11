@@ -38,7 +38,9 @@ from src.core.historical_partida_features import _ACTION_SYNONYMS, _ELEMENT_SYNO
 # marcador de una direccion postal real; "C/" y "Avda." casi no se usan con
 # otro sentido. El "en" delante es opcional.
 _RE_DIRECCION = re.compile(
-    r"(?:\s+en)?\s+(?:c/|avda\.?\b)[^,]*",
+    # También al principio del texto ("C/ Mayor 12, pintura fachada"): antes
+    # se exigía un espacio delante y esas direcciones salían sin filtrar.
+    r"(?:^\s*|(?:\s+en)?\s+)(?:c/|avda\.?\b)[^,]*",
     re.IGNORECASE,
 )
 
@@ -46,6 +48,18 @@ _RE_DIRECCION = re.compile(
 _RE_COMUNIDAD = re.compile(
     r"\s*comunidad\s+de\s+propietarios\b[^,]*",
     re.IGNORECASE,
+)
+
+# "C.P. BLASCO IBAÑEZ 18", "C. P. Los Olivos": la abreviatura de Comunidad de
+# Propietarios seguida del nombre/dirección de la comunidad, que en los datos
+# reales va en mayúsculas o capitalizado. Se consume "C.P." y las palabras
+# siguientes que empiecen por mayúscula o dígito (más conectores "de", "y"...
+# entre ellas), y se para en la primera palabra en minúscula, que ya es la
+# descripción de la obra. 59 conceptos reales lo tenían y no se filtraban.
+_NOMBRE_TOKEN = r"[A-ZÁÉÍÓÚÑÜ0-9][\wÁÉÍÓÚÑÜáéíóúñü.ºª/\-]*"
+_RE_COMUNIDAD_ABREV = re.compile(
+    r"\s*(?<!\w)C\.\s?P\.(?:\s+(?:" + _NOMBRE_TOKEN
+    + r"|(?:de|del|la|las|los|el|y|n[ºo]\.?)(?=\s+" + _NOMBRE_TOKEN + r")))+",
 )
 
 # CIF/NIF: letra + 8 digitos, u 8 digitos + letra.
@@ -106,6 +120,11 @@ def scrub_text(text: str) -> Tuple[str, List[str]]:
         cleaned = _RE_COMUNIDAD.sub("", cleaned)
         reasons.append("comunidad")
 
+    if _RE_COMUNIDAD_ABREV.search(cleaned):
+        cleaned = _RE_COMUNIDAD_ABREV.sub("", cleaned)
+        if "comunidad" not in reasons:
+            reasons.append("comunidad")
+
     if _RE_CIF_NIF.search(cleaned):
         cleaned = _RE_CIF_NIF.sub("", cleaned)
         reasons.append("cif_nif")
@@ -115,6 +134,8 @@ def scrub_text(text: str) -> Tuple[str, List[str]]:
         reasons.append("email")
 
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    # Si se quitó algo al principio, no dejar la coma huérfana (", pintura").
+    cleaned = cleaned.lstrip(",;: ").strip()
     return cleaned, reasons
 
 

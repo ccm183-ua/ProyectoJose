@@ -10,6 +10,11 @@ from typing import List
 
 from src.core import database
 
+# Retención (decisión D1, 2026-11-11): se guardan los últimos N backups y,
+# siempre, los de migración de esquema y los previos a un borrado total.
+BACKUP_KEEP_LAST = 15
+PROTECTED_BACKUP_REASONS = ("before_migration", "before_clear_historical")
+
 
 def get_backup_dir() -> Path:
     env_dir = os.environ.get("CUBIAPP_BACKUP_DIR")
@@ -39,6 +44,10 @@ def create_database_backup(reason: str) -> Path:
         )
     except Exception:
         pass
+    try:
+        prune_old_backups(BACKUP_KEEP_LAST)
+    except Exception:  # noqa: BLE001 - purgar nunca puede impedir el backup
+        pass
     return target
 
 
@@ -46,17 +55,31 @@ def list_database_backups() -> List[Path]:
     backup_dir = get_backup_dir()
     if not backup_dir.exists():
         return []
+    # Orden por la marca de tiempo del nombre (datos_AAAAMMDD_HHMMSS_ffffff_...),
+    # no por mtime: shutil.copy2 conserva el mtime de la BD original, así que
+    # todos los backups llevaban la fecha de la última escritura en la BD.
     return sorted(
         [p for p in backup_dir.glob("*.db") if p.is_file()],
-        key=lambda p: p.stat().st_mtime,
+        key=lambda p: (p.name, p.stat().st_mtime),
         reverse=True,
     )
 
 
-def prune_old_backups(keep_last: int = 10) -> None:
+def _is_protected(path: Path) -> bool:
+    return any(reason in path.name for reason in PROTECTED_BACKUP_REASONS)
+
+
+def prune_old_backups(keep_last: int = BACKUP_KEEP_LAST) -> int:
+    """Borra los backups más antiguos, conservando los ``keep_last`` más
+    recientes y siempre los protegidos (migraciones y borrados totales).
+    Devuelve cuántos se han borrado."""
     keep = max(0, int(keep_last or 0))
-    for path in list_database_backups()[keep:]:
+    candidates = [p for p in list_database_backups() if not _is_protected(p)]
+    removed = 0
+    for path in candidates[keep:]:
         try:
             path.unlink()
+            removed += 1
         except OSError:
             pass
+    return removed

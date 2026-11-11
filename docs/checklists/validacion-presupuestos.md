@@ -1,5 +1,7 @@
 # Checklist validacion flujo presupuestos
 
+> **Estado (2026-11-11):** Pendiente de ejecutar a mano con presupuestos reales.
+
 ## Preparacion
 - [ ] Abrir la app con una base de datos existente.
 - [ ] Verificar que inicia sin errores y que el dashboard carga.

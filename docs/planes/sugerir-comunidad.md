@@ -1,5 +1,7 @@
 # Plan: Sugerir Comunidad desde Dirección y Contexto
 
+> **Estado (2026-11-11):** A medias (mínimo): solo existe el prefill de dirección en los diálogos; no hay búsqueda por dirección, sugerencias ni columna "Origen".
+
 ## 1. Contexto de la aplicación
 
 ### 1.1 Flujo actual de selección de comunidad

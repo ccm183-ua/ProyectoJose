@@ -8,10 +8,14 @@ Prioridad API key: variable de entorno > archivo local.
 import hashlib
 import hmac
 import json
+import logging
 import os
 import secrets
+import shutil
 import tempfile
 from typing import Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 
 # Variables de entorno para API keys. Se mantienen fuera de Git.
@@ -22,6 +26,10 @@ AI_PROVIDER_GEMINI = "GEMINI"
 AI_PROVIDER_DEEPSEEK = "DEEPSEEK"
 DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-flash"
+LEGACY_DEEPSEEK_MODEL_ALIASES = {
+    "deepseek-chat": "deepseek-v4-flash",
+    "deepseek-reasoner": "deepseek-v4-flash",
+}
 
 # Nombre del archivo de configuración local
 CONFIG_FILENAME = "cubiapp_config.json"
@@ -116,7 +124,7 @@ class Settings:
         provider_clean = str(provider or "").strip().upper()
         if provider_clean not in (AI_PROVIDER_GEMINI, AI_PROVIDER_DEEPSEEK):
             provider_clean = AI_PROVIDER_GEMINI
-        config = self._load_config()
+        config = self._load_config_for_update()
         config["ai_provider"] = provider_clean
         self._save_config(config)
 
@@ -167,7 +175,11 @@ class Settings:
         self._save_config_value("gemini_model", (model or "").strip() or DEFAULT_GEMINI_MODEL)
 
     def get_deepseek_model(self) -> str:
-        return self._get_config_text("deepseek_model", DEFAULT_DEEPSEEK_MODEL)
+        model = self._get_config_text("deepseek_model", DEFAULT_DEEPSEEK_MODEL)
+        # DeepSeek retiró "deepseek-chat" y "deepseek-reasoner" el 2026-07-24;
+        # su documentación los hace corresponder con deepseek-v4-flash. Una
+        # configuración guardada antes de esa fecha fallaba en cada llamada.
+        return LEGACY_DEEPSEEK_MODEL_ALIASES.get(model.lower(), model)
 
     def save_deepseek_model(self, model: str) -> None:
         self._save_config_value("deepseek_model", (model or "").strip() or DEFAULT_DEEPSEEK_MODEL)
@@ -201,7 +213,7 @@ class Settings:
         """Guarda (o borra si *path* es vacío) la ruta para *key*."""
         if key not in self._ALL_PATH_KEYS:
             return
-        config = self._load_config()
+        config = self._load_config_for_update()
         config[key] = path.strip() if path else ""
         self._save_config(config)
 
@@ -241,13 +253,41 @@ class Settings:
     # ── Persistencia ─────────────────────────────────────────────────
 
     def _load_config(self) -> dict:
+        """Lectura tolerante: ante cualquier error devuelve {} (solo para leer)."""
         if not os.path.exists(self._config_path):
             return {}
         try:
             with open(self._config_path, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except (json.JSONDecodeError, IOError):
+                data = json.load(f)
+            return data if isinstance(data, dict) else {}
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError):
             return {}
+
+    def _load_config_for_update(self) -> dict:
+        """Lectura previa a una escritura: nunca puede acabar borrando datos.
+
+        - Si el fichero no se puede leer (bloqueado por OneDrive, antivirus...),
+          lanza OSError: se aborta la escritura y el fichero queda intacto.
+        - Si el JSON está corrupto, se guarda una copia
+          ``cubiapp_config.json.corrupt-<fecha>`` antes de empezar de cero,
+          para poder recuperar claves y rutas a mano.
+        """
+        if not os.path.exists(self._config_path):
+            return {}
+        with open(self._config_path, 'r', encoding='utf-8', errors='replace') as f:
+            raw = f.read()
+        try:
+            data = json.loads(raw) if raw.strip() else {}
+            if isinstance(data, dict):
+                return data
+        except json.JSONDecodeError:
+            pass
+        from datetime import datetime
+
+        backup = f"{self._config_path}.corrupt-{datetime.now():%Y%m%d-%H%M%S}"
+        shutil.copy2(self._config_path, backup)
+        logger.error("Configuración corrupta; copia guardada en %s", backup)
+        return {}
 
     def _get_config_secret(self, key: str) -> Optional[str]:
         config = self._load_config()
@@ -264,7 +304,7 @@ class Settings:
         return default
 
     def _save_config_value(self, key: str, value: str) -> None:
-        config = self._load_config()
+        config = self._load_config_for_update()
         config[key] = value
         self._save_config(config)
 

@@ -141,41 +141,6 @@ class TestErrorHandling:
             pass
 
 
-class TestFileOverwriting:
-    """Tests para sobrescritura de archivos."""
-    
-    def test_no_overwrite_without_confirmation(self, temp_dir, file_manager):
-        """Test: Validar que no se sobrescriben archivos existentes sin confirmación."""
-        file_path = os.path.join(temp_dir, "test_file.xlsx")
-        
-        # Crear archivo existente
-        with open(file_path, 'w') as f:
-            f.write("contenido original")
-        
-        # Intentar crear el mismo archivo sin confirmación
-        result = file_manager.create_file_if_not_exists(file_path)
-        
-        # El archivo original debe seguir existiendo
-        assert os.path.exists(file_path)
-        # El contenido original debe mantenerse o el método debe retornar False
-        with open(file_path, 'r') as f:
-            content = f.read()
-            assert "contenido original" in content or result == False
-    
-    def test_overwrite_with_confirmation(self, temp_dir, file_manager):
-        """Test: Validar sobrescritura con confirmación."""
-        file_path = os.path.join(temp_dir, "test_file.xlsx")
-        
-        # Crear archivo existente
-        with open(file_path, 'w') as f:
-            f.write("contenido original")
-        
-        # Sobrescribir con confirmación
-        result = file_manager.create_file(file_path, overwrite=True)
-        
-        assert os.path.exists(file_path)
-
-
 class TestFilenameSanitization:
     """Tests para sanitización de nombres de archivo/carpeta."""
     

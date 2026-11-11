@@ -221,6 +221,8 @@ class AIService:
         if value is None:
             return default
         try:
-            return float(value)
+            from src.core.budget_math import parse_decimal_es
+
+            return parse_decimal_es(value)
         except (ValueError, TypeError):
             return default

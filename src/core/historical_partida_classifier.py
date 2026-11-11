@@ -2,9 +2,9 @@
 Clasificación de partidas históricas en módulos de ejecución.
 """
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
-from src.core.work_type_normalizer import normalize_text
+from src.core.work_type_normalizer import keyword_in_text, normalize_text
 
 
 MODULE_RULES = {
@@ -94,21 +94,34 @@ MODULE_RULES = {
         "acero",
         "cerrajeria",
     ],
+    # Revisión de la familia (Decisiones 34-37, 2026-11-11):
+    # - Fuera "garaje" y "parking" (34): son lugares, no elementos
+    #   estructurales; eran la única señal en 99 partidas como "Pintura
+    #   puerta vehículos garaje" o "Puerta cortafuegos en parking".
+    # - "hormigon" y "refuerzo" solo cuentan con otra señal estructural
+    #   (35, ver WEAK_MODULE_KEYWORDS): solos aparecían tanto en forjados
+    #   como en "pintura al silicato sobre hormigón" o "refuerzo en rejilla".
+    # - Fuera los plurales/derivados "vigas", "pilares", "estructural" y
+    #   "dados" (36): ya los casan "viga", "pilar", "estructura" y "dado"
+    #   desde inicio de palabra y contaban dos veces, inflando la confianza.
+    # - "entrevigado" (37): no lo casa "viga" (empieza a mitad de palabra).
+    # - "forjado" y "armadura" (35): señales débiles como hormigon/refuerzo.
+    #   Solas también aparecen como lugar ("picar en el forjado para la
+    #   caldereta", "alicatado a forjado"), pero dos señales débiles juntas
+    #   ("frente de forjado de hormigón", "armaduras ... hormigón") sí indican
+    #   reparación estructural.
     "estructura": [
         "viga",
-        "vigas",
+        "entrevigado",
+        "forjado",
+        "armadura",
         "atado",
         "zuncho",
         "pilar",
-        "pilares",
         "estructura",
-        "estructural",
         "refuerzo",
         "hormigon",
         "dado",
-        "dados",
-        "parking",
-        "garaje",
     ],
     "fachada": [
         # "fachadas" no esta como keyword aparte: normalize_text la expande a
@@ -198,6 +211,13 @@ def pick_primary_module(candidates: List[Dict], element: Optional[str] = None) -
     return max(pool, key=lambda c: (c["confidence"], -priority_rank(c["module"])))
 
 
+# Keywords débiles: solo cuentan para su módulo si en el texto aparece
+# también un keyword no débil del módulo, o al menos dos débiles distintos
+# (Decision 35).
+WEAK_MODULE_KEYWORDS: Dict[str, Tuple[str, ...]] = {
+    "estructura": ("refuerzo", "hormigon", "forjado", "armadura"),
+}
+
 class HistoricalPartidaClassifier:
     """Clasificador por reglas basado en palabras clave normalizadas."""
 
@@ -236,7 +256,9 @@ class HistoricalPartidaClassifier:
 
         results: List[Dict] = []
         for module_name, keywords in MODULE_RULES.items():
-            matches = self._count_matches(normalized, keywords)
+            matches = self._count_matches(
+                normalized, keywords, WEAK_MODULE_KEYWORDS.get(module_name, ())
+            )
             if matches == 0:
                 continue
             confidence = self._calculate_confidence(matches, len(keywords))
@@ -261,13 +283,24 @@ class HistoricalPartidaClassifier:
         return " ".join(str(item).strip() for item in parts if item).strip()
 
     @staticmethod
-    def _count_matches(text: str, keywords: List[str]) -> int:
-        count = 0
+    def _count_matches(text: str, keywords: List[str], weak: Tuple[str, ...] = ()) -> int:
+        """Número de keywords del módulo presentes en el texto.
+
+        Los keywords de ``weak`` solo suman si también aparece al menos un
+        keyword no débil del mismo módulo, o si coinciden dos débiles
+        distintos.
+        """
+        strong = weak_hits = 0
         for kw in keywords:
             normalized_kw = normalize_text(kw)
-            if normalized_kw and normalized_kw in text:
-                count += 1
-        return count
+            if normalized_kw and keyword_in_text(normalized_kw, text):
+                if kw in weak:
+                    weak_hits += 1
+                else:
+                    strong += 1
+        if strong or weak_hits >= 2:
+            return strong + weak_hits
+        return 0
 
     @staticmethod
     def _calculate_confidence(matches: int, total_keywords: int) -> float:

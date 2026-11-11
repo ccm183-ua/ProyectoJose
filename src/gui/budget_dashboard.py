@@ -22,7 +22,7 @@ import threading
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow, QMenu,
+    QApplication, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow, QMenu,
     QMessageBox, QPushButton, QTableWidget, QTableWidgetItem,
     QTabWidget, QVBoxLayout, QWidget,
 )
@@ -161,6 +161,8 @@ class BudgetDashboardFrame(QMainWindow):
         self._explorer_mode: bool = False
         self._show_extra_columns: bool = True
         self._excel_watchers: dict[str, threading.Event] = {}
+        # Excels en los que el usuario ya dijo "No" a finalizar al guardar.
+        self._excel_no_finalize: set[str] = set()
 
         self._build_ui()
         self._center()
@@ -1268,30 +1270,48 @@ class BudgetDashboardFrame(QMainWindow):
                 "Esta acción está disponible en la vista de presupuestos.",
             )
             return
+        if getattr(self, "_refresh_in_progress", False):
+            return
         from src.core.services import BudgetService
-        svc = BudgetService()
-        ok_count = 0
-        fail_count = 0
-        for selected in selected_many:
-            ruta = os.path.normpath(selected.get("ruta_excel", ""))
-            if not ruta or not os.path.exists(ruta):
-                fail_count += 1
-                continue
-            refreshed = svc.refresh_budget_cache_entry(
-                ruta,
-                estado=self._current_state() or "",
-                expected_numero=selected.get("numero", ""),
+
+        # Se capturan los datos en el hilo de la UI; la lectura de los Excel
+        # (una por presupuesto) va en segundo plano para no congelar la ventana.
+        estado = self._current_state() or ""
+        targets = [
+            (os.path.normpath(sel.get("ruta_excel", "")), sel.get("numero", ""))
+            for sel in selected_many
+        ]
+
+        def _work():
+            svc = BudgetService()
+            ok_count = fail_count = 0
+            for ruta, numero in targets:
+                if not ruta or not os.path.exists(ruta):
+                    fail_count += 1
+                    continue
+                if svc.refresh_budget_cache_entry(ruta, estado=estado, expected_numero=numero):
+                    ok_count += 1
+                else:
+                    fail_count += 1
+            return ok_count, fail_count
+
+        def _done(success, payload):
+            self._refresh_in_progress = False
+            QApplication.restoreOverrideCursor()
+            if not success:
+                QMessageBox.critical(self, "Escanear presupuestos", f"Error al escanear:\n{payload}")
+                return
+            ok_count, fail_count = payload
+            self._load_data()
+            QMessageBox.information(
+                self,
+                "Escanear presupuestos",
+                f"Actualizados: {ok_count}\nCon error: {fail_count}",
             )
-            if refreshed:
-                ok_count += 1
-            else:
-                fail_count += 1
-        self._load_data()
-        QMessageBox.information(
-            self,
-            "Escanear presupuestos",
-            f"Actualizados: {ok_count}\nCon error: {fail_count}",
-        )
+
+        self._refresh_in_progress = True
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        run_in_background(_work, _done)
 
     def _on_export_pdf(self):
         selected = self._get_selected()
@@ -1419,8 +1439,10 @@ class BudgetDashboardFrame(QMainWindow):
         """Vigila el Excel abierto mientras el dashboard siga vivo.
 
         No se detiene en el primer guardado ni a los pocos minutos: al detectar
-        un cambio refresca el snapshot y vuelve a vigilar, para que ediciones
-        posteriores tampoco queden presentadas como datos actuales.
+        un cambio pregunta si finalizar (decisión E1), refresca el snapshot y
+        vuelve a vigilar, para que ediciones posteriores tampoco queden
+        presentadas como datos actuales. El vigilante sigue registrado durante
+        todo el ciclo, así que cerrar el dashboard lo detiene siempre.
         """
         if ruta_excel in self._excel_watchers:
             return
@@ -1430,21 +1452,80 @@ class BudgetDashboardFrame(QMainWindow):
             return
         stop = threading.Event()
         self._excel_watchers[ruta_excel] = stop
+        self._arm_excel_watch(ruta_excel, estado, stop, baseline)
 
+    def _forget_excel_watch(self, ruta_excel: str, stop: threading.Event) -> None:
+        if self._excel_watchers.get(ruta_excel) is stop:
+            self._excel_watchers.pop(ruta_excel, None)
+
+    def _arm_excel_watch(self, ruta_excel: str, estado: str, stop: threading.Event, baseline: float):
         def _watch():
-            return {"changed": _wait_for_excel_change(ruta_excel, stop, baseline)}
+            changed = _wait_for_excel_change(ruta_excel, stop, baseline)
+            detected = baseline
+            if changed:
+                try:
+                    detected = os.path.getmtime(ruta_excel)
+                except OSError:
+                    pass
+            return {"changed": changed, "mtime": detected}
 
         def _on_watch_done(ok, payload):
-            self._excel_watchers.pop(ruta_excel, None)
-            if stop.is_set() or not ok:
+            if stop.is_set() or not ok or not payload.get("changed"):
+                self._forget_excel_watch(ruta_excel, stop)
                 return
-            if payload.get("changed"):
+            # La nueva línea base es el guardado detectado, no el momento en que
+            # se vuelva a vigilar: un guardado hecho mientras el diálogo está
+            # abierto se detecta en la siguiente vuelta.
+            new_baseline = payload.get("mtime", baseline)
+            # Decisión E1: al guardar ya no se finaliza sin preguntar. Si el
+            # usuario dice "No", los siguientes guardados de este Excel solo
+            # refrescan la tabla, sin volver a preguntar.
+            if ruta_excel in self._excel_no_finalize:
+                finalizar = False
+            else:
+                try:
+                    resp = QMessageBox.question(
+                        self,
+                        "Presupuesto modificado",
+                        f"Se han guardado cambios en:\n{os.path.basename(ruta_excel)}\n\n"
+                        "¿Finalizar el presupuesto con los datos actuales del Excel?\n"
+                        "(Si eliges No, solo se actualiza la tabla.)",
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                        QMessageBox.StandardButton.No,
+                    )
+                except RuntimeError:  # el dashboard ya se cerró
+                    return
+                if stop.is_set():  # se cerró el dashboard con el diálogo abierto
+                    return
+                finalizar = resp == QMessageBox.StandardButton.Yes
+                if not finalizar:
+                    self._excel_no_finalize.add(ruta_excel)
+
+            def _apply():
                 from src.core.services import BudgetService
 
-                BudgetService().finalize_budget(ruta_excel, estado=estado)
-                self._load_data()
-            if not stop.is_set():
-                self._watch_excel_changes_and_refresh(ruta_excel, estado)
+                svc = BudgetService()
+                if finalizar:
+                    return svc.finalize_budget(ruta_excel, estado=estado)
+                return svc.refresh_budget_cache_entry(ruta_excel, estado=estado)
+
+            def _applied(ok_apply, result):
+                if stop.is_set():
+                    return
+                try:
+                    if ok_apply and result:
+                        self._load_data()
+                    elif finalizar:
+                        QMessageBox.warning(
+                            self, "Finalizar presupuesto",
+                            "No se pudo finalizar el presupuesto con los datos del Excel.",
+                        )
+                except RuntimeError:
+                    return
+                if not stop.is_set():
+                    self._arm_excel_watch(ruta_excel, estado, stop, new_baseline)
+
+            run_in_background(_apply, _applied)
 
         run_in_background(_watch, _on_watch_done)
 

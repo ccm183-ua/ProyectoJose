@@ -130,9 +130,22 @@ class AIBudgetDialog(QDialog):
         self._settings = Settings()
         self._selected_plantilla = None
         self._result = None
+        self._closed = False
         self._speech = SpeechToTextService()
 
         self._build_ui()
+
+    # ── Cierre ──────────────────────────────────────────────────────────────
+    # Si el usuario cierra o pulsa "Saltar" mientras la IA trabaja, el
+    # resultado tardío no debe abrir avisos ni volver a cerrar el diálogo.
+
+    def reject(self):
+        self._closed = True
+        super().reject()
+
+    def accept(self):
+        self._closed = True
+        super().accept()
 
     def _build_ui(self):
         main_layout = QVBoxLayout(self)
@@ -488,6 +501,8 @@ class AIBudgetDialog(QDialog):
             })
 
     def _on_generation_complete(self, result):
+        if self._closed:
+            return
         self._result = result
         self._btn_generate.setEnabled(True)
         self._btn_polish.setEnabled(True)

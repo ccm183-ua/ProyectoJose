@@ -34,6 +34,7 @@ from src.core.speech_to_text_service import (
     stt_import_error_message,
 )
 from src.gui import theme
+from src.core.budget_math import parse_decimal_es
 
 
 _FAILURE_HELP = {
@@ -654,9 +655,9 @@ class HistoricalSuggestionsDialog(QDialog):
             if use_it is None or use_it.checkState() != Qt.CheckState.Checked:
                 continue
             try:
-                cantidad = float((self._table.item(row, 3).text() or "1").replace(",", "."))
-                precio = float((self._table.item(row, 5).text() or "0").replace(",", "."))
-            except ValueError:
+                cantidad = parse_decimal_es(self._table.item(row, 3).text() or "1")
+                precio = parse_decimal_es(self._table.item(row, 5).text() or "0")
+            except (TypeError, ValueError):
                 QMessageBox.warning(
                     self, "Valor inválido", "Cantidad y precio deben ser numéricos."
                 )

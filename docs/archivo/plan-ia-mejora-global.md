@@ -1,5 +1,7 @@
 # Plan: Mejora global del sistema de IA para partidas presupuestarias
 
+> **Estado (2026-11-11):** Superado por docs/ROADMAP_ESTABILIZACION_Y_EVOLUCION_IA.md y por la memoria histórica (que ya cubre la estrategia E, reducir la dependencia de la IA).
+
 ## 1. Contexto y problema
 
 ### 1.1 Estado actual
