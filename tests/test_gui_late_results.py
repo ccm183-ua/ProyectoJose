@@ -131,3 +131,38 @@ def test_coalescing_task_entrega_errores_al_callback(qapp):
     CoalescingBackgroundTask(boom, lambda ok, r: done.append((ok, str(r)))).request()
     _wait_until(qapp, lambda: done)
     assert done == [(False, "database is locked")]
+
+
+@pytest.mark.parametrize("respuesta,esperado", [("No", "refresh"), ("Yes", "finalize")])
+def test_guardar_excel_pregunta_antes_de_finalizar(qapp, monkeypatch, respuesta, esperado):
+    """Decisión E1: al guardar el Excel abierto desde el dashboard ya no se
+    finaliza sin preguntar; con "No" solo se refresca la caché."""
+    import src.gui.budget_dashboard as bd
+    from src.core import services
+
+    llamadas = []
+
+    class _FakeService:
+        def finalize_budget(self, ruta, estado=""):
+            llamadas.append("finalize"); return True
+
+        def refresh_budget_cache_entry(self, ruta, estado=""):
+            llamadas.append("refresh"); return True
+
+    mtimes = iter([100.0, 200.0])
+    monkeypatch.setattr(bd.os.path, "getmtime", lambda _p: next(mtimes, 200.0))
+    monkeypatch.setattr(bd.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(bd, "run_in_background", lambda work, cb: cb(True, work()))
+    monkeypatch.setattr(services, "BudgetService", _FakeService)
+    preguntas = []
+    monkeypatch.setattr(
+        QMessageBox, "question",
+        staticmethod(lambda *a, **k: preguntas.append(1) or getattr(QMessageBox.StandardButton, respuesta)),
+    )
+
+    dash = bd.BudgetDashboardFrame.__new__(bd.BudgetDashboardFrame)
+    dash._load_data = lambda: llamadas.append("reload")
+    bd.BudgetDashboardFrame._watch_excel_changes_and_refresh(dash, "C:/obra/presupuesto.xlsx", "PRESUPUESTADO")
+
+    assert preguntas == [1]
+    assert llamadas == [esperado, "reload"]

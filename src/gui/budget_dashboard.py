@@ -1346,11 +1346,44 @@ class BudgetDashboardFrame(QMainWindow):
         def _on_watch_done(ok, payload):
             if not ok or not payload.get("changed"):
                 return
+            try:
+                # Decisión E1: antes se finalizaba sin preguntar en cuanto el
+                # Excel se guardaba. Ahora se confirma; si no, solo se
+                # refresca la caché de la tabla.
+                resp = QMessageBox.question(
+                    self,
+                    "Presupuesto modificado",
+                    f"Se han guardado cambios en:\n{os.path.basename(ruta_excel)}\n\n"
+                    "¿Finalizar el presupuesto con los datos actuales del Excel?\n"
+                    "(Si eliges No, solo se actualiza la tabla.)",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No,
+                )
+            except RuntimeError:  # el dashboard ya se cerró
+                return
+            finalizar = resp == QMessageBox.StandardButton.Yes
 
-            from src.core.services import BudgetService
-            svc = BudgetService()
-            if svc.finalize_budget(ruta_excel, estado=estado):
-                self._load_data()
+            def _apply():
+                from src.core.services import BudgetService
+
+                svc = BudgetService()
+                if finalizar:
+                    return svc.finalize_budget(ruta_excel, estado=estado)
+                return svc.refresh_budget_cache_entry(ruta_excel, estado=estado)
+
+            def _applied(ok_apply, result):
+                try:
+                    if ok_apply and result:
+                        self._load_data()
+                    elif finalizar:
+                        QMessageBox.warning(
+                            self, "Finalizar presupuesto",
+                            "No se pudo finalizar el presupuesto con los datos del Excel.",
+                        )
+                except RuntimeError:
+                    pass
+
+            run_in_background(_apply, _applied)
 
         run_in_background(_watch, _on_watch_done)
 
