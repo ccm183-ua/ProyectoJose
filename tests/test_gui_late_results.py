@@ -130,3 +130,100 @@ def test_guardar_excel_pregunta_antes_de_finalizar(qapp, monkeypatch, respuesta,
     else:
         assert preguntas == [1, 1]
         assert llamadas == ["finalize", "reload", "finalize", "reload"]
+
+
+@pytest.mark.parametrize("overwrote,respuesta,descarta", [
+    (True, "No", False),   # sustituyó un Excel existente: nunca se descarta
+    (False, "No", True),   # borrador nuevo: "No" lo descarta
+    (False, "Yes", False),
+])
+def test_borrador_que_sobrescribio_un_excel_no_se_puede_descartar(qapp, monkeypatch, overwrote, respuesta, descarta):
+    import src.gui.main_frame as mf
+
+    descartes = []
+
+    class _FakeSvc:
+        def discard_budget(self, excel, folder):
+            descartes.append(excel); return True
+
+    monkeypatch.setattr(QMessageBox, "information", staticmethod(lambda *a, **k: None))
+    monkeypatch.setattr(QMessageBox, "warning", staticmethod(lambda *a, **k: None))
+    monkeypatch.setattr(
+        QMessageBox, "question",
+        staticmethod(lambda *a, **k: getattr(QMessageBox.StandardButton, respuesta)),
+    )
+    frame = mf.MainFrame.__new__(mf.MainFrame)
+    frame._budget_svc = _FakeSvc()
+    mf.MainFrame._handle_unfinished_budget(
+        frame, "C:/obra/presupuesto.xlsx", "C:/obra", "cancelled", overwrote_existing=overwrote,
+    )
+    assert bool(descartes) is descarta
+
+
+def test_vigilancia_excel_se_para_si_se_cierra_durante_la_finalizacion(qapp, monkeypatch):
+    """Cerrar el dashboard mientras se aplica la finalización debe detener la
+    vigilancia, y la siguiente vuelta usa como referencia el mtime del guardado
+    detectado (no el de después del diálogo)."""
+    import src.gui.budget_dashboard as bd
+    from src.core import services
+
+    ruta = "C:/obra/presupuesto.xlsx"
+    dash = bd.BudgetDashboardFrame.__new__(bd.BudgetDashboardFrame)
+    dash._excel_watchers = {}
+    dash._excel_no_finalize = set()
+    dash._load_data = lambda: None
+    bases = []
+    mtimes = iter([100.0, 250.0])
+
+    def _fake_wait(r, stop, baseline):
+        bases.append(baseline)
+        return len(bases) == 1  # solo el primer guardado
+
+    class _FakeService:
+        def finalize_budget(self, r, estado=""):
+            dash._excel_watchers[ruta].set()  # el usuario cierra el dashboard aquí
+            return True
+
+    monkeypatch.setattr(bd.os.path, "getmtime", lambda _p: next(mtimes, 250.0))
+    monkeypatch.setattr(bd, "_wait_for_excel_change", _fake_wait)
+    monkeypatch.setattr(bd, "run_in_background", lambda work, cb: cb(True, work()))
+    monkeypatch.setattr(services, "BudgetService", _FakeService)
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes))
+
+    bd.BudgetDashboardFrame._watch_excel_changes_and_refresh(dash, ruta, "PRESUPUESTADO")
+
+    assert bases == [100.0]  # no se re-arma tras cerrar
+
+
+def test_vigilancia_excel_rearma_con_el_mtime_del_guardado_detectado(qapp, monkeypatch):
+    import src.gui.budget_dashboard as bd
+    from src.core import services
+
+    dash = bd.BudgetDashboardFrame.__new__(bd.BudgetDashboardFrame)
+    dash._excel_watchers = {}
+    dash._excel_no_finalize = set()
+    dash._load_data = lambda: None
+    bases = []
+    mtimes = iter([100.0, 250.0])
+
+    def _fake_wait(r, stop, baseline):
+        bases.append(baseline)
+        if len(bases) == 1:
+            return True
+        stop.set()
+        return False
+
+    class _FakeService:
+        def refresh_budget_cache_entry(self, r, estado=""):
+            return True
+
+    monkeypatch.setattr(bd.os.path, "getmtime", lambda _p: next(mtimes, 999.0))
+    monkeypatch.setattr(bd, "_wait_for_excel_change", _fake_wait)
+    monkeypatch.setattr(bd, "run_in_background", lambda work, cb: cb(True, work()))
+    monkeypatch.setattr(services, "BudgetService", _FakeService)
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.StandardButton.No))
+
+    bd.BudgetDashboardFrame._watch_excel_changes_and_refresh(dash, "C:/obra/p.xlsx", "PRESUPUESTADO")
+
+    assert bases == [100.0, 250.0]
+    assert "C:/obra/p.xlsx" not in dash._excel_watchers

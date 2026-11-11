@@ -1439,8 +1439,10 @@ class BudgetDashboardFrame(QMainWindow):
         """Vigila el Excel abierto mientras el dashboard siga vivo.
 
         No se detiene en el primer guardado ni a los pocos minutos: al detectar
-        un cambio refresca el snapshot y vuelve a vigilar, para que ediciones
-        posteriores tampoco queden presentadas como datos actuales.
+        un cambio pregunta si finalizar (decisión E1), refresca el snapshot y
+        vuelve a vigilar, para que ediciones posteriores tampoco queden
+        presentadas como datos actuales. El vigilante sigue registrado durante
+        todo el ciclo, así que cerrar el dashboard lo detiene siempre.
         """
         if ruta_excel in self._excel_watchers:
             return
@@ -1450,18 +1452,31 @@ class BudgetDashboardFrame(QMainWindow):
             return
         stop = threading.Event()
         self._excel_watchers[ruta_excel] = stop
+        self._arm_excel_watch(ruta_excel, estado, stop, baseline)
 
+    def _forget_excel_watch(self, ruta_excel: str, stop: threading.Event) -> None:
+        if self._excel_watchers.get(ruta_excel) is stop:
+            self._excel_watchers.pop(ruta_excel, None)
+
+    def _arm_excel_watch(self, ruta_excel: str, estado: str, stop: threading.Event, baseline: float):
         def _watch():
-            return {"changed": _wait_for_excel_change(ruta_excel, stop, baseline)}
+            changed = _wait_for_excel_change(ruta_excel, stop, baseline)
+            detected = baseline
+            if changed:
+                try:
+                    detected = os.path.getmtime(ruta_excel)
+                except OSError:
+                    pass
+            return {"changed": changed, "mtime": detected}
 
         def _on_watch_done(ok, payload):
-            self._excel_watchers.pop(ruta_excel, None)
-            if stop.is_set() or not ok:
+            if stop.is_set() or not ok or not payload.get("changed"):
+                self._forget_excel_watch(ruta_excel, stop)
                 return
-            if not payload.get("changed"):
-                if not stop.is_set():
-                    self._watch_excel_changes_and_refresh(ruta_excel, estado)
-                return
+            # La nueva línea base es el guardado detectado, no el momento en que
+            # se vuelva a vigilar: un guardado hecho mientras el diálogo está
+            # abierto se detecta en la siguiente vuelta.
+            new_baseline = payload.get("mtime", baseline)
             # Decisión E1: al guardar ya no se finaliza sin preguntar. Si el
             # usuario dice "No", los siguientes guardados de este Excel solo
             # refrescan la tabla, sin volver a preguntar.
@@ -1480,6 +1495,8 @@ class BudgetDashboardFrame(QMainWindow):
                     )
                 except RuntimeError:  # el dashboard ya se cerró
                     return
+                if stop.is_set():  # se cerró el dashboard con el diálogo abierto
+                    return
                 finalizar = resp == QMessageBox.StandardButton.Yes
                 if not finalizar:
                     self._excel_no_finalize.add(ruta_excel)
@@ -1493,6 +1510,8 @@ class BudgetDashboardFrame(QMainWindow):
                 return svc.refresh_budget_cache_entry(ruta_excel, estado=estado)
 
             def _applied(ok_apply, result):
+                if stop.is_set():
+                    return
                 try:
                     if ok_apply and result:
                         self._load_data()
@@ -1504,7 +1523,7 @@ class BudgetDashboardFrame(QMainWindow):
                 except RuntimeError:
                     return
                 if not stop.is_set():
-                    self._watch_excel_changes_and_refresh(ruta_excel, estado)
+                    self._arm_excel_watch(ruta_excel, estado, stop, new_baseline)
 
             run_in_background(_apply, _applied)
 
