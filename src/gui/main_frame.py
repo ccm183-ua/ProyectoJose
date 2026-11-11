@@ -440,14 +440,33 @@ class MainFrame(QMainWindow):
                 # sin aprobación humana explícita.
                 self._schedule_historical_feedback(result.excel_path)
         else:
-            self._handle_unfinished_budget(result.excel_path, result.folder_path, outcome)
+            self._handle_unfinished_budget(
+                result.excel_path, result.folder_path, outcome, overwrote_existing=overwrite,
+            )
         self._open_dashboard(refresh=True)
 
-    def _handle_unfinished_budget(self, excel_path, folder_path, outcome):
-        """Ofrece conservar o descartar un presupuesto que no se finaliza."""
+    def _handle_unfinished_budget(self, excel_path, folder_path, outcome, overwrote_existing=False):
+        """Ofrece conservar o descartar un presupuesto que no se finaliza.
+
+        Si el borrador sobrescribió un Excel que ya existía, no se ofrece
+        descartarlo: borrarlo eliminaría el fichero (que ya sustituyó al
+        anterior) y la fila de historial de esa ruta, que era la del
+        presupuesto anterior.
+        """
         motivo = _MOTIVO_SIN_FINALIZAR.get(
             outcome, "La elaboración de las partidas no llegó a completarse.",
         )
+        if overwrote_existing:
+            QMessageBox.information(
+                self,
+                "Presupuesto sin terminar",
+                f"{motivo}\n\n"
+                "El presupuesto NO se ha marcado como terminado ni se ha registrado "
+                "en la memoria histórica.\n\n"
+                "Como sustituyó a un archivo que ya existía, se conserva el borrador "
+                f"(no se puede deshacer la sustitución):\n\n{excel_path}",
+            )
+            return
         keep = QMessageBox.question(
             self,
             "Presupuesto sin terminar",
