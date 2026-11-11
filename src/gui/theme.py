@@ -72,12 +72,8 @@ def font_2xl()  : return create_font(20, QFont.Weight.Bold)
 def font_3xl()  : return create_font(26, QFont.Weight.Bold)
 def font_display(): return create_font(32, QFont.Weight.Bold)
 
-def get_font_normal(size=11):  return create_font(size)
 def get_font_medium(size=11):  return create_font(size, QFont.Weight.Medium)
 def get_font_bold(size=11):    return create_font(size, QFont.Weight.Bold)
-def get_font_title(size=20):   return create_font(size, QFont.Weight.Bold)
-def get_font_subtitle(size=13):return create_font(size)
-
 # === ESPACIADO ===
 
 SPACE_XS = 4
@@ -171,29 +167,6 @@ class Card(QFrame):
 
 
 # === APLICAR ESTILOS (compat con código antiguo que llama style_*) ===
-
-def style_frame(frame):  pass
-def style_panel(panel, elevated=False): pass
-def style_dialog(dialog): pass
-def style_listctrl(listctrl): pass
-def style_textctrl(textctrl): pass
-def style_notebook(notebook): pass
-def style_button_primary(btn):
-    btn.setProperty("class", "primary")
-    btn.setFont(get_font_medium())
-    btn.style().unpolish(btn)
-    btn.style().polish(btn)
-
-def apply_theme_to_frame(frame): pass
-def apply_theme_to_panel(panel): pass
-def apply_theme_to_dialog(dialog): pass
-def create_styled_title(parent, text):
-    return create_title(parent, text, "xl")
-
-def create_toolbar_panel(parent):
-    w = QWidget(parent)
-    w.setProperty("class", "toolbar")
-    return w
 
 def fit_dialog(dialog, min_w=400, min_h=300):
     dialog.adjustSize()

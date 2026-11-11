@@ -89,30 +89,6 @@ def scan_projects(state_folder: str) -> List[Dict]:
     return projects
 
 
-def scan_projects_depth(state_folder: str, depth: int = 1) -> List[Dict]:
-    """Escanea una carpeta de estado hasta *depth* niveles de profundidad.
-
-    Con ``depth=1`` se comporta igual que ``scan_projects`` (solo primer nivel).
-    Con ``depth=2`` también escanea subcarpetas dentro de cada carpeta de
-    proyecto, buscando proyectos en el segundo nivel.
-
-    Args:
-        state_folder: Ruta absoluta a una carpeta de estado.
-        depth: Niveles de profundidad a explorar (>= 1).
-
-    Returns:
-        Lista de dicts con las mismas claves que ``scan_projects``.
-    """
-    state_folder = os.path.normpath(state_folder) if state_folder else ""
-    if not state_folder or not os.path.isdir(state_folder):
-        return []
-
-    depth = max(1, depth)
-    projects: List[Dict] = []
-    _scan_recursive(state_folder, state_folder, depth, 1, projects)
-    return projects
-
-
 def _scan_recursive(
     base_folder: str,
     current_folder: str,

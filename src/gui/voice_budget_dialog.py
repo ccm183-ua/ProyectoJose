@@ -230,12 +230,6 @@ class VoiceBudgetDialog(QDialog):
         """Devuelve el resultado del orquestador o None si el diálogo fue cancelado."""
         return self._result
 
-    def get_partidas(self) -> List[Dict]:
-        """Devuelve la lista de partidas generadas."""
-        if self._result:
-            return self._result.get("partidas", [])
-        return []
-
     # ── Utilidades ────────────────────────────────────────────────────────────
 
     def _set_buttons_enabled(self, enabled: bool):
