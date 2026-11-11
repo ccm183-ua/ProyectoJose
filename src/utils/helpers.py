@@ -128,3 +128,42 @@ def run_in_background(work_fn, callback):
     t.start()
     return t
 
+
+class CoalescingBackgroundTask:
+    """Tarea en segundo plano que agrupa peticiones repetidas.
+
+    ``request()`` lanza ``work_fn`` en un hilo. Si ya hay una ejecución en
+    marcha, no lanza otra en paralelo (dos reconstrucciones simultáneas sobre
+    SQLite chocan con "database is locked"): la apunta y la ejecuta una sola
+    vez al terminar la actual. ``on_done(ok, result)`` se llama en el hilo de
+    la UI solo tras la última ejecución.
+    """
+
+    def __init__(self, work_fn, on_done=None):
+        self._work_fn = work_fn
+        self._on_done = on_done
+        self._running = False
+        self._pending = False
+
+    @property
+    def running(self) -> bool:
+        return self._running
+
+    def request(self) -> None:
+        if self._running:
+            self._pending = True
+            return
+        self._start()
+
+    def _start(self) -> None:
+        self._running = True
+        self._pending = False
+        run_in_background(self._work_fn, self._finished)
+
+    def _finished(self, ok, result) -> None:
+        if self._pending:
+            self._start()
+            return
+        self._running = False
+        if self._on_done is not None:
+            self._on_done(ok, result)

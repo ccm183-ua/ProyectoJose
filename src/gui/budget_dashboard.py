@@ -22,7 +22,7 @@ import time
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow, QMenu,
+    QApplication, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow, QMenu,
     QMessageBox, QPushButton, QTableWidget, QTableWidgetItem,
     QTabWidget, QVBoxLayout, QWidget,
 )
@@ -1169,30 +1169,48 @@ class BudgetDashboardFrame(QMainWindow):
                 "Esta acción está disponible en la vista de presupuestos.",
             )
             return
+        if getattr(self, "_refresh_in_progress", False):
+            return
         from src.core.services import BudgetService
-        svc = BudgetService()
-        ok_count = 0
-        fail_count = 0
-        for selected in selected_many:
-            ruta = os.path.normpath(selected.get("ruta_excel", ""))
-            if not ruta or not os.path.exists(ruta):
-                fail_count += 1
-                continue
-            refreshed = svc.refresh_budget_cache_entry(
-                ruta,
-                estado=self._current_state() or "",
-                expected_numero=selected.get("numero", ""),
+
+        # Se capturan los datos en el hilo de la UI; la lectura de los Excel
+        # (una por presupuesto) va en segundo plano para no congelar la ventana.
+        estado = self._current_state() or ""
+        targets = [
+            (os.path.normpath(sel.get("ruta_excel", "")), sel.get("numero", ""))
+            for sel in selected_many
+        ]
+
+        def _work():
+            svc = BudgetService()
+            ok_count = fail_count = 0
+            for ruta, numero in targets:
+                if not ruta or not os.path.exists(ruta):
+                    fail_count += 1
+                    continue
+                if svc.refresh_budget_cache_entry(ruta, estado=estado, expected_numero=numero):
+                    ok_count += 1
+                else:
+                    fail_count += 1
+            return ok_count, fail_count
+
+        def _done(success, payload):
+            self._refresh_in_progress = False
+            QApplication.restoreOverrideCursor()
+            if not success:
+                QMessageBox.critical(self, "Escanear presupuestos", f"Error al escanear:\n{payload}")
+                return
+            ok_count, fail_count = payload
+            self._load_data()
+            QMessageBox.information(
+                self,
+                "Escanear presupuestos",
+                f"Actualizados: {ok_count}\nCon error: {fail_count}",
             )
-            if refreshed:
-                ok_count += 1
-            else:
-                fail_count += 1
-        self._load_data()
-        QMessageBox.information(
-            self,
-            "Escanear presupuestos",
-            f"Actualizados: {ok_count}\nCon error: {fail_count}",
-        )
+
+        self._refresh_in_progress = True
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        run_in_background(_work, _done)
 
     def _on_export_pdf(self):
         selected = self._get_selected()

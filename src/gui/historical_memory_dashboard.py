@@ -67,6 +67,7 @@ from src.core.repositories import (
     upsert_budget_enrichment,
 )
 from src.gui import theme
+from src.utils.helpers import CoalescingBackgroundTask
 
 
 class NumericTableWidgetItem(QTableWidgetItem):
@@ -1380,14 +1381,30 @@ class HistoricalMemoryDashboard(QDialog):
             )
             if confirm != QMessageBox.StandardButton.Yes:
                 return
-        result = self._analyzer.rebuild_features_and_patterns()
+        # En segundo plano: con mucho histórico la ventana quedaba "No responde".
+        self._rebuild_silent = silent and getattr(self, "_rebuild_silent", True)
+        if getattr(self, "_rebuild_task", None) is None:
+            self._rebuild_task = CoalescingBackgroundTask(
+                self._analyzer.rebuild_features_and_patterns, self._on_rebuild_done
+            )
+        self._rebuild_task.request()
+
+    def _on_rebuild_done(self, ok, result):
+        silent = self._rebuild_silent
+        self._rebuild_silent = True
+        try:
+            self._refresh_kpis()
+        except RuntimeError:  # ventana ya destruida
+            return
+        if not ok:
+            QMessageBox.warning(self, "Reconstruir patrones", f"Error al reconstruir patrones:\n{result}")
+            return
         if not silent:
             QMessageBox.information(
                 self,
                 "Reconstruir patrones",
-                f"Patrones reconstruidos: {int(result.get('patterns_inserted', 0))}",
+                f"Patrones reconstruidos: {int((result or {}).get('patterns_inserted', 0))}",
             )
-        self._refresh_kpis()
 
     def _confirm_clear_all_historical_analysis(self):
         confirm = QMessageBox.question(

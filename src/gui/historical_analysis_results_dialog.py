@@ -755,8 +755,22 @@ class HistoricalAnalysisResultsDialog(QDialog):
         except (OSError, ValueError):
             pass
 
-    @staticmethod
-    def _rebuild_patterns():
-        from src.core.historical_budget_analyzer import HistoricalBudgetAnalyzer
+    def _rebuild_patterns(self):
+        """Reconstruye patrones en segundo plano (agrupando peticiones seguidas)."""
+        if getattr(self, "_rebuild_task", None) is None:
+            from src.core.historical_budget_analyzer import HistoricalBudgetAnalyzer
+            from src.utils.helpers import CoalescingBackgroundTask
 
-        HistoricalBudgetAnalyzer().rebuild_features_and_patterns()
+            def _log_failure(ok, result):
+                if not ok:
+                    import logging
+
+                    logging.getLogger(__name__).error(
+                        "Fallo al reconstruir patrones en segundo plano: %s", result
+                    )
+
+            self._rebuild_task = CoalescingBackgroundTask(
+                lambda: HistoricalBudgetAnalyzer().rebuild_features_and_patterns(),
+                _log_failure,
+            )
+        self._rebuild_task.request()

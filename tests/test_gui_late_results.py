@@ -79,3 +79,55 @@ def test_buscador_memoria_historica_no_recarga_en_cada_tecla(qapp, popups, monke
     assert dash._search_timer.isActive()
     dash._search_timer.timeout.emit()
     assert calls == [1]
+
+
+def _wait_until(qapp, cond, timeout=5.0):
+    import time
+
+    end = time.time() + timeout
+    while not cond() and time.time() < end:
+        qapp.processEvents()
+        time.sleep(0.01)
+    assert cond()
+
+
+def test_coalescing_task_no_ejecuta_en_paralelo_y_agrupa_peticiones(qapp):
+    import threading
+
+    from src.utils.helpers import CoalescingBackgroundTask
+
+    gate = threading.Event()
+    state = {"runs": 0, "concurrent": 0, "max_concurrent": 0}
+    done = []
+
+    def work():
+        state["concurrent"] += 1
+        state["max_concurrent"] = max(state["max_concurrent"], state["concurrent"])
+        state["runs"] += 1
+        gate.wait(2)
+        state["concurrent"] -= 1
+        return state["runs"]
+
+    task = CoalescingBackgroundTask(work, lambda ok, r: done.append((ok, r)))
+    for _ in range(5):  # cinco acciones seguidas mientras la primera trabaja
+        task.request()
+    gate.set()
+    _wait_until(qapp, lambda: done)
+
+    assert state["max_concurrent"] == 1
+    assert state["runs"] == 2  # la primera + una única repetición agrupada
+    assert done == [(True, 2)]
+    assert not task.running
+
+
+def test_coalescing_task_entrega_errores_al_callback(qapp):
+    from src.utils.helpers import CoalescingBackgroundTask
+
+    done = []
+
+    def boom():
+        raise RuntimeError("database is locked")
+
+    CoalescingBackgroundTask(boom, lambda ok, r: done.append((ok, str(r)))).request()
+    _wait_until(qapp, lambda: done)
+    assert done == [(False, "database is locked")]
