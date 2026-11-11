@@ -34,6 +34,7 @@ canónico server-side (H3+), lo que obliga a decidir qué papel juega Excel a pa
    ningún llamador activo en la app actual. No se migran ni se usan como base del
    adaptador de exportación futuro — se documentan aquí para que quien migre H3 no los dé
    por buenos solo porque existen.
+   *Actualización 2026-11-11: retirados del código (junto con sus tests de la versión 1).*
 
 ## Qué pasa si Excel y el dominio canónico discrepan (post-H3)
 

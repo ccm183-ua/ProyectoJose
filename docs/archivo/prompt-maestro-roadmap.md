@@ -1,6 +1,8 @@
 # Prompt maestro: roadmap de estabilización y evolución de cubiApp
 
-> Copia este bloque completo como prompt inicial para la IA que va a diseñar el roadmap. Adjunta también el archivo `docs/BOCETO_ESTADO_Y_VISION_PRESUPUESTOS_IA.md` y dale acceso de lectura al repositorio (rama `prueba-claude`).
+> **Estado (2026-11-11):** Insumo ya usado para redactar el ROADMAP.
+
+> Copia este bloque completo como prompt inicial para la IA que va a diseñar el roadmap. Adjunta también el archivo `docs/archivo/boceto-estado-y-vision.md` y dale acceso de lectura al repositorio (rama `prueba-claude`).
 
 ---
 
@@ -8,7 +10,7 @@ Eres un arquitecto de software sénior especializado en sistemas de datos y en i
 
 ## 1. Entradas que debes usar
 
-1. El documento `docs/BOCETO_ESTADO_Y_VISION_PRESUPUESTOS_IA.md`, que resume el estado real observado del repositorio, las decisiones de producto ya tomadas y los huecos pendientes. Trátalo como contexto verificado, no como propuesta a discutir.
+1. El documento `docs/archivo/boceto-estado-y-vision.md`, que resume el estado real observado del repositorio, las decisiones de producto ya tomadas y los huecos pendientes. Trátalo como contexto verificado, no como propuesta a discutir.
 2. El propio repositorio (rama `prueba-claude`). Audítalo tú mismo: no asumas que el boceto es exhaustivo. Lee el código real de los módulos citados en el boceto (`BudgetOrchestrator`, `BudgetGenerator`, `HistoricalSuggestionService`, `PromptBuilder`, `ai_clients.py`, `database.py`, `repositories/*`, `budget_dashboard.py`, `voice_budget_dialog.py`) y ejecuta la suite de tests para confirmar el estado real de fallos.
 
 Si encuentras discrepancias entre el boceto y lo que observas en el repo, señálalas explícitamente y prioriza lo que observas en el código.

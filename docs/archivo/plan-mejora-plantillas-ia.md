@@ -1,5 +1,7 @@
 # Plan de Mejora del Sistema de Plantillas para IA — cubiApp
 
+> **Estado (2026-11-11):** Obsoleto. Pensado para la GUI wxPython (ai_budget_dialog_wx.py), que ya no existe; su rama Plantillas-IA no se fusionó.
+
 ## Contexto del Proyecto
 
 **cubiApp** es una aplicación de escritorio (Python + wxPython) para gestión de presupuestos de construcción. Utiliza Google Gemini para generar partidas presupuestarias, apoyándose en un sistema de **plantillas** que proporcionan contexto y partidas de referencia a la IA.

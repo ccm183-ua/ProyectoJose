@@ -74,7 +74,11 @@ La suite es portable: la automatización de Excel vía COM (`pywin32`, usada sol
 - `SpeechRecognition` + `PyAudio` (dictado por voz) son opcionales: si no están instaladas o no hay micrófono, el test de disponibilidad pasa comprobando el mensaje de error correcto; si SÍ hay micrófono y dependencias, ese test se omite a propósito (transcribir audio real no es automatizable) y queda cubierto por el checklist manual.
 - Un par de tests de plantilla se omiten solo si `templates/122-20 PLANTILLA PRESUPUESTO.xlsx` no está presente (protección ante clon incompleto o LFS sin descargar); en un clon normal del repositorio no deberían omitirse nunca.
 
-**Checklist manual** (lo que la suite automática no puede cubrir: diálogos nativos de guardar/abrir, Excel real abierto por el usuario): ver `docs/CHECKLIST_MANUAL_EXCEL.md`.
+**Checklist manual** (lo que la suite automática no puede cubrir: diálogos nativos de guardar/abrir, Excel real abierto por el usuario): ver `docs/checklists/manual-excel.md`.
+
+## Documentación
+
+Índice de planes, decisiones y pruebas manuales, con el estado de cada uno: [`docs/README.md`](docs/README.md).
 
 ## Si algo falla
 
