@@ -172,16 +172,21 @@ class AISettingsDialog(QDialog):
 
     def _test_provider(self, provider: str) -> None:
         self._set_test_buttons_enabled(False)
+        # Los widgets solo se leen en el hilo de la UI: se capturan aquí y el
+        # hilo de prueba recibe valores planos.
+        if provider == AI_PROVIDER_DEEPSEEK:
+            name = "DeepSeek"
+            api_key = self._deepseek_key.text().strip() or self._settings.get_deepseek_api_key()
+            model = self._deepseek_model.text().strip()
+            client_cls = DeepSeekAIClient
+        else:
+            name = "Gemini"
+            api_key = self._gemini_key.text().strip() or self._settings.get_gemini_api_key()
+            model = self._gemini_model.text().strip()
+            client_cls = GeminiAIClient
 
         def run():
-            if provider == AI_PROVIDER_DEEPSEEK:
-                api_key = self._deepseek_key.text().strip() or self._settings.get_deepseek_api_key()
-                client = DeepSeekAIClient(api_key, self._deepseek_model.text().strip())
-                name = "DeepSeek"
-            else:
-                api_key = self._gemini_key.text().strip() or self._settings.get_gemini_api_key()
-                client = GeminiAIClient(api_key, self._gemini_model.text().strip())
-                name = "Gemini"
+            client = client_cls(api_key, model)
             ok, message = client.test_connection()
             self._test_done.emit(name, ok, message)
 

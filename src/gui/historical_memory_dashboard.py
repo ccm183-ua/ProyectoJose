@@ -9,7 +9,7 @@ import sys
 import threading
 from datetime import datetime
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtCore import QSettings
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
@@ -179,7 +179,13 @@ class HistoricalMemoryDashboard(QDialog):
         filter_row = QHBoxLayout()
         self._search = QLineEdit(self)
         self._search.setPlaceholderText("Buscar por archivo, obra, número, cliente o ruta")
-        self._search.textChanged.connect(self._reload)
+        # Debounce: _reload recalcula KPIs, diagnóstico de integridad y tabla;
+        # lanzarlo en cada tecla congelaba la ventana con BD grandes.
+        self._search_timer = QTimer(self)
+        self._search_timer.setSingleShot(True)
+        self._search_timer.setInterval(350)
+        self._search_timer.timeout.connect(self._reload)
+        self._search.textChanged.connect(lambda _text: self._search_timer.start())
         filter_row.addWidget(self._search, 2)
         self._status_filter = QComboBox(self)
         self._status_filter.addItem("Estado técnico: todos", "")
