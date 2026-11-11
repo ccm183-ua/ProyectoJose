@@ -8,10 +8,14 @@ Prioridad API key: variable de entorno > archivo local.
 import hashlib
 import hmac
 import json
+import logging
 import os
 import secrets
+import shutil
 import tempfile
 from typing import Dict, Optional
+
+logger = logging.getLogger(__name__)
 
 
 # Variables de entorno para API keys. Se mantienen fuera de Git.
@@ -115,7 +119,7 @@ class Settings:
         provider_clean = str(provider or "").strip().upper()
         if provider_clean not in (AI_PROVIDER_GEMINI, AI_PROVIDER_DEEPSEEK):
             provider_clean = AI_PROVIDER_GEMINI
-        config = self._load_config()
+        config = self._load_config_for_update()
         config["ai_provider"] = provider_clean
         self._save_config(config)
 
@@ -200,7 +204,7 @@ class Settings:
         """Guarda (o borra si *path* es vacío) la ruta para *key*."""
         if key not in self._ALL_PATH_KEYS:
             return
-        config = self._load_config()
+        config = self._load_config_for_update()
         config[key] = path.strip() if path else ""
         self._save_config(config)
 
@@ -211,13 +215,41 @@ class Settings:
     # ── Persistencia ─────────────────────────────────────────────────
 
     def _load_config(self) -> dict:
+        """Lectura tolerante: ante cualquier error devuelve {} (solo para leer)."""
         if not os.path.exists(self._config_path):
             return {}
         try:
             with open(self._config_path, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except (json.JSONDecodeError, IOError):
+                data = json.load(f)
+            return data if isinstance(data, dict) else {}
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError):
             return {}
+
+    def _load_config_for_update(self) -> dict:
+        """Lectura previa a una escritura: nunca puede acabar borrando datos.
+
+        - Si el fichero no se puede leer (bloqueado por OneDrive, antivirus...),
+          lanza OSError: se aborta la escritura y el fichero queda intacto.
+        - Si el JSON está corrupto, se guarda una copia
+          ``cubiapp_config.json.corrupt-<fecha>`` antes de empezar de cero,
+          para poder recuperar claves y rutas a mano.
+        """
+        if not os.path.exists(self._config_path):
+            return {}
+        with open(self._config_path, 'r', encoding='utf-8', errors='replace') as f:
+            raw = f.read()
+        try:
+            data = json.loads(raw) if raw.strip() else {}
+            if isinstance(data, dict):
+                return data
+        except json.JSONDecodeError:
+            pass
+        from datetime import datetime
+
+        backup = f"{self._config_path}.corrupt-{datetime.now():%Y%m%d-%H%M%S}"
+        shutil.copy2(self._config_path, backup)
+        logger.error("Configuración corrupta; copia guardada en %s", backup)
+        return {}
 
     def _get_config_secret(self, key: str) -> Optional[str]:
         config = self._load_config()
@@ -234,7 +266,7 @@ class Settings:
         return default
 
     def _save_config_value(self, key: str, value: str) -> None:
-        config = self._load_config()
+        config = self._load_config_for_update()
         config[key] = value
         self._save_config(config)
 
