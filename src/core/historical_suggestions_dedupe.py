@@ -33,7 +33,9 @@ def _precio_key(partida: Dict[str, Any]) -> float:
     p = partida or {}
     raw = p.get("precio_unitario", p.get("precio", 0))
     try:
-        return round(float(str(raw).replace(",", ".")), 2)
+        from src.core.budget_math import parse_decimal_es
+
+        return round(parse_decimal_es(raw), 2)
     except (TypeError, ValueError):
         return 0.0
 

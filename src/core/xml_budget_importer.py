@@ -132,8 +132,10 @@ def parse_and_validate(xml_path: str) -> Dict:
             if estado == "conocida":
                 cantidad_text = (cantidad_node.text or "").strip()
                 try:
-                    cantidad = float(cantidad_text.replace(",", "."))
-                except ValueError:
+                    from src.core.budget_math import parse_decimal_es
+
+                    cantidad = parse_decimal_es(cantidad_text)
+                except (TypeError, ValueError):
                     motivo = f"cantidad no numerica: '{cantidad_text}'."
             else:
                 cantidad = None

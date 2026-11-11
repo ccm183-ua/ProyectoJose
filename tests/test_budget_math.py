@@ -47,3 +47,50 @@ def test_calcular_totales_acumula_redondeos_de_muchas_lineas():
     totales = calcular_totales(importes)
     assert totales["subtotal"] == round(sum(importes), 2)
     assert totales["total"] == round(totales["subtotal"] + totales["iva"], 2)
+
+
+# --- parse_decimal_es -------------------------------------------------------
+import math
+
+import pytest
+
+from src.core.budget_math import parse_decimal_es
+
+
+@pytest.mark.parametrize("raw,esperado", [
+    (12, 12.0),
+    (12.5, 12.5),
+    ("12", 12.0),
+    ("12,5", 12.5),
+    ("12.5", 12.5),
+    ("1.250,00", 1250.0),
+    ("1.250.000", 1250000.0),
+    ("1.250.000,75", 1250000.75),
+    ("1,250.00", 1250.0),
+    ("  1.250,00 € ", 1250.0),
+    ("1 250,50", 1250.5),
+    ("-3,5", -3.5),
+])
+def test_parse_decimal_es_acepta_formatos_habituales(raw, esperado):
+    assert parse_decimal_es(raw) == pytest.approx(esperado)
+
+
+@pytest.mark.parametrize("raw", ["", "abc", "nan", "inf", "-inf", None, "1,2,3,4.5", True, float("nan")])
+def test_parse_decimal_es_rechaza_entradas_invalidas(raw):
+    with pytest.raises((ValueError, TypeError)):
+        parse_decimal_es(raw)
+
+
+def test_to_float_del_normalizador_entiende_miles_espanoles():
+    from src.core.partida_normalizer import _to_float
+
+    assert _to_float("1.250,00") == 1250.0
+    assert _to_float("nan", 1.0) == 1.0
+
+
+def test_safe_number_de_ai_service_entiende_miles_espanoles():
+    from src.core.ai_service import AIService
+
+    svc = AIService.__new__(AIService)
+    assert svc._safe_number("1.250,50") == 1250.5
+    assert svc._safe_number("inf", 0) == 0

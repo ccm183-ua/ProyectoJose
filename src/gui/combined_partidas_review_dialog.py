@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 from src.core.partida_normalizer import normalize_partida_for_excel
 from src.gui import theme
 from src.gui.partida_provenance_model import row_for_partida
+from src.core.budget_math import parse_decimal_es
 
 
 class CombinedPartidasReviewDialog(QDialog):
@@ -280,9 +281,9 @@ class CombinedPartidasReviewDialog(QDialog):
             if use_it is None or use_it.checkState() != Qt.CheckState.Checked:
                 continue
             try:
-                cantidad = float((self._table.item(row, 5).text() or "1").replace(",", "."))
-                precio = float((self._table.item(row, 6).text() or "0").replace(",", "."))
-            except ValueError:
+                cantidad = parse_decimal_es(self._table.item(row, 5).text() or "1")
+                precio = parse_decimal_es(self._table.item(row, 6).text() or "0")
+            except (TypeError, ValueError):
                 QMessageBox.warning(self, "Valor inválido", "Cantidad y precio deben ser numéricos.")
                 return
 
@@ -342,9 +343,9 @@ class CombinedPartidasReviewDialog(QDialog):
             return
         row = item.row()
         try:
-            cantidad = float((self._table.item(row, 5).text() or "0").replace(",", "."))
-            precio = float((self._table.item(row, 6).text() or "0").replace(",", "."))
-        except ValueError:
+            cantidad = parse_decimal_es(self._table.item(row, 5).text() or "0")
+            precio = parse_decimal_es(self._table.item(row, 6).text() or "0")
+        except (TypeError, ValueError):
             return
 
         self._updating_totals = True
