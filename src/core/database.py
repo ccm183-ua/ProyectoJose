@@ -2,7 +2,8 @@
 Gestión de la base de datos SQLite.
 
 - El fichero solo se crea si no existe (no se crea en cada arranque).
-- No se borra nunca desde la aplicación.
+- La app solo borra datos a petición del usuario (p. ej. el borrado total de
+  la memoria histórica), y siempre crea antes una copia en la carpeta de backups.
 - Puedes editar el .db por fuera (DB Browser, etc.) y reemplazar el fichero
   cuando quieras; la app abrirá lo que haya en la ruta configurada.
 

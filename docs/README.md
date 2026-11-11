@@ -3,6 +3,12 @@
 Índice de toda la documentación, con el estado de cada documento a 2026-11-11.
 Si añades un documento nuevo, apúntalo aquí.
 
+## Para decidir ahora
+
+| Documento | Para qué sirve |
+|---|---|
+| [`decisiones-pendientes.md`](decisiones-pendientes.md) | **Todas las decisiones abiertas**, con datos medidos, opciones y recomendación. |
+
 ## Referencia (vigente)
 
 | Documento | Para qué sirve |
