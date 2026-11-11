@@ -2,6 +2,8 @@
 Tests del clasificador de partidas históricas.
 """
 
+import pytest
+
 import src.core.historical_partida_features as hpf
 from src.core.historical_partida_classifier import HistoricalPartidaClassifier
 from src.core.historical_partida_features import extract_partida_features
@@ -160,12 +162,14 @@ class TestReviewedHistoricalCases:
         assert features.action == "demolish"
         assert features.element == "facade_render"
 
-    def test_decision_5_tabique_is_partition_wall_but_tirar_stays_unmatched(self):
+    def test_decision_5_tabique_is_partition_wall_and_tirar_is_demolish(self):
+        """La Decision 5 dejó "tirar" sin acción por chocar con "retirar";
+        la Decision 32 (2026-11-11) lo añade a demolish."""
         classifier = HistoricalPartidaClassifier()
         text = "Tirar tabiques existentes de pasillo, cocina, galeria y estudio, con retirada de escombros a contenedor."
         features = extract_partida_features(text, "ud", classifier.classify_text(text))
         assert features.element == "partition_wall"
-        assert features.action is None
+        assert features.action == "demolish"
 
     def test_decision_6_wc_y_lavabo_is_sanitary_ware(self):
         classifier = HistoricalPartidaClassifier()
@@ -404,3 +408,94 @@ def test_keyword_raiz_sigue_casando_al_inicio_de_palabra():
     assert keyword_in_text("impermeabiliz", "impermeabilizacion de cubierta")
     assert keyword_in_text("atado", "atado de armaduras")
     assert not keyword_in_text("atado", "alicatado de bano")
+
+
+class TestDecisionesNoviembre2026:
+    """Decisiones 30-37 (2026-11-11), probadas con texto real del histórico."""
+
+    @staticmethod
+    def _features(text, unit="ud"):
+        classifier = HistoricalPartidaClassifier()
+        return extract_partida_features(text, unit, classifier.classify_text(text))
+
+    def test_decision_30_reposicion_es_reparacion(self):
+        assert self._features("Reposición de gresite desprendido", "m2").action == "repair"
+
+    @pytest.mark.parametrize("text", [
+        "TABIQUE CERÁMICO H-7. Suministro y formación de nuevo tabique cerámico H-7",
+        "FORMACIÓN DE BASE DE MOSTRADOR DE PLADUR. Formación de base para mostrador con doble tabique de pladur",
+        "Formación de pendientes en interior de jardinera, de mortero M-10 de 4 cm de espesor",
+    ])
+    def test_decision_31_formacion_de_es_build(self, text):
+        assert self._features(text).action == "build"
+
+    def test_decision_31_formacion_del_personal_no_es_build(self):
+        text = ("Formación del personal, necesaria para el cumplimiento de la normativa "
+                "vigente en materia de Seguridad y Salud en el Trabajo.")
+        assert self._features(text).action != "build"
+
+    def test_decision_31_build_no_pisa_otra_accion(self):
+        text = "Formación de pendientes e impermeabilización de cubierta con lámina asfáltica"
+        assert self._features(text, "m2").action == "waterproof"
+
+    @pytest.mark.parametrize("text", [
+        "Tirar tabiques existentes de pasillo, cocina, galeria y estudio, con retirada de escombros a contenedor.",
+        "Tirar techo de escayola, con retirada de escombros a contenedor.",
+    ])
+    def test_decision_32_tirar_es_demolish(self, text):
+        assert self._features(text).action == "demolish"
+
+    def test_decision_32_retirar_no_es_tirar(self):
+        assert self._features("Retirada de escombros a vertedero autorizado").action != "demolish"
+
+    def test_decision_33_repaso_es_repair(self):
+        assert self._features("Repaso de grietas y saneado de la escalera.").action == "repair"
+
+    def test_decision_33_saneado_en_pintura_no_vuelve_compuesta_la_partida(self):
+        text = ("PINTAR PUERTAS DE ASCENSOR. Saneado, rascado y lijado de puertas de ascensor, "
+                "aplicación de pintura epoxi anticorrosión y acabado con dos manos de esmalte")
+        features = self._features(text)
+        assert features.action == "paint"
+        assert features.line_kind != "composite"
+
+    def test_decision_31_formacion_no_vuelve_compuesta_una_partida_con_otra_accion(self):
+        text = ("Demolición de pavimento exterior de baldosas y/o losetas de hormigón y formación "
+                "de pendientes, con martillo neumático y carga manual sobre camión o contenedor")
+        features = self._features(text, "m2")
+        assert features.action == "demolish"
+        assert features.line_kind != "composite"
+
+    @staticmethod
+    def _modules(text):
+        return [r["module"] for r in HistoricalPartidaClassifier().classify_text(text)]
+
+    @pytest.mark.parametrize("text", [
+        "PINTURA PUERTA VEHÍCULOS GARAJE. Lijado superficial de puerta de vehículos, aplicación de imprimación",
+        "PUERTA CORTAFUEGOS EN PARKING. Suministro y colocación de puerta cortafuegos en entrada a parking.",
+    ])
+    def test_decision_34_garaje_y_parking_no_son_estructura(self, text):
+        assert "estructura" not in self._modules(text)
+
+    @pytest.mark.parametrize("text", [
+        "PINTURA SILICATO. Aplicación manual de dos manos de pintura al silicato, color blanco, sobre hormigón",
+        "REFUERZO EN REJILLA SUELTA AL FINAL DE RAMPA. Picar las garras sueltas del marco de las rejillas",
+        "CALDERETA SIFÓNICA PVC. Picar en el forjado para abrir hueco y posterior colocación de caldereta.",
+    ])
+    def test_decision_35_una_sola_senal_debil_no_es_estructura(self, text):
+        assert "estructura" not in self._modules(text)
+
+    @pytest.mark.parametrize("text", [
+        "Reparación de frente de forjado de hormigón armado, de canto 30 cm, mediante picado del hormigón deteriorado",
+        "CANTO DE FORJADO 1º PISO Y BAJO BALCÓN. Picar frente de forjado en 1º piso hasta llegar a las armaduras",
+    ])
+    def test_decision_35_dos_senales_debiles_si_son_estructura(self, text):
+        assert "estructura" in self._modules(text)
+
+    def test_decision_36_plurales_no_cuentan_doble(self):
+        classifier = HistoricalPartidaClassifier()
+        singular = {r["module"]: r["confidence"] for r in classifier.classify_text("Refuerzo de viga")}
+        plural = {r["module"]: r["confidence"] for r in classifier.classify_text("Refuerzo de vigas")}
+        assert plural["estructura"] == singular["estructura"]
+
+    def test_decision_37_entrevigado_es_estructura(self):
+        assert "estructura" in self._modules("Relleno de entrevigado con hormigón")

@@ -27,13 +27,22 @@ _KeywordTable = Tuple[Tuple[str, Tuple[str, ...]], ...]
 # módulos). "repair" antes que "demolish" porque "picado y reparación..."
 # describe la intervención global, no el paso previo de picado.
 _ACTION_SYNONYMS: _KeywordTable = (
-    ("repair", ("reparacion", "reparar")),
+    # "reposicion"/"reponer" (Decision 30, 2026-11-11): reponer lo dañado
+    # forma parte de la misma reparación ("Reposición de gresite
+    # desprendido"). Hasta ahora llegaba a "reparacion" por un fallo de la
+    # expansión de abreviaturas ("rep"), ya corregido. "repaso" (Decision
+    # 33): repaso de grietas. "saneado" se descartó tras medirlo: en pintura
+    # es un paso de preparación ("saneado de zonas oxidadas + imprimación +
+    # esmalte") y volvía compuestas 3 partidas con patrón, sin ganar ninguna.
+    ("repair", ("reparacion", "reparar", "reposicion", "reponer", "repaso")),
     # "quitar" (Decision 3, familia demolicion): verbo mayoritario de
     # retirada/demolicion en el historico real (1.418 lineas), sin falsos
     # positivos por substring verificados. "tirar" NO se anade: es
     # substring literal de "retirar" (13 lineas reales, sentido distinto -
     # retirada de escombros ya generados, no demolicion), y el motor de
     # coincidencia actual es por substring sin limite de palabra.
+    # Actualizacion (Decision 32, 2026-11-11): los keywords casan ya desde
+    # inicio de palabra, "tirar" no casa con "retirar" y se anade.
     # "derribar" (Decision 14, familia albanileria): verbo no cubierto por
     # "demoler". "quitan" (Decision 15): forma conjugada de "quitar" que
     # el infinitivo no cubre por substring. Ambos sin falsos positivos
@@ -41,7 +50,7 @@ _ACTION_SYNONYMS: _KeywordTable = (
     # "desmontar" (Decision 16, familia impermeabilizacion): forma verbal
     # no cubierta por el sustantivo "desmontaje". "arranque" (Decision 17):
     # sinonimo de demoler/arrancar. Ambos sin falsos positivos verificados.
-    ("demolish", ("demolicion", "demoler", "picado", "levantado", "desmontaje", "quitar", "derribar", "quitan", "desmontar", "arranque")),
+    ("demolish", ("demolicion", "demoler", "picado", "levantado", "desmontaje", "quitar", "derribar", "quitan", "desmontar", "arranque", "tirar")),
     # "sustitucion" (Decision 21, familia carpinteria): 629 lineas reales,
     # 0 falsos positivos, sin ninguna accion propia pese a dar nombre al
     # modulo sustitucion_bajante. Se mapea a install (sustituir implica
@@ -73,7 +82,24 @@ _ACTION_SYNONYMS: _KeywordTable = (
     ("render", ("enlucido", "maestreado")),
     ("clean", ("limpieza", "limpiar")),
     ("rent", ("alquiler", "arrendamiento")),
+    # "formacion de/en" (Decision 31, 2026-11-11): ejecutar un elemento de
+    # obra nueva (tabique, rampa, mueble de pladur, pendientes, forjado...).
+    # Va la ÚLTIMA: solo se aplica si no hay otra acción. La Decision 18 lo
+    # descartó por genérico; el sentido distinto real es "formación del
+    # personal" (seguridad y salud), que se excluye en
+    # _ACTION_EXCLUDED_CONTEXTS. Medido: 245 partidas sin acción ganan
+    # "build" y solo 1 de seguridad casaba, ya excluida.
+    ("build", ("formacion de", "formacion en")),
 )
+
+# Acciones que solo se asignan si no hay otra y que no cuentan para detectar
+# partidas compuestas (varias acciones distintas).
+_FALLBACK_ACTIONS = frozenset({"build"})
+
+# Contextos en los que un keyword de acción NO significa esa acción.
+_ACTION_EXCLUDED_CONTEXTS: Dict[str, Tuple[str, ...]] = {
+    "build": ("formacion del personal", "formacion e informacion"),
+}
 
 # Entradas compuestas (p.ej. "revoco en fachada") antes que la genérica
 # ("fachada") para no perder precisión cuando ambas aparecen.
@@ -228,9 +254,21 @@ class PartidaFeatures:
     is_price_eligible: bool
 
 
-def _match_first(normalized_text: str, table: _KeywordTable) -> Tuple[Optional[str], Optional[str]]:
-    """Primera categoría de la tabla cuyo keyword aparece en el texto."""
+def _match_first(
+    normalized_text: str,
+    table: _KeywordTable,
+    excluded_contexts: Optional[Dict[str, Tuple[str, ...]]] = None,
+) -> Tuple[Optional[str], Optional[str]]:
+    """Primera categoría de la tabla cuyo keyword aparece en el texto.
+
+    ``excluded_contexts`` descarta una categoría si aparece alguna de sus
+    frases de exclusión (p. ej. "formacion del personal" para "build").
+    """
     for category, keywords in table:
+        if excluded_contexts and any(
+            keyword_in_text(ctx, normalized_text) for ctx in excluded_contexts.get(category, ())
+        ):
+            continue
         for keyword in keywords:
             if keyword_in_text(keyword, normalized_text):
                 return category, keyword
@@ -269,7 +307,9 @@ def classify_line_kind(
         return "unknown"
 
     normalized = normalize_text(concept)
-    distinct_actions = set(_match_all(normalized, _ACTION_SYNONYMS))
+    # "build" es una acción de último recurso (solo si no hay otra): no puede
+    # ser la segunda acción que convierte una partida en compuesta.
+    distinct_actions = set(_match_all(normalized, _ACTION_SYNONYMS)) - _FALLBACK_ACTIONS
     distinct_elements = _distinct_element_families(normalized)
     if len(distinct_actions) >= 2 or len(distinct_elements) >= 2:
         return "composite"
@@ -284,7 +324,7 @@ def extract_partida_features(concept: str, unit: str, modules: List[Dict]) -> Pa
     normalized = normalize_text(concept)
     reasons: List[str] = []
 
-    action, action_kw = _match_first(normalized, _ACTION_SYNONYMS)
+    action, action_kw = _match_first(normalized, _ACTION_SYNONYMS, _ACTION_EXCLUDED_CONTEXTS)
     if action:
         reasons.append(f"action='{action}' por keyword '{action_kw}'")
 
