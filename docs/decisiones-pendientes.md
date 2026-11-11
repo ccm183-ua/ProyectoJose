@@ -53,6 +53,27 @@
   Requiere instalar `fastapi` (bloqueado por el mismo error SSL).
 - **Recomendación**: aparcarlo mientras la app siga siendo solo de escritorio.
 
+## 5. Hallazgos de la revisión del trabajo de septiembre (sin corregir)
+
+Ya corregidos en `integracion-noviembre`: descartar un borrador que había
+sobrescrito otro Excel, la vigilancia del Excel tras cerrar el dashboard,
+direcciones al principio del texto en el paquete de contexto y "No" por
+defecto en las confirmaciones de borrado. Quedan:
+
+| Gravedad | Dónde | Qué pasa |
+|---|---|---|
+| Alta | `budget_orchestrator._gap_resolved` | Si la IA rellena solo uno de varios huecos, todos se dan por resueltos y el resto se pierde sin aviso. Arreglarlo exige que el prompt de huecos devuelva el módulo de cada partida. |
+| Media | `budget_orchestrator` + `voice_budget_dialog` | Resultado "parcial" sin módulos pendientes: "Reintentar" devuelve lo mismo y vuelve a preguntar. El reintento no tiene límite (el commit decía "acotado"). |
+| Media | `export_context_pack._publish_files` | La publicación no es atómica entre ficheros; en Windows `os.replace` falla si un fichero está abierto y el rollback puede dejar una mezcla. Nombres `.tmp`/`.bak` fijos: dos publicaciones a la vez se pisan. |
+| Media | `historical_analysis_results_dialog` (incluir/aplicar decisiones) | Si falla algo después de aprobar, no se reconstruyen patrones ni se publica el paquete. |
+| Media | `budget_service.create_budget` | Si falla la plantilla queda una carpeta de obra vacía; el error de `registrar_presupuesto` se ignora. |
+| Media | `budget_dashboard` (regeneración de cabeceras por lotes) | Síncrona en el hilo de la UI; ignora el resultado de `finalize_budget` y puede vaciar cliente/calle si la relación no los tiene. |
+| Media | `historical_memory_dashboard` (descripciones con IA) | Hilos sin `_run_busy`: otras operaciones de escritura pueden ejecutarse a la vez; el resultado puede llegar con el diálogo cerrado. |
+| Baja | `historical_memory_dashboard._reload` | El diagnóstico de integridad y los KPI siguen en el hilo de la UI tras cada operación (H10 a medias). |
+
+El commit `8dfd117` ("wip: validacion completa pendiente antes de integrar")
+está vacío.
+
 ---
 
 ## Pruebas manuales pendientes (no son decisiones, pero bloquean la fusión)
