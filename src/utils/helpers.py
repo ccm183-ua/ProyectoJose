@@ -115,10 +115,16 @@ def run_in_background(work_fn, callback):
     def _worker():
         try:
             result = work_fn()
-            invoker._call.emit(lambda: callback(True, result))
         except Exception as exc:
-            invoker._call.emit(lambda: callback(False, exc))
+            # Se liga como argumento por defecto: Python borra `exc` al salir
+            # del except, así que una lambda que lo capturase por cierre
+            # lanzaba NameError en el hilo de la UI y el callback de error no
+            # llegaba a ejecutarse nunca.
+            invoker._call.emit(lambda err=exc: callback(False, err))
+            return
+        invoker._call.emit(lambda res=result: callback(True, res))
 
     t = threading.Thread(target=_worker, daemon=True)
     t.start()
     return t
+
