@@ -4,7 +4,7 @@ Clasificación de partidas históricas en módulos de ejecución.
 
 from typing import Dict, List, Optional
 
-from src.core.work_type_normalizer import normalize_text
+from src.core.work_type_normalizer import keyword_in_text, normalize_text
 
 
 MODULE_RULES = {
@@ -265,7 +265,7 @@ class HistoricalPartidaClassifier:
         count = 0
         for kw in keywords:
             normalized_kw = normalize_text(kw)
-            if normalized_kw and normalized_kw in text:
+            if normalized_kw and keyword_in_text(normalized_kw, text):
                 count += 1
         return count
 

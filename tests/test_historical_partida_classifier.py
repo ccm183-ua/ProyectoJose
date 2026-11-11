@@ -181,16 +181,15 @@ class TestReviewedHistoricalCases:
         assert features.action == "demolish"
         assert features.element == "flooring"
 
-    def test_decision_7_entresuelo_is_a_known_accepted_false_positive(self):
-        """"suelo" es substring de "entresuelo" (planta/piso, no el elemento
-        suelo): 6 lineas reales colisionan frente a 485 aciertos genuinos.
-        La Decision 7 acepta ese riesgo medido a proposito (a diferencia de
-        "tirar"/"retirar" en la Decision 3, que se descarto) -- este test
-        documenta el trade-off aceptado, no lo previene."""
+    def test_decision_7_entresuelo_is_no_longer_a_false_positive(self):
+        """La Decision 7 aceptaba que "suelo" casara dentro de "entresuelo"
+        (planta/piso, no el elemento suelo). Desde que los keywords casan solo
+        desde inicio de palabra (``keyword_in_text``) ese falso positivo ya no
+        se produce."""
         classifier = HistoricalPartidaClassifier()
         text = "Localizar fuga de agua en vivienda del entresuelo B, comprobando valvula de plato de ducha."
         features = extract_partida_features(text, "ud", classifier.classify_text(text))
-        assert features.element == "flooring"
+        assert features.element != "flooring"
 
     def test_decision_8_muebles_de_cocina_is_kitchen_furniture(self):
         classifier = HistoricalPartidaClassifier()
@@ -387,3 +386,21 @@ class TestReviewedHistoricalCases:
         features = extract_partida_features(text, "ud", classifier.classify_text(text))
         assert features.action == "install"
         assert features.element == "pump"
+
+
+def test_keyword_no_casa_a_mitad_de_palabra():
+    """Regresión: "atado" (estructura) aparecía dentro de "alicatado"."""
+    from src.core.historical_partida_classifier import HistoricalPartidaClassifier
+
+    modules = [r["module"] for r in HistoricalPartidaClassifier().classify_text(
+        "Alicatado de baño con azulejo"
+    )]
+    assert modules == ["alicatado"]
+
+
+def test_keyword_raiz_sigue_casando_al_inicio_de_palabra():
+    from src.core.work_type_normalizer import keyword_in_text
+
+    assert keyword_in_text("impermeabiliz", "impermeabilizacion de cubierta")
+    assert keyword_in_text("atado", "atado de armaduras")
+    assert not keyword_in_text("atado", "alicatado de bano")

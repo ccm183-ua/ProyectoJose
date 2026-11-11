@@ -339,7 +339,11 @@ demolición/retirada en el histórico real (1.418 líneas).
   una planta/piso, no el elemento suelo) frente a 485 líneas reales
   genuinas de suelo/pavimento — se acepta ese riesgo medido (1.2% de falsos
   positivos) porque la ganancia es sustancialmente mayor, a diferencia de
-  "tirar" en la Decisión 3 donde la proporción no compensaba. "solado" no
+  "tirar" en la Decisión 3 donde la proporción no compensaba.
+  > **Actualización (2026-11-11):** los keywords pasan a casar solo desde inicio
+  > de palabra (`keyword_in_text`), así que "suelo" ya no casa con "entresuelo"
+  > ni "tirar" con "retirar". La colisión de esta decisión desaparece y "tirar"
+  > (Decisión 3) puede reconsiderarse. "solado" no
   tiene ese problema.
 - **Implementación**: nueva categoría `("flooring", ("suelo", "solado"))`.
 

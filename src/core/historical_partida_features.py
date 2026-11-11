@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Literal, Optional, Tuple
 
 from src.core.historical_partida_classifier import pick_primary_module
-from src.core.work_type_normalizer import normalize_text
+from src.core.work_type_normalizer import keyword_in_text, normalize_text
 
 _DIMENSION_RE = re.compile(r"\b\d+(?:[.,]\d+)?\s*(?:cm|mm|m)\b")
 
@@ -232,7 +232,7 @@ def _match_first(normalized_text: str, table: _KeywordTable) -> Tuple[Optional[s
     """Primera categoría de la tabla cuyo keyword aparece en el texto."""
     for category, keywords in table:
         for keyword in keywords:
-            if keyword in normalized_text:
+            if keyword_in_text(keyword, normalized_text):
                 return category, keyword
     return None, None
 
@@ -241,7 +241,7 @@ def _match_all(normalized_text: str, table: _KeywordTable) -> Tuple[str, ...]:
     return tuple(
         category
         for category, keywords in table
-        if any(keyword in normalized_text for keyword in keywords)
+        if any(keyword_in_text(keyword, normalized_text) for keyword in keywords)
     )
 
 

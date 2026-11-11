@@ -84,6 +84,25 @@ def normalize_text(text: str) -> str:
     return " ".join(normalized_tokens).strip()
 
 
+_KEYWORD_RE_CACHE: dict = {}
+
+
+def keyword_in_text(keyword: str, normalized_text: str) -> bool:
+    """True si ``keyword`` aparece en el texto empezando en inicio de palabra.
+
+    Ambos deben estar ya normalizados (``normalize_text``). El keyword puede
+    ser una raíz ("impermeabiliz" casa con "impermeabilizacion"), pero no
+    puede empezar a mitad de palabra: "atado" NO casa con "alicatado".
+    """
+    if not keyword or not normalized_text:
+        return False
+    pattern = _KEYWORD_RE_CACHE.get(keyword)
+    if pattern is None:
+        pattern = re.compile(r"(?<!\w)" + re.escape(keyword))
+        _KEYWORD_RE_CACHE[keyword] = pattern
+    return pattern.search(normalized_text) is not None
+
+
 def _expand_abbreviation(token: str) -> str:
     if token in ABBREVIATIONS:
         return ABBREVIATIONS[token]
