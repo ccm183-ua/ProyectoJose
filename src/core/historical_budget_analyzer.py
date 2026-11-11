@@ -3,6 +3,7 @@ Analizador de presupuestos históricos para inteligencia offline.
 """
 
 import hashlib
+import logging
 import os
 import re
 import json
@@ -25,6 +26,7 @@ from src.core.repositories import (
     finish_analysis_run,
     get_historical_budget_by_path,
     get_historical_partidas_for_classification,
+    refresh_concepto_normalizado,
     get_presupuesto_por_ruta,
     get_or_create_execution_module,
     insert_historical_partida,
@@ -35,6 +37,8 @@ from src.core.repositories import (
 )
 from src.core.work_type_normalizer import normalize_text, normalize_work_type
 
+
+logger = logging.getLogger(__name__)
 
 def sha256_file(path: str) -> str:
     digest = hashlib.sha256()
@@ -619,10 +623,14 @@ class HistoricalBudgetAnalyzer:
 
     def rebuild_partida_features(self, budget_ids: Iterable[int]) -> int:
         """Reconstruye la ficha derivada (historical_partida_feature) de las
-        partidas de los presupuestos indicados, sin tocar historical_partida
-        (el dato bruto). Idempotente: upsert por partida_id."""
+        partidas de los presupuestos indicados. De historical_partida solo
+        recalcula concepto_normalizado (derivado); concepto_original, el dato
+        bruto, no se toca. Idempotente: upsert por partida_id."""
         count = 0
         for budget_id in budget_ids:
+            _changed, err = refresh_concepto_normalizado(budget_id)
+            if err:
+                logger.warning("No se pudo recalcular concepto_normalizado de %s: %s", budget_id, err)
             for partida in get_historical_partidas_for_classification(budget_id):
                 concepto = (partida.get("concepto_original") or partida.get("titulo") or "").strip()
                 if not concepto:
