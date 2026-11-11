@@ -1,5 +1,7 @@
 # Boceto: estado de cubiApp y visión de presupuestos con IA
 
+> **Estado (2026-11-11):** Insumo ya usado para redactar el ROADMAP; describe el estado de julio de 2026.
+
 > Documento de contexto para elaborar un roadmap. Describe el estado observado en la rama `prueba-claude` (`6ed5b93`, 2026-07-21), las decisiones de producto ya tomadas y los huecos que aún existen. No es una especificación de implementación ni autoriza cambios por sí solo.
 
 ## 1. Idea principal

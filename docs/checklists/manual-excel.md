@@ -1,5 +1,7 @@
 # Checklist manual — Excel real y diálogos nativos
 
+> **Estado (2026-11-11):** Pendiente de ejecutar a mano con Excel; es el gate de cierre de la Etapa 1 del roadmap.
+
 > La suite automática (`python -m pytest`) mockea toda interacción con Excel vía
 > COM y no puede pulsar diálogos nativos de Windows (guardar/abrir fichero).
 > Este checklist cubre exactamente lo que queda fuera de esa cobertura.

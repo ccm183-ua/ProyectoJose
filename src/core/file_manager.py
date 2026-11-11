@@ -3,8 +3,6 @@ Gestor de archivos y carpetas.
 """
 
 import os
-import shutil
-from pathlib import Path
 
 
 class FileManager:
@@ -52,67 +50,6 @@ class FileManager:
         except (OSError, PermissionError) as e:
             return False
     
-    def create_file_if_not_exists(self, file_path):
-        """
-        Crea un archivo solo si no existe.
-        
-        Args:
-            file_path: Ruta del archivo
-            
-        Returns:
-            bool: True si se creó o ya existía, False en caso contrario
-        """
-        if not file_path:
-            return False
-        
-        if os.path.exists(file_path):
-            return False  # No sobrescribir sin confirmación
-        
-        try:
-            # Crear directorio padre si no existe
-            parent_dir = os.path.dirname(file_path)
-            if parent_dir:
-                os.makedirs(parent_dir, exist_ok=True)
-            
-            # Crear archivo vacío
-            with open(file_path, 'w', encoding='utf-8') as f:
-                pass
-            
-            return True
-        except (OSError, PermissionError) as e:
-            return False
-    
-    def create_file(self, file_path, overwrite=False):
-        """
-        Crea un archivo.
-        
-        Args:
-            file_path: Ruta del archivo
-            overwrite: Si True, sobrescribe archivos existentes
-            
-        Returns:
-            bool: True si se creó correctamente, False en caso contrario
-        """
-        if not file_path:
-            return False
-        
-        if os.path.exists(file_path) and not overwrite:
-            return False
-        
-        try:
-            # Crear directorio padre si no existe
-            parent_dir = os.path.dirname(file_path)
-            if parent_dir:
-                os.makedirs(parent_dir, exist_ok=True)
-            
-            # Crear archivo vacío
-            with open(file_path, 'w', encoding='utf-8') as f:
-                pass
-            
-            return True
-        except (OSError, PermissionError) as e:
-            return False
-    
     def search_files(self, directory, pattern):
         """
         Busca archivos en un directorio que coincidan con un patrón.
@@ -139,40 +76,3 @@ class FileManager:
         
         return results
     
-    def filter_files(self, directory, pattern):
-        """
-        Filtra archivos en un directorio por patrón.
-        
-        Args:
-            directory: Directorio donde buscar
-            pattern: Patrón de filtrado
-            
-        Returns:
-            list: Lista de archivos filtrados
-        """
-        return self.search_files(directory, pattern)
-    
-    def get_statistics(self, directory):
-        """
-        Obtiene estadísticas básicas de un directorio.
-        
-        Args:
-            directory: Directorio a analizar
-            
-        Returns:
-            dict: Diccionario con estadísticas
-        """
-        if not directory or not os.path.exists(directory):
-            return {}
-        
-        try:
-            files = [f for f in os.listdir(directory) if os.path.isfile(os.path.join(directory, f))]
-            excel_files = [f for f in files if f.endswith('.xlsx') or f.endswith('.xls')]
-            
-            return {
-                'total_files': len(files),
-                'excel_files': len(excel_files),
-                'directory': directory
-            }
-        except (OSError, PermissionError):
-            return {}

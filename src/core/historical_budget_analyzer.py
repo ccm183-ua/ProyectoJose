@@ -3,6 +3,7 @@ Analizador de presupuestos históricos para inteligencia offline.
 """
 
 import hashlib
+import logging
 import os
 import re
 import json
@@ -25,6 +26,7 @@ from src.core.repositories import (
     finish_analysis_run,
     get_historical_budget_by_path,
     get_historical_partidas_for_classification,
+    refresh_concepto_normalizado,
     get_presupuesto_por_ruta,
     get_or_create_execution_module,
     insert_historical_partida,
@@ -35,6 +37,8 @@ from src.core.repositories import (
 )
 from src.core.work_type_normalizer import normalize_text, normalize_work_type
 
+
+logger = logging.getLogger(__name__)
 
 def sha256_file(path: str) -> str:
     digest = hashlib.sha256()
@@ -274,7 +278,8 @@ class HistoricalBudgetAnalyzer:
         # para cubrir el caso de datos históricos ya cacheados sin patrones
         # previos, y republicar el paquete en la misma operación: es el
         # momento exacto en que el conocimiento histórico cambia. Un fallo no
-        # debe tumbar el análisis, pero sí quedar visible en el resumen.
+        # debe tumbar el análisis, pero sí quedar visible en el resumen. Las
+        # fichas de las partidas nuevas ya las calcula analyze_budget().
         try:
             rebuild_summary = self.rebuild_patterns_and_publish()
         except Exception:
@@ -581,6 +586,10 @@ class HistoricalBudgetAnalyzer:
                         )
 
             rebuild_budget_module_summary(budget_id)
+            # Ficha derivada de las partidas recién guardadas: sin ella no
+            # alimentan patrones hasta una reconstrucción completa (que
+            # recorre todo el histórico y tarda minutos).
+            self.rebuild_partida_features([budget_id])
             return {
                 "status": "processed",
                 "excel_path": excel_path,
@@ -673,10 +682,14 @@ class HistoricalBudgetAnalyzer:
 
     def rebuild_partida_features(self, budget_ids: Iterable[int]) -> int:
         """Reconstruye la ficha derivada (historical_partida_feature) de las
-        partidas de los presupuestos indicados, sin tocar historical_partida
-        (el dato bruto). Idempotente: upsert por partida_id."""
+        partidas de los presupuestos indicados. De historical_partida solo
+        recalcula concepto_normalizado (derivado); concepto_original, el dato
+        bruto, no se toca. Idempotente: upsert por partida_id."""
         count = 0
         for budget_id in budget_ids:
+            _changed, err = refresh_concepto_normalizado(budget_id)
+            if err:
+                logger.warning("No se pudo recalcular concepto_normalizado de %s: %s", budget_id, err)
             for partida in get_historical_partidas_for_classification(budget_id):
                 concepto = (partida.get("concepto_original") or partida.get("titulo") or "").strip()
                 if not concepto:
@@ -697,3 +710,22 @@ class HistoricalBudgetAnalyzer:
                 if not err:
                     count += 1
         return count
+
+    def rebuild_features_and_patterns(self) -> Dict:
+        """Reconstruye primero las fichas derivadas de todas las partidas
+        historicas y despues los patrones sugeridos a partir de ellas.
+
+        rebuild_patterns() por si solo agrupa evidencia leyendo
+        historical_partida_feature: si esa tabla esta vacia (fichas nunca
+        calculadas) siempre encuentra 0 lineas atomicas y deja
+        suggested_partida_pattern vacia, aunque haya presupuestos incluidos
+        con partidas reales. Este es el mismo orden que ya usaba
+        scripts/rebuild_historical_patterns.py por terminal.
+        """
+        from src.core import database
+        from src.core.historical_pattern_builder import HistoricalPatternBuilder
+
+        with database.get_connection(read_only=True) as conn:
+            budget_ids = [row[0] for row in conn.execute("SELECT id FROM historical_budget").fetchall()]
+        self.rebuild_partida_features(budget_ids)
+        return HistoricalPatternBuilder().rebuild_patterns()

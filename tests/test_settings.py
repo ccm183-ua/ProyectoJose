@@ -257,3 +257,60 @@ class TestPasswordHash:
 
         reloaded = Settings(config_dir=temp_dir)
         assert verify_password("una-contrasena-segura", reloaded.get_password_hash()) is True
+
+
+class TestConfigNoSeBorraAlFallarLaLectura:
+    """Regresión: un fallo de lectura no puede acabar sobrescribiendo todo el JSON."""
+
+    def test_error_de_lectura_aborta_la_escritura(self, monkeypatch, temp_dir):
+        monkeypatch.delenv("CUBIAPP_GEMINI_KEY", raising=False)
+        settings = Settings(config_dir=temp_dir)
+        settings.save_api_key("clave-original")
+        settings.save_ai_provider(AI_PROVIDER_DEEPSEEK)
+        path = os.path.join(temp_dir, "cubiapp_config.json")
+        with open(path, encoding="utf-8") as f:
+            antes = f.read()
+
+        import builtins
+        real_open = builtins.open
+
+        def flaky_open(file, mode="r", *a, **kw):
+            if os.path.abspath(str(file)) == os.path.abspath(path) and "r" in mode:
+                raise PermissionError("bloqueado por OneDrive/antivirus")
+            return real_open(file, mode, *a, **kw)
+
+        monkeypatch.setattr(builtins, "open", flaky_open)
+        with pytest.raises(OSError):
+            settings.save_ai_provider(AI_PROVIDER_GEMINI)
+        monkeypatch.setattr(builtins, "open", real_open)
+
+        with open(path, encoding="utf-8") as f:
+            assert f.read() == antes
+
+    def test_json_corrupto_se_conserva_en_copia_antes_de_reescribir(self, monkeypatch, temp_dir):
+        monkeypatch.delenv("CUBIAPP_GEMINI_KEY", raising=False)
+        path = os.path.join(temp_dir, "cubiapp_config.json")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write('{"gemini_api_key": "clave", "ai_provider": ')  # truncado
+
+        Settings(config_dir=temp_dir).save_ai_provider(AI_PROVIDER_DEEPSEEK)
+
+        copias = [n for n in os.listdir(temp_dir) if n.startswith("cubiapp_config.json.corrupt-")]
+        assert len(copias) == 1
+        with open(os.path.join(temp_dir, copias[0]), encoding="utf-8") as f:
+            assert '"gemini_api_key": "clave"' in f.read()
+
+
+@pytest.mark.parametrize("legacy", ["deepseek-chat", "deepseek-reasoner", "DeepSeek-Chat"])
+def test_alias_retirados_de_deepseek_se_migran_a_v4_flash(temp_dir, legacy):
+    """DeepSeek retiró estos alias el 2026-07-24: una config antigua no puede
+    seguir enviándolos a la API."""
+    settings = Settings(config_dir=temp_dir)
+    settings.save_deepseek_model(legacy)
+    assert Settings(config_dir=temp_dir).get_deepseek_model() == "deepseek-v4-flash"
+
+
+def test_modelo_deepseek_vigente_no_se_toca(temp_dir):
+    settings = Settings(config_dir=temp_dir)
+    settings.save_deepseek_model("deepseek-v4-pro")
+    assert Settings(config_dir=temp_dir).get_deepseek_model() == "deepseek-v4-pro"

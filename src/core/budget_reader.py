@@ -186,24 +186,6 @@ class BudgetReader:
             return None
 
     @staticmethod
-    def _read_sheet(file_bytes: bytes) -> Optional[str]:
-        """Lee la primera hoja disponible en orden (sheet1, sheet2, sheet3...)."""
-        try:
-            with zipfile.ZipFile(io.BytesIO(file_bytes), "r") as z:
-                sheet_entries = []
-                for name in z.namelist():
-                    m = _SHEET_PATH_RE.match(name)
-                    if not m:
-                        continue
-                    sheet_entries.append((int(m.group(1)), name))
-                sheet_entries.sort(key=lambda x: x[0])
-                if sheet_entries:
-                    return z.read(sheet_entries[0][1]).decode("utf-8")
-        except (zipfile.BadZipFile, IOError, OSError):
-            pass
-        return None
-
-    @staticmethod
     def _workbook_tab_names_in_order(z: zipfile.ZipFile) -> List[str]:
         """Nombres de pestaña según ``xl/workbook.xml`` (orden visual)."""
         try:
@@ -455,8 +437,8 @@ class BudgetReader:
             iva = round(total - subtotal, 2)
 
         return {
-            "subtotal": float(subtotal) if subtotal else 0.0,
-            "iva": float(iva) if iva else 0.0,
+            "subtotal": float(subtotal) if subtotal is not None else None,
+            "iva": float(iva) if iva is not None else None,
             "total": float(total),
         }
 
@@ -468,67 +450,6 @@ class BudgetReader:
     # ------------------------------------------------------------------
     # Lectura de total desde texto "Asciende..."
     # ------------------------------------------------------------------
-
-    def read_total_from_text(
-        self,
-        file_path: str,
-        expected_numero: str = "",
-    ) -> Optional[float]:
-        """Extrae el total del presupuesto desde la frase ``Asciende...``.
-
-        Busca en todas las hojas del archivo la frase:
-
-          *"Asciende el presupuesto de ejecución material a la expresada
-          cantidad de ... EUROS ..."*
-
-        **Solo** devuelve el total si lo encuentra en una hoja cuyo número
-        de cabecera (celda E5) **coincide** con ``expected_numero``.
-        Esto evita devolver importes de hojas copiadas de otros proyectos
-        (sheet1 suele conservar los datos del proyecto original).
-
-        Args:
-            file_path: Ruta al archivo .xlsx.
-            expected_numero: Número de proyecto esperado (``NNN-YY``).
-
-        Returns:
-            Importe total (float) o ``None`` si no se encuentra en una
-            hoja verificada.
-        """
-        if not file_path or not os.path.exists(file_path):
-            return None
-
-        try:
-            file_bytes = self._load_file_bytes(file_path)
-            if file_bytes is None:
-                return None
-
-            shared_strings = self._read_shared_strings(file_bytes)
-            sheets = self._read_all_sheets(file_bytes)
-            if not sheets:
-                return None
-
-            norm_expected = normalize_project_num(expected_numero) if expected_numero else ""
-
-            for sheet in sheets:
-                rows = self._extract_rows(sheet["sheet_xml"])
-
-                # Verificar que la hoja pertenece a ESTE proyecto
-                if norm_expected:
-                    header = self._extract_header(rows, shared_strings)
-                    norm_sheet = normalize_project_num(header.get("numero", ""))
-                    if norm_sheet and norm_sheet != norm_expected:
-                        # Hoja de otro proyecto (copiada) → saltar
-                        continue
-
-                total = self._find_asciende_total(rows, shared_strings)
-                if total is not None:
-                    return total
-
-            return None
-
-        except Exception:
-            logger.exception("Error al leer total por texto: %s", file_path)
-            return None
 
     def _find_asciende_total(
         self,

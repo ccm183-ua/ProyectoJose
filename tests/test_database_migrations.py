@@ -213,3 +213,26 @@ def test_migration_v4_adds_unique_partial_index_on_file_sha256(legacy_db_env):
                VALUES ('sin_hash_2.xlsx', '2026-01-01', NULL)"""
         )
         conn.commit()
+
+
+def test_hashes_duplicados_no_impiden_abrir_la_bd(legacy_db_env):
+    """Regresión: si ya hay file_sha256 repetidos, crear el índice único lanzaba
+    IntegrityError en cada arranque y la app no podía abrir la base de datos."""
+    with database.get_connection() as conn:
+        conn.execute("DROP INDEX IF EXISTS idx_historical_budget_sha256_unique")
+        for ruta in ("dup_1.xlsx", "dup_2.xlsx"):
+            conn.execute(
+                """INSERT INTO historical_budget (ruta_excel, fecha_modificacion_excel, file_sha256)
+                   VALUES (?, '2026-01-01', 'hash-repetido')""",
+                (ruta,),
+            )
+        # Simula una BD anterior a la v4 (backup antiguo restaurado, otro equipo).
+        conn.execute("UPDATE schema_version SET version = 3 WHERE id = 1")
+        conn.commit()
+
+    with database.get_connection() as conn:  # no debe lanzar
+        assert database.get_schema_version(conn) == database.CURRENT_SCHEMA_VERSION
+        n = conn.execute(
+            "SELECT COUNT(*) FROM historical_budget WHERE file_sha256 = 'hash-repetido'"
+        ).fetchone()[0]
+        assert n == 2

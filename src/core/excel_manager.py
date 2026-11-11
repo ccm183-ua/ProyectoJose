@@ -3,15 +3,9 @@ Gestor de archivos Excel. Facade que delega en módulos especializados.
 """
 
 from src.core.template_manager import TemplateManager
-from src.core.excel_template_filler import TemplateFiller, SHEET_12220
-from src.core.excel_partidas_writer import PartidasWriter, IVA_RATE
-from src.core.excel_budget_editor import (
-    BudgetEditor,
-    DATA_START_ROW,
-    IVA_ROW,
-    SUBTOTAL_ROW,
-    TOTAL_ROW,
-)
+from src.core.excel_template_filler import TemplateFiller
+from src.core.excel_partidas_writer import PartidasWriter
+from src.core.excel_budget_editor import BudgetEditor
 
 
 class ExcelManager:
@@ -43,23 +37,3 @@ class ExcelManager:
     def load_budget(self, file_path):
         """Carga un presupuesto desde un archivo Excel."""
         return self._budget_editor.load_budget(file_path)
-
-    def add_budget_row(self, file_path, budget_row):
-        """Añade una fila de presupuesto al archivo Excel."""
-        return self._budget_editor.add_budget_row(file_path, budget_row)
-
-    def modify_budget_row(self, file_path, row_index, new_data):
-        """Modifica una fila de presupuesto."""
-        return self._budget_editor.modify_budget_row(file_path, row_index, new_data)
-
-    def delete_budget_row(self, file_path, row_index):
-        """Elimina una fila de presupuesto."""
-        return self._budget_editor.delete_budget_row(file_path, row_index)
-
-    def recalculate_totals(self, file_path):
-        """Recalcula los totales del presupuesto."""
-        return self._budget_editor.recalculate_totals(file_path)
-
-    def save_budget(self, file_path):
-        """Guarda un presupuesto."""
-        return self._budget_editor.save_budget(file_path)

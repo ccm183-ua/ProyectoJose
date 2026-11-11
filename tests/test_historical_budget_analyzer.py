@@ -520,6 +520,37 @@ class TestRebuildPartidaFeatures:
         assert features["unit"] == "m2"
         assert features["classifier_version"] == HistoricalBudgetAnalyzer.CLASSIFIER_VERSION
 
+    def test_rebuild_recalcula_concepto_normalizado_obsoleto(self, tmp_path, monkeypatch):
+        """concepto_normalizado es derivado: si se guardó con un normalizador
+        anterior ("planta baja" -> "planta bajante"), reconstruir las fichas lo
+        recalcula. concepto_original (el dato bruto) no se toca."""
+        monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "datos_norm.db"))
+        budget_id, err = upsert_historical_budget(
+            {
+                "ruta_excel": str(tmp_path / "norm.xlsx"),
+                "ruta_carpeta": str(tmp_path),
+                "nombre_proyecto": "norm.xlsx",
+                "fecha_modificacion_excel": datetime.now().isoformat(),
+            }
+        )
+        assert err is None
+        original = "Pintura de escalera en planta baja"
+        partida_id, err = insert_historical_partida(
+            budget_id,
+            {
+                "concepto_original": original,
+                "concepto_normalizado": "pintura de escalera en planta bajante",
+                "unidad": "p.a.",
+            },
+        )
+        assert err is None
+
+        HistoricalBudgetAnalyzer().rebuild_partida_features([budget_id])
+
+        partida = get_historical_partida(partida_id)
+        assert partida["concepto_original"] == original
+        assert partida["concepto_normalizado"] == "pintura de escalera en planta baja"
+
     def test_rebuild_partida_features_is_idempotent(self, tmp_path, monkeypatch):
         db_path = tmp_path / "datos_historical_features_idempotent.db"
         monkeypatch.setenv("CUBIAPP_DB_PATH", str(db_path))

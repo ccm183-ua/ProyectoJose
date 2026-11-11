@@ -94,23 +94,3 @@ class DatabaseService:
     @staticmethod
     def get_presupuesto_detalle_por_ruta(ruta_excel: str) -> Optional[Dict]:
         return db_repository.get_presupuesto_detalle_por_ruta(ruta_excel)
-
-    @staticmethod
-    def crear_comunidad(
-        nombre: str,
-        administracion_id: int,
-        cif: str = "",
-        direccion: str = "",
-        email: str = "",
-        telefono: str = "",
-    ) -> Tuple[Optional[int], Optional[str]]:
-        return db_repository.create_comunidad(
-            nombre, administracion_id,
-            cif=cif, direccion=direccion, email=email, telefono=telefono,
-        )
-
-    @staticmethod
-    def crear_administracion(
-        nombre: str, email: str = "", telefono: str = "", direccion: str = "",
-    ) -> Tuple[Optional[int], Optional[str]]:
-        return db_repository.create_administracion(nombre, email, telefono, direccion)

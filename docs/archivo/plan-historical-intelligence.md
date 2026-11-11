@@ -1,5 +1,7 @@
 # Plan de implementación: sistema histórico de aprendizaje y sugerencia
 
+> **Estado (2026-11-11):** Hecho. Sprints 1–8 implementados; se conserva como referencia.
+
 ## Objetivo
 
 Implementar una capa histórica modular que permita sugerir partidas offline a partir de presupuestos reales, manteniendo el flujo IA actual como fallback.

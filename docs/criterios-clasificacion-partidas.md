@@ -53,7 +53,8 @@ que evita que una partida multietiqueta duplique su precio en varios módulos
 (línea base: 168 partidas con >1 módulo, 536 asignaciones para 254 líneas).
 
 Cada tabla es una lista **ordenada** de `(categoría, keywords)`: gana la primera
-categoría cuyo keyword aparece como substring en el texto normalizado, no "todas
+categoría cuyo keyword aparece en el texto normalizado empezando en inicio de
+palabra (desde 2026-11-11; antes, como substring), no "todas
 las que matchean" (a diferencia de la clasificación de módulos). El orden
 codifica la prioridad cuando dos categorías podrían aplicar a la vez.
 
@@ -62,13 +63,18 @@ reparación de..." describe la intervención global, no el paso previo de picado
 
 | action | keywords |
 | --- | --- |
-| `repair` | reparacion, reparar |
-| `demolish` | demolicion, demoler, picado, levantado, desmontaje |
-| `install` | instalacion, instalar, colocacion, colocar, montaje |
-| `paint` | pintura, pintado, pintar |
+| `repair` | reparacion, reparar, reposicion, reponer, repaso |
+| `demolish` | demolicion, demoler, picado, levantado, desmontaje, quitar, derribar, quitan, desmontar, arranque, tirar |
+| `install` | instalacion, instalar, colocacion, colocar, montaje, sustitucion |
+| `paint` | pintura, pintado, pintar, esmalte, esmaltado, barnizado, barnizar, imprimacion |
 | `waterproof` | impermeabilizacion, impermeabilizar |
+| `seal` | sellado, sellar |
+| `render` | enlucido, maestreado |
 | `clean` | limpieza, limpiar |
 | `rent` | alquiler, arrendamiento |
+| `build` *(último recurso)* | formacion de, formacion en — excepto "formacion del personal", "formacion e informacion" |
+
+*Tabla generada desde `_ACTION_SYNONYMS` (2026-11-11).*
 
 **element** — prioridad: formas compuestas (p.ej. "revoco en fachada") antes
 que la genérica ("fachada") para no perder precisión cuando ambas aparecen.
@@ -172,10 +178,38 @@ fachada 24, cerrajería 20...); dos hallazgos confirmados y corregidos:
   `impermeabilizacion` (`"impermeabilizacion"`/`"imperm"` e
   `"filtracion"`/`"filtraciones"` normalizan igual) — no se ha tocado, no
   formaba parte de los hallazgos revisados con el usuario.
+- **(2026-08-04, tras la Decisión 20) Hallazgo sistémico sin corregir,
+  fuera del alcance de esta familia**: al investigar la colisión de
+  `"cub"→"cubierta"` que motivó la Decisión 20, se comprobó que el mismo
+  problema de coincidencia por **prefijo** en `ABBREVIATIONS`
+  (`work_type_normalizer.py`) afecta también a otras entradas, con
+  volumen bastante mayor que "cub" en algunos casos. Verificado contra el
+  histórico real:
+  - `"baj"→"bajante"` captura **"baja"** (572 líneas) y **"bajo"** (421
+    líneas) — palabras normalísimas del castellano ("planta baja", "por
+    bajo de"), sin relación con bajantes. **993 líneas afectadas.**
+  - `"rep"→"reparacion"` captura "reposición" (196), "replanteo" (79) y
+    "repaso" (37) — conceptos de construcción distintos de reparación.
+    **312 líneas afectadas.**
+  - `"sust"→"sustitucion"` captura "sustancia"/"sustancias" (56) —
+    término químico sin relación.
+  - `"imper"→"impermeabilizacion"` captura "imperfecciones" (23).
+  - `"filt"→"filtracion"` captura "filtro"/"filtros" (16) — un
+    dispositivo, no una filtración/gotera.
+  - `"rehab"` y `"fachad"` no mostraron colisión en esta comprobación.
+
+  **~1.400 líneas reales** potencialmente mal normalizadas en total, en
+  clasificaciones ya existentes de TODA la aplicación, no solo de esta
+  familia. Deliberadamente **no corregido** en esta sesión (decisión
+  explícita del usuario): es un hallazgo que se ganó su propio plan, con
+  el mismo cuidado que `docs/superpowers/plans/2026-08-04-completar-vocabulario-cerrado.md`,
+  no un parche de paso dentro de la revisión de impermeabilización.
 - De las 182 líneas `composite`, solo se revisaron ejemplos representativos
   de 3 familias (pintura, gestión de residuos, fachada). El resto
-  (cerrajería, impermeabilización, demolición, alicatado, estructura,
-  carpintería, albañilería, bajante) queda pendiente de revisión.
+  (~~demolición~~, ~~alicatado~~, ~~albañilería~~, ~~impermeabilización~~,
+  ~~carpintería~~, ~~cerrajería~~, ~~sustitución de bajante~~ y
+  ~~estructura~~ ya revisadas, ver abajo) — **las 8 familias quedan revisadas
+  (2026-11-11)**.
 - Se observó un problema de codificación en `concepto_original` para varias
   partidas reales (acentos mostrados como `�`) — no es un problema de
   clasificación, es un problema de origen de datos; no investigado en esta
@@ -184,6 +218,527 @@ fachada 24, cerrajería 20...); dos hallazgos confirmados y corregidos:
   (`Documents/CubiApp/datos.db` sigue en `schema_version=1`): solo sobre
   copias desechables. Migrar y reconstruir la base real requiere que el
   usuario decida explícitamente cuándo hacerlo.
+- **(2026-08-04, tras la Decisión 3)** "quitar" tiene prioridad de
+  `demolish` sobre `paint`/`waterproof`/`clean` en `_ACTION_SYNONYMS`, igual
+  que ya la tenía sobre ellos con las palabras clave anteriores de
+  `demolish`. Esto reproduce, para pintura/impermeabilización, el mismo
+  problema que ya se resolvió para `repair` (por eso `repair` va antes que
+  `demolish`: un paso previo de picado no debe eclipsar la intervención
+  global). Medido contra la base real: **2 líneas** de pintura ("PINTURA
+  PUERTA PEATONAL Y BOMBEROS...", "PINTURA DE AZULEJOS EN COCINA Y
+  BAÑO...") pasan de `action=paint` a `action=demolish` porque mencionan
+  "quitar" como paso previo. Volumen aceptado como caso conocido (2 de
+  3.217 líneas con ficha completa) en vez de tocar la prioridad compartida
+  de `classify_line_kind`/`_match_first`, que afectaría a las 7 familias
+  todavía sin revisar. Revisar si se repite el patrón al llegar a la
+  familia `pintura` (ya revisada el 22/07, pero antes de esta decisión) o
+  `impermeabilizacion` (todavía pendiente).
+
+## Revisión del vocabulario cerrado por familias pendientes (2026-08-04)
+
+Retoma las ocho familias que quedaron sin revisar el 22/07 (ver "Pendiente"
+arriba), siguiendo el plan
+`docs/superpowers/plans/2026-08-04-completar-vocabulario-cerrado.md`: por
+cada familia, un informe de impacto (`src/core/historical_vocabulary_gap_report.py`)
+trae los patrones reales de mayor frecuencia sin ficha completa
+(`action`/`element` vacíos), y el usuario decide categoría y motivo sobre
+esos ejemplos reales, nunca inventados.
+
+Ranking inicial de impacto (líneas atómicas sin ficha completa / total,
+sobre la base real de producción): demolición 75/80 (94%), alicatado 71/74
+(96%), albañilería 42/46 (91%), impermeabilización 40/62 (65%), carpintería
+32/61 (52%), sustitución de bajante 32/72 (44%), cerrajería 29/66 (44%),
+estructura 7/25 (28%).
+
+### Familia: demolición (turno 1 de 8)
+
+10 patrones de mayor frecuencia revisados con el usuario. Hallazgo
+principal: 8 de los 10 usaban el verbo **"quitar"**, ausente por completo
+del vocabulario de acciones pese a ser el verbo mayoritario de
+demolición/retirada en el histórico real (1.418 líneas).
+
+### Decisión 3 — "quitar" como sinónimo de `demolish`
+
+- **Expresión habitual**: "Quitar WC y mueble de lavabo, con retirada a
+  contenedor de escombros." / "QUITAR SUELO LAMINADO..." / "QUITAR
+  PUERTAS DE PASO..." (8 de los 10 patrones de mayor frecuencia de la
+  familia).
+- **Acción**: `demolish` (nuevo sinónimo: `quitar`). **Elemento**: el
+  elemento retirado en cada caso (ver Decisiones 5-8). **Módulo
+  principal**: sin cambios — estas líneas ya tenían `primary_module_id =
+  demolicion` asignado por el clasificador; esta decisión no toca
+  detección de módulo, solo completa la ficha de acción/elemento.
+- **Condición que impide coincidencia exacta**: ninguna adicional a las ya
+  existentes.
+- **Motivo**: "quitar" es, con diferencia, el verbo más frecuente para
+  demolición/retirada en el histórico real y no estaba cubierto. Se
+  descarta explícitamente añadir **"tirar"** en la misma pasada aunque
+  aparece en uno de los 10 patrones revisados ("Tirar tabiques
+  existentes..."): "tirar" es substring literal de "retirar" (13 líneas
+  reales, sentido distinto — retirada de escombros ya generados, no
+  demolición — mismo tipo de matiz que la Decisión 1), y el motor de
+  coincidencia actual es por substring sin límite de palabra. Se deja
+  "tirar" **sin decisión**, pendiente de una detección más precisa (por
+  palabra completa) si llega a compensar.
+- **Implementación**: se añade `"quitar"` a `_ACTION_SYNONYMS["demolish"]`
+  en `historical_partida_features.py`. Verificado contra la base real: 0
+  falsos positivos de "quitar" como substring de otra palabra en las 1.418
+  líneas reales que lo contienen.
+
+### Decisión 4 — enfoscado sobre "paramento vertical exterior" es `facade_render`
+
+- **Expresión habitual**: "Picado de enfoscado de cemento, aplicado sobre
+  paramento vertical exterior de hasta 3 m de altura, con medios
+  manuales, y carga manual de escombros sobre camión o contenedor."
+  (frecuencia 8 — el patrón más repetido sin ficha de toda la familia
+  demolición).
+- **Acción**: `demolish` (ya cubierto por "picado"). **Elemento**:
+  `facade_render` — misma evidencia que "revoco de fachada", descrita sin
+  usar la palabra "fachada". **Módulo principal**: sin cambios
+  (`demolicion`, ya asignado).
+- **Condición que impide coincidencia exacta**: ninguna adicional.
+- **Motivo**: el texto describe literalmente un enfoscado de cemento sobre
+  el paramento exterior — mismo elemento facturable que "revoco de
+  fachada", solo que redactado sin la palabra clave que ya cubría el
+  vocabulario.
+- **Implementación**: se añaden `"paramento vertical exterior"` y
+  `"enfoscado de cemento"` a los sinónimos existentes de `facade_render`.
+
+### Decisión 5 — "tabique" es `partition_wall` (elemento nuevo)
+
+- **Expresión habitual**: "Tirar tabiques existentes de pasillo, cocina,
+  galería y estudio, con retirada de escombros a contenedor."
+- **Acción**: sin decisión (usa "tirar", ver Decisión 3 — esta línea
+  concreta queda con `element` completo pero `action` vacío hasta que se
+  revise "tirar"). **Elemento**: `partition_wall` (nuevo). **Módulo
+  principal**: sin cambios.
+- **Condición que impide coincidencia exacta**: ninguna.
+- **Motivo**: "tabique" no tenía elemento propio; es un elemento
+  facturable claramente distinto de `structure` (que cubre viga/pilar/
+  zuncho, elementos estructurales, no tabiquería de partición).
+- **Implementación**: nueva categoría `("partition_wall", ("tabique",))`
+  en `_ELEMENT_SYNONYMS`, con entrada correspondiente en
+  `_ELEMENT_FAMILIES`. Verificado: 0 falsos positivos contra la base real.
+
+### Decisión 6 — WC/lavabo/sanitario es `sanitary_ware` (elemento nuevo)
+
+- **Expresión habitual**: "Quitar WC y mueble de lavabo, con retirada a
+  contenedor de escombros."
+- **Acción**: `demolish` (vía "quitar", Decisión 3). **Elemento**:
+  `sanitary_ware` (nuevo). **Módulo principal**: sin cambios.
+- **Condición que impide coincidencia exacta**: ninguna.
+- **Motivo**: aparatos sanitarios (WC, lavabo) son un elemento facturable
+  propio, sin representación previa en el vocabulario.
+- **Implementación**: nueva categoría `("sanitary_ware", ("wc", "lavabo",
+  "sanitario"))`. Verificado: 0 falsos positivos contra la base real.
+
+### Decisión 7 — suelo/solado es `flooring` (elemento nuevo)
+
+- **Expresión habitual**: "QUITAR SUELO LAMINADO. Quitar solado laminado
+  existente en vivienda y rodapié, con retirada de escombros a
+  vertedero."
+- **Acción**: `demolish` (vía "quitar", Decisión 3). **Elemento**:
+  `flooring` (nuevo, vía "suelo" o "solado"). **Módulo principal**: sin
+  cambios.
+- **Condición que impide coincidencia exacta**: ninguna.
+- **Motivo**: pavimento/solado es un elemento facturable propio. Se
+  verificó una colisión de "suelo" con "entresuelo" (6 líneas reales, es
+  una planta/piso, no el elemento suelo) frente a 485 líneas reales
+  genuinas de suelo/pavimento — se acepta ese riesgo medido (1.2% de falsos
+  positivos) porque la ganancia es sustancialmente mayor, a diferencia de
+  "tirar" en la Decisión 3 donde la proporción no compensaba.
+  > **Actualización (2026-11-11):** los keywords pasan a casar solo desde inicio
+  > de palabra (`keyword_in_text`), así que "suelo" ya no casa con "entresuelo"
+  > ni "tirar" con "retirar". La colisión de esta decisión desaparece y "tirar"
+  > (Decisión 3) puede reconsiderarse. "solado" no
+  tiene ese problema.
+- **Implementación**: nueva categoría `("flooring", ("suelo", "solado"))`.
+
+### Decisión 8 — muebles de cocina/electrodomésticos es `kitchen_furniture` (elemento nuevo)
+
+- **Expresión habitual**: "QUITAR MUEBLES DE COCINA. Quitar muebles de
+  cocina existentes, con retirada a vertedero de escombros."
+- **Acción**: `demolish` (vía "quitar", Decisión 3). **Elemento**:
+  `kitchen_furniture` (nuevo). **Módulo principal**: sin cambios.
+- **Condición que impide coincidencia exacta**: ninguna.
+- **Motivo**: mobiliario y electrodomésticos de cocina son un elemento
+  facturable propio en las reformas de vivienda de esta empresa.
+- **Implementación**: nueva categoría `("kitchen_furniture", ("mueble de
+  cocina", "muebles de cocina", "electrodomestico"))` — variantes
+  singular/plural necesarias porque el motor compara substrings completos,
+  no por token. Verificado: 0 falsos positivos contra la base real.
+
+### Familia: alicatado (turno 2 de 8)
+
+10 patrones de mayor frecuencia revisados con el usuario. Hallazgo
+principal: "azulejo"/"alicatado" no tenían elemento propio pese a ser el
+núcleo de esta familia — es el caso concreto que originó la revisión
+completa del vocabulario cerrado (el XML de prueba de esta sesión daba
+`sin_evidencia_ia` en dos partidas de alicatado).
+
+### Decisión 9 — azulejo/alicatado es `tile` (elemento nuevo)
+
+- **Expresión habitual**: "Quitar azulejo existente en baño, cocina y
+  galería, con retirada de escombros a contenedor." / "COLOCACIÓN DE
+  ALICATADO. Suministro y colocación de alicatado en paredes de cocina y
+  galería..." (4 de los 10 patrones de mayor frecuencia de la familia,
+  12 apariciones combinadas).
+- **Acción**: `demolish` (vía "quitar"/"demolicion") o `install` (vía
+  "colocacion"/"colocar"), según el patrón. **Elemento**: `tile` (nuevo).
+  **Módulo principal**: sin cambios.
+- **Condición que impide coincidencia exacta**: ninguna.
+- **Motivo**: era el hueco más grande de toda la revisión — el elemento
+  que da nombre al módulo no tenía representación en el vocabulario de
+  elementos.
+- **Implementación**: nueva categoría `("tile", ("azulejo",
+  "alicatado"))`. Verificado: 0 falsos positivos en 577 (azulejo) y 1257
+  (alicatado) líneas reales.
+
+### Decisión 10 — rodapié es `skirting` (elemento nuevo, distinto de tile)
+
+- **Expresión habitual**: "Demolición de rodapié cerámico con medios
+  manuales y carga manual de escombros..." / "Rodapié cerámico de gres
+  rústico, de 9 cm..." (3 de los 10 patrones, 8 apariciones combinadas).
+- **Acción**: `demolish` o ninguna decidida (las líneas de suministro
+  técnicas del rodapié no llevan verbo de acción reconocido). **Elemento**:
+  `skirting` (nuevo). **Módulo principal**: sin cambios.
+- **Condición que impide coincidencia exacta**: ninguna.
+- **Motivo**: el rodapié es una partida facturable propia y distinta del
+  alicatado de pared, aunque a menudo aparezcan en la misma obra — no se
+  fusiona con `tile` a propósito.
+- **Implementación**: nueva categoría `("skirting", ("rodapie",))`.
+  Verificado: 0 falsos positivos en 540 líneas reales.
+
+### Decisión 11 — pavimento/baldosa se añaden a `flooring`
+
+- **Expresión habitual**: "DEMOLICIÓN PAVIMENTO CERÁMICO. Demolición de
+  pavimento de baldosas cerámicas con medios manuales..."
+- **Acción**: `demolish`. **Elemento**: `flooring` (ya existente,
+  Decisión 7 — mismo elemento que suelo/solado). **Módulo principal**:
+  sin cambios.
+- **Condición que impide coincidencia exacta**: ninguna.
+- **Motivo**: "pavimento" y "baldosa" son sinónimos reales de suelo/solado
+  en este histórico, y no estaban cubiertos.
+- **Implementación**: se añaden `"pavimento"` y `"baldosa"` a los
+  sinónimos existentes de `flooring`. Verificado: 0 falsos positivos en
+  1085 (pavimento) y 177 (baldosa) líneas reales.
+
+### Descartado a propósito en esta familia
+
+- **"revestimiento"** (903 líneas, 554 de ellas en el módulo `pintura`):
+  demasiado genérico para mapearlo a `tile` — contaminaría elementos de
+  pintura, impermeabilización, albañilería, etc. No se añade como palabra
+  suelta.
+- **"vierteaguas"** (frecuencia 2) y **"piezas de gran formato"**
+  (frecuencia 2, patrón que solo aparecía bajo la palabra genérica
+  "revestimiento"): volumen demasiado bajo para decidir con criterio en
+  esta ronda. Quedan **sin decisión**, revisar más adelante si aparecen
+  con más frecuencia.
+
+### Familia: albañilería (turno 3 de 8)
+
+10 patrones de mayor frecuencia revisados con el usuario. Hallazgo
+distinto de las dos familias anteriores: varias líneas de especificación
+técnica de materiales (p.ej. "Solado de baldosas cerámicas de gres
+rústico, de 20x20 cm...") no contienen ningún verbo de acción reconocible
+en absoluto — no hay palabra clave que lo arregle, quedan sin decisión
+por diseño (no por falta de revisión).
+
+### Decisión 12 — yeso es `plaster` (elemento nuevo)
+
+- **Expresión habitual**: "REMATES DE YESO EN PAREDES Y TECHOS..." /
+  "REMATE DE YESO EN PAREDES, al derribar tabiques..." (5 apariciones
+  combinadas).
+- **Acción**: variable según el patrón. **Elemento**: `plaster` (nuevo).
+  **Módulo principal**: sin cambios.
+- **Motivo**: el yeso de acabado/remate es un elemento facturable propio
+  sin representación previa.
+- **Implementación**: nueva categoría `("plaster", ("yeso",))`.
+  Verificado: 0 falsos positivos en 750 líneas reales.
+
+### Decisión 13 — roza(s) es `wall_channel` (elemento nuevo)
+
+- **Expresión habitual**: "ROZAS EN VIVIENDA PARA INSTAL. ELECTRICIDAD.
+  Abrir rozas y tapar, para nueva instalación de electricidad."
+- **Acción**: `install` (vía "instalacion"). **Elemento**: `wall_channel`
+  (nuevo). **Módulo principal**: sin cambios.
+- **Motivo**: una roza (canal abierto en pared/muro para alojar
+  instalaciones de electricidad o fontanería) es una partida facturable
+  propia, distinta de `partition_wall`.
+- **Implementación**: nueva categoría `("wall_channel", ("roza",))`.
+  Verificado: 0 falsos positivos en 262 líneas reales.
+
+### Decisión 14 — "derribar" como sinónimo de `demolish`
+
+- **Expresión habitual**: "REMATE DE YESO EN PAREDES, al derribar
+  tabiques y hacer rozas de electricidad en la vivienda."
+- **Motivo**: verbo de demolición no cubierto por "demoler"
+  (`demolicion`/`demoler` no son substring de `derribar`).
+- **Implementación**: se añade `"derribar"` a `_ACTION_SYNONYMS["demolish"]`.
+  Verificado: 0 falsos positivos en 10 líneas reales.
+
+### Decisión 15 — "quitan" (forma conjugada) como sinónimo de `demolish`
+
+- **Expresión habitual**: "REMATES DE YESO EN PAREDES Y TECHOS... donde
+  se quitan los tabique o se realiza alguna actuación."
+- **Motivo**: el infinitivo "quitar" (Decisión 3) no cubre por substring
+  las formas conjugadas ("quitan", "quita", etc.) — se añade la forma
+  real observada con mayor frecuencia en el histórico (45 líneas totales).
+  No se generaliza a un stem corto tipo "quit" para no arriesgar
+  colisiones no verificadas con otras formas.
+- **Implementación**: se añade `"quitan"` a `_ACTION_SYNONYMS["demolish"]`.
+  Verificado: 0 falsos positivos en 45 líneas reales.
+
+### Descartado a propósito en esta familia
+
+- Tres patrones de especificación técnica de solado/baldosas (frecuencia 2
+  cada uno) no contienen ningún verbo de acción reconocible — quedan sin
+  decisión porque no hay una palabra clave concreta que los resuelva, no
+  por falta de revisión.
+- Tres patrones de frecuencia 1 (zaguán/rampa, vallado de parcela,
+  reparación monocapa) se descartan por volumen insuficiente para decidir
+  con criterio en esta ronda.
+
+### Familia: impermeabilización (turno 4 de 8)
+
+10 patrones de mayor frecuencia revisados con el usuario. Esta familia
+tuvo más candidatas descartadas que aceptadas: "galería", "balcón" y
+"formación" resultaron, al comprobar su reparto por módulo, tan genéricas
+como "revestimiento" (familia alicatado) — usadas como nombre de
+habitación o verbo genérico en contextos sin relación entre sí, no como
+señal fiable de un elemento o acción concreto. También se descartó
+"retirada" pese a aparecer en uno de los 10 patrones.
+
+### Decisión 16 — "desmontar" como sinónimo de `demolish`
+
+- **Expresión habitual**: "SUBIR ENFRIADORA A/A A CUBIERTA. Desmontar
+  enfriadora de Split de Aire Acondicionado..."
+- **Motivo**: forma verbal no cubierta por el sustantivo "desmontaje"
+  (mismo tipo de hueco que "derribar"/"quitan").
+- **Implementación**: se añade `"desmontar"` a
+  `_ACTION_SYNONYMS["demolish"]`. Verificado: 0 falsos positivos en 253
+  líneas reales.
+
+### Decisión 17 — "arranque" como sinónimo de `demolish`
+
+- **Expresión habitual**: "Arranque de albardilla cerámica para
+  cubrición de muros, con medios manuales, y carga manual de escombros..."
+- **Motivo**: sinónimo claro de arrancar/demoler no cubierto.
+- **Implementación**: se añade `"arranque"` a
+  `_ACTION_SYNONYMS["demolish"]`. Verificado: 0 falsos positivos en 15
+  líneas reales.
+
+### Decisión 18 — "sellado"/"sellar" como acción nueva `seal`
+
+- **Expresión habitual**: "SELLADO CON CAUCHO. Sellado con caucho con
+  fibras los remates de chapa con encuentro de paredes para su
+  impermeabilización."
+- **Motivo**: no encajaba en ninguna acción existente. Repartido entre
+  varios módulos (impermeabilización, fachada, pintura,
+  sustitución_bajante) pero significa siempre lo mismo — a diferencia de
+  "revestimiento"/"galería"/"formación" (descartados en esta misma
+  familia), que cambian de sentido según el contexto.
+- **Implementación**: nueva categoría `("seal", ("sellado", "sellar"))`.
+  Verificado: 0 falsos positivos en 323+24 líneas reales.
+
+### Decisión 19 — chapa es `sheet_metal` (elemento nuevo)
+
+- **Expresión habitual**: "SELLADO CON CAUCHO... los remates de chapa
+  con encuentro de paredes..."
+- **Motivo**: chapa/flashing metálico de remates es un elemento
+  facturable propio.
+- **Implementación**: nueva categoría `("sheet_metal", ("chapa",))`. Un
+  falso positivo minoritario aceptado: "rechapado" (de puertas de madera,
+  sentido distinto) en 1 de 230 líneas reales — volumen insuficiente para
+  descartar la palabra.
+
+### Decisión 20 — albardilla es `coping` (elemento nuevo)
+
+- **Expresión habitual**: "Arranque de albardilla cerámica para
+  cubrición de muros..." / "Albardilla cerámica para cubrición de muros,
+  en piezas de 40x20x4 cm."
+- **Motivo**: albardilla (remate superior de un muro) es un elemento
+  facturable propio.
+- **Implementación**: nueva categoría `("coping", ("albardilla",))`.
+  Verificado: 0 falsos positivos en 21 líneas reales.
+- **Bug descubierto y corregido de paso**: 8 de las 21 líneas reales de
+  albardilla (38%) usan "cubrición de muros", y `ABBREVIATIONS["cub"]` =
+  "cubierta" en `work_type_normalizer.py` se aplicaba por **prefijo**, así
+  que "cubrición" se normalizaba (incorrectamente) a "cubierta" y ganaba
+  el elemento `roof` en vez de `coping`. Se corrigió excluyendo `"cub"`
+  del matching por prefijo (`_PREFIX_MATCH_EXCLUDED` en
+  `work_type_normalizer.py`) — sigue funcionando como abreviatura si
+  aparece exacta (token `"cub"` solo), pero ya no captura "cubrición",
+  "cubrir", "cubo", "cubanita"... Tests:
+  `tests/test_work_type_normalizer.py::TestNormalizeText`.
+
+### Descartado a propósito en esta familia
+
+- **"galería"** (795 líneas, repartidas sin dominancia clara: demolición
+  182, alicatado 129, carpintería 56...) y **"balcón"** (305 líneas,
+  repartidas entre pintura, cerrajería, impermeabilización, fachada sin
+  dominancia): se usan como nombre de habitación/ubicación en contextos
+  muy distintos, igual que "fachada como ubicación" ya documentado en la
+  Decisión 2 original. No se añaden como elemento.
+- **"formación"** (559 líneas, repartidas entre alicatado, bajante,
+  pintura, albañilería, impermeabilización): verbo genérico ("formación
+  de pendientes", "formación de rampa", "formación de juntas") sin
+  relación fiable con una acción concreta. Colisiona además con
+  "transformación" (3 líneas, sentido distinto). No se añade.
+- **"retirada"**: aparece en el patrón "Retirada de material de relleno
+  en junta de pavimentación..." pero se descarta como palabra clave —
+  3.221 líneas reales la contienen, de las cuales 1.977 coinciden con otra
+  acción ya cubierta (mismo riesgo que "tirar"/"retirar" de la Decisión 3,
+  a una escala mucho mayor: podría reproducir el problema de prioridad
+  pintura/impermeabilización-vs-demolish documentado tras la Decisión 3,
+  pero para cientos de líneas en vez de 2). El patrón concreto queda sin
+  decisión.
+
+### Familia: carpintería (turno 5 de 8)
+
+10 patrones de mayor frecuencia revisados con el usuario. Hallazgo
+principal: **"sustitución"** (629 líneas reales, 0 falsos positivos) no
+tenía ninguna acción propia, pese a dar nombre al módulo
+`sustitucion_bajante` — el mayor hueco de acción encontrado hasta ahora
+en toda la revisión.
+
+### Decisión 21 — "sustitucion" dentro de `install`
+
+- **Expresión habitual**: "SUSTITUCIÓN PUERTA EXTERIOR Nº 2. Suministro y
+  sustitución de puerta abatible..." / "SUSTITUCIÓN PUERTA ENTRADA.
+  Suministro y sustitución de puerta de entrada a zaguán..."
+- **Motivo**: sustituir implica instalar lo nuevo — consistente con como
+  ya funcionan las líneas de `sustitucion_bajante` que evidencian precio
+  vía "colocación" mencionada aparte. No se crea una acción `replace`
+  separada para no fragmentar la evidencia entre dos categorías que en la
+  práctica se solapan casi siempre.
+- **Implementación**: se añade `"sustitucion"` a
+  `_ACTION_SYNONYMS["install"]`. Verificado: 0 falsos positivos en 629
+  líneas reales.
+- **Mismo patrón ya conocido, de nuevo**: en la prueba de regresión
+  contra la base real, 6 líneas cambiaron de `paint` a `install`. 4 son
+  correcciones reales (el `paint` anterior venía de cláusulas negadas del
+  tipo "no incluida la pintura"/"no contemplada la pintura", el mismo
+  problema de menciones boilerplate ya visto en la Decisión 3). Pero
+  **2 líneas tituladas explícitamente "PINTURA..."** ("PINTURA NATURAL AL
+  SILICATO", "SUSTITUCIÓN PUERTA ENTRADA... y pintura de la puerta")
+  pasan a `install` solo por mencionar "sustitución" de pasada — mismo
+  problema de prioridad ya documentado tras la Decisión 3 (pintura/
+  impermeabilización vs. demolish), esta vez con install. Volumen
+  igualmente mínimo (2 líneas): aceptado como caso conocido, no se toca
+  la lógica compartida de prioridad.
+
+### Decisión 22 — mueble (genérico) es `furniture` (elemento nuevo)
+
+- **Expresión habitual**: "Suministro y colocación de mueble laminado
+  gris de 0,90x,83x0,54 para descalcificador, formado por módulo y
+  encimera de laminado de madera."
+- **Motivo**: mobiliario genérico, distinto de `kitchen_furniture`
+  (Decisión 8, específicamente "mueble de cocina"). Al ir `kitchen_furniture`
+  antes en la tabla, un texto que diga "mueble de cocina" sigue
+  coincidiendo con esa categoría más específica primero.
+- **Implementación**: nueva categoría `("furniture", ("mueble",))`. Dos
+  falsos positivos menores aceptados (error de OCR "lmueble") de 693
+  líneas reales.
+
+### Decisión 23 — esmalte/esmaltado y barnizado/barnizar dentro de `paint`
+
+- **Expresión habitual**: "PUERTAS DE ASCENSOR. Lijado superficial y
+  aplicación de imprimación multiadherente... esmalte..." / "BARNIZADO
+  PASAMANOS ESCALERA MADERA. Barnizado de pasamanos de escalera..."
+- **Motivo**: esmaltar y barnizar son variantes del mismo concepto de
+  acabado/pintura de superficie — no se separan en categorías propias
+  para no fragmentar evidencia de conceptos que en la práctica son el
+  mismo tipo de partida. **"lijado" deliberadamente NO se añade como
+  acción**: es un paso de preparación previo (como "picado" antes de
+  "reparación"), no la intervención global — si ganara prioridad,
+  reproduciría el mismo problema ya documentado tras la Decisión 3.
+- **Implementación**: se añaden `"esmalte"`, `"esmaltado"`, `"barnizado"`,
+  `"barnizar"` a `_ACTION_SYNONYMS["paint"]`. Un falso positivo
+  minoritario aceptado: "termoesmaltado" (ficha técnica de material, 3 de
+  34 líneas).
+
+### Decisión 24 — enlucido/maestreado como acción nueva `render`
+
+- **Expresión habitual**: "Maestreado y enlucido en liso, las paredes de
+  la cocina, estudio y pasillo hasta puerta existente."
+- **Motivo**: maestrear y enlucir son la misma técnica de acabado de
+  paramentos (maestrear prepara, enlucir remata) — mismo término "render"
+  que ya usa `_SYSTEM_BY_ELEMENT` internamente para `facade_render`.
+- **Implementación**: nueva categoría `("render", ("enlucido",
+  "maestreado"))`. Verificado: 0 falsos positivos en 644+155 líneas
+  reales.
+
+### Familia: cerrajería (turno 6 de 8)
+
+Rendimiento mucho menor que las familias anteriores: solo 2 de los 10
+patrones de mayor frecuencia superan frecuencia 1 — el resto son
+descripciones técnicas muy específicas (tuberías, recubrimientos
+poliméricos, pasivación de armaduras...) descartadas por volumen
+insuficiente para decidir con criterio.
+
+### Decisión 25 — fregadero es `sink` (elemento nuevo)
+
+- **Expresión habitual**: "Suministro y colocación de fregadero de
+  cocina en acero inox..."
+- **Motivo**: elemento facturable propio.
+- **Implementación**: nueva categoría `("sink", ("fregadero",))`.
+  Verificado: 0 falsos positivos en 421 líneas reales.
+
+### Decisión 26 — "imprimacion" dentro de `paint`
+
+- **Expresión habitual**: "Tratamiento superficial de protección
+  anticorrosiva para elementos de acero mediante imprimación
+  anticorrosiva a base de resina epoxi y fosfato de zinc, aplicada en dos
+  manos."
+- **Motivo**: a diferencia de "lijado" (descartado en la Decisión 23 por
+  ser solo preparación), el patrón real muestra que la imprimación puede
+  ser el trabajo completo por sí sola (recubrimiento anticorrosivo/de
+  protección), no solo un paso previo a otro acabado.
+- **Implementación**: se añade `"imprimacion"` a
+  `_ACTION_SYNONYMS["paint"]`. Verificado: 0 falsos positivos en 714
+  líneas reales, 76% concentradas en pintura+cerrajería con sentido
+  siempre consistente (a diferencia de "revestimiento"/"galería"/
+  "formación", descartadas en familias anteriores por cambiar de sentido
+  según el contexto).
+
+### Familia: sustitución de bajante (turno 7 de 8)
+
+Rendimiento bajo, similar a cerrajería: solo 2 de los 10 patrones
+superan frecuencia 1. Se agrupan varios términos de bajo volumen
+individual pero del mismo tema recurrente (accesorios de fontanería) en
+lugar de descartarlos uno a uno.
+
+### Decisión 27 — rejilla/desagüe/cazoleta/sumidero es `drain_fitting`
+
+- **Expresión habitual**: "EMBOCAR REJILLAS A DESAGÜES EXISTENTES.
+  Sellado con producto específico entre rejilla y cazoleta..."
+- **Motivo**: accesorios de desagüe (rejilla, cazoleta, sumidero) son el
+  mismo tipo de elemento facturable, agrupados en una sola categoría en
+  vez de cuatro para no fragmentar la evidencia.
+- **Implementación**: nueva categoría `("drain_fitting", ("rejilla",
+  "desague", "cazoleta", "sumidero"))`. Verificado: 0 falsos positivos en
+  186+307+44+59 líneas reales.
+
+### Decisión 28 — manguito/codo es `pipe_fitting`
+
+- **Expresión habitual**: "MANGUITO UNIÓN 90MM..." / "CODO PVC 45º
+  90MM..."
+- **Motivo**: aunque cada frase concreta tiene frecuencia individual 1,
+  manguito y codo son el mismo tema recurrente de accesorios de tubería
+  PVC — se agrupan en vez de descartarlos por volumen insuficiente cada
+  uno por separado.
+- **Implementación**: nueva categoría `("pipe_fitting", ("manguito",
+  "codo"))`. Verificado: 0 falsos positivos en 19+45 líneas reales.
+
+### Decisión 29 — bomba es `pump` (elemento nuevo)
+
+- **Expresión habitual**: "BOMBAS AGUAS SUCIAS Y CONDUCCIÓN P.V.C.
+  Suministro e instalación de bomba de achique de aguas sucias..."
+- **Motivo**: elemento facturable propio.
+- **Implementación**: nueva categoría `("pump", ("bomba",))`. Verificado:
+  0 falsos positivos reales en 83 líneas ("electrobomba" sigue siendo una
+  bomba, no es un error de sentido).
 
 ## Cierre del hito: criterios de salida verificados (Fase 6, Tarea 15 — 2026-07-22)
 
@@ -207,4 +762,104 @@ ejemplos — uno exacto, uno comparable con advertencia y uno sin evidencia
 privada — y confirmar que el informe de evidencia identifica las fuentes de
 los dos primeros y declara sin ambigüedad que el tercero requiere
 estimación/revisión.
+
+## Expansión de abreviaturas por prefijo (2026-11-11)
+
+Resuelve el hallazgo sistémico anotado en la Decisión 20 ("baj", "rep",
+"sust", "imper" capturaban palabras reales por prefijo). `_expand_abbreviation`
+solo expande por prefijo cuando el token es un **truncamiento** de la forma
+completa ("impermeab", "sustit") o una **forma flexionada** que comparte con
+ella al menos el 60 % de la palabra ("reparar", "bajantes", "sustituyendo").
+"baja" se excluye explícitamente (planta baja). Se añaden como abreviaturas
+exactas la errata "imperbeabilizacion" y, para no cambiar la clasificación
+previa, "impermeable(s)" e "impermor".
+
+Medido sobre 19.205 partidas reales: 1.002 cambian de módulo, todas perdiendo
+un falso positivo (979 `sustitucion_bajante`, 27 `impermeabilizacion`).
+
+Queda para decidir: "repicado" ya no se expande a "reparacion", pero tampoco
+casa con el keyword "picado" (los keywords casan desde inicio de palabra);
+si debe contar como demolición hay que añadirlo al vocabulario.
+
+## Revisión de noviembre de 2026: acciones y familia `estructura`
+
+Decisiones tomadas por el usuario el 2026-11-11 a partir de
+`docs/decisiones-pendientes.md`, con las cifras medidas sobre una copia de la
+base de datos real (19.205 partidas). Verificación conjunta: 135 → 137
+patrones, 0 fuentes de patrón inválidas.
+
+### Decisión 30 — "reposición"/"reponer" es `repair`
+
+- **Expresión habitual**: "Reposición de gresite desprendido", "Reposición
+  monocapa fachada".
+- **Motivo**: reponer lo dañado forma parte de la misma reparación. Hasta
+  ahora llegaba a `repair` por el fallo de la expansión de "rep", ya corregido;
+  sin esta decisión 25 partidas se quedaban sin acción y se perdía el patrón de
+  "reposición monocapa fachada".
+
+### Decisión 31 — "formación de/en" es `build` (acción nueva, de último recurso)
+
+- **Expresión habitual**: "Suministro y formación de nuevo tabique cerámico",
+  "Formación de base de mostrador de pladur", "Formación de pendientes".
+- **Motivo**: describe ejecutar un elemento de obra nueva. La Decisión 18 lo
+  descartó por genérico; medido, el único sentido distinto real es "formación
+  del personal" (seguridad y salud), que se excluye explícitamente.
+- **Condiciones**: solo se asigna si no hay otra acción, y **no cuenta como
+  segunda acción** para marcar una partida como compuesta (si no, "Demolición
+  de pavimento y formación de pendientes" perdía su patrón).
+- **Datos**: 245 partidas sin acción la ganan (11 de presupuestos INCLUDED).
+
+### Decisión 32 — "tirar" es `demolish`
+
+- **Expresión habitual**: "Tirar tabiques existentes…", "Tirar techo de
+  escayola…".
+- **Motivo**: las Decisiones 3 y 5 lo aplazaron porque casaba dentro de
+  "re**tirar**"; desde que los keywords casan desde inicio de palabra ya no.
+  Nuevo patrón "tirar tabiques" (3 presupuestos, 550 €).
+
+### Decisión 33 — "repaso" es `repair`; "saneado" no
+
+- **Motivo**: "Repaso de grietas" es reparación. "Saneado" se propuso también,
+  pero al medirlo resultó ser un paso de preparación en pintura ("saneado de
+  zonas oxidadas + imprimación + esmalte"): volvía compuestas 3 partidas con
+  patrón sin ganar ninguna. **Descartado.**
+
+### Decisión 34 — fuera "garaje" y "parking" de `estructura`
+
+- **Motivo**: son lugares, no elementos. Eran la única señal de estructura en
+  99 partidas ("Pintura puerta vehículos garaje", "Puerta cortafuegos en
+  parking").
+
+### Decisión 35 — señales débiles de `estructura`
+
+- "hormigón", "refuerzo", "forjado" y "armadura" solo cuentan con un keyword
+  estructural fuerte (viga, pilar, zuncho, estructura…) o con **dos señales
+  débiles juntas** ("frente de forjado de hormigón", "armaduras… hormigón").
+- **Motivo**: solas aparecen en "pintura al silicato sobre hormigón",
+  "refuerzo en rejilla", "picar en el forjado para la caldereta".
+- **Implementación**: `WEAK_MODULE_KEYWORDS` en
+  `historical_partida_classifier.py`.
+
+### Decisión 36 — fuera los plurales/derivados redundantes
+
+- "vigas", "pilares", "estructural" y "dados" ya los casan "viga", "pilar",
+  "estructura" y "dado" desde inicio de palabra; contaban dos veces e inflaban
+  la confianza.
+
+### Decisión 37 — "entrevigado" es `estructura`
+
+- "viga" no lo casa (empieza a mitad de palabra).
+
+**Efecto conjunto 34-37**: 550 partidas dejan de marcarse como estructura
+(pistas de tenis, transporte de residuos de hormigón, alicatados, medianeras…)
+y 9 reparaciones reales de frente de forjado pasan a detectarse. En 157
+partidas (limpieza de óxido de armaduras, imprimación de frente de forjado)
+estructura pasa a ser el módulo principal en lugar de cerrajería.
+
+### Pendiente tras esta revisión
+
+- "chapa" no es keyword de cerrajería: "Rampa de chapa lagrimada" se queda sin
+  módulo al quitar "garaje"/"parking".
+- "muro", "solera", "losa", "cimentación" no se han evaluado como señales de
+  estructura.
 

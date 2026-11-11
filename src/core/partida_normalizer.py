@@ -8,14 +8,12 @@ import re
 import unicodedata
 from typing import Any, Dict, List, Tuple
 
-from src.core.budget_math import calcular_importe_linea
+from src.core.budget_math import calcular_importe_linea, parse_decimal_es
 
 
 def _to_float(value, default: float = 0.0) -> float:
     try:
-        if isinstance(value, str):
-            value = value.replace(",", ".").strip()
-        return float(value)
+        return parse_decimal_es(value)
     except (TypeError, ValueError):
         return default
 

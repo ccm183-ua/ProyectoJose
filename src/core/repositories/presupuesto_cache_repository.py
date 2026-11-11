@@ -296,6 +296,22 @@ def upsert_presupuesto_finalizado(
     calidad = _calcular_calidad_datos(datos_merge, partidas=partidas)
 
     with database.get_connection() as conn:
+        if not partidas:
+            # Una lectura sin partidas (layout no reconocido, Excel a medio
+            # guardar...) no puede vaciar un snapshot finalizado que sí las tenía.
+            prev = conn.execute(
+                """SELECT p.id FROM presupuesto p
+                   WHERE p.ruta_excel = ? AND p.es_finalizado = 1
+                     AND EXISTS (SELECT 1 FROM presupuesto_partida pp
+                                 WHERE pp.presupuesto_id = p.id)""",
+                (ruta,),
+            ).fetchone()
+            if prev:
+                return (
+                    None,
+                    "La lectura del Excel no devolvió partidas; se conserva el "
+                    "snapshot finalizado existente.",
+                )
         try:
             conn.execute(
                 """INSERT INTO presupuesto
@@ -339,7 +355,7 @@ def upsert_presupuesto_finalizado(
                        num_partidas     = excluded.num_partidas,
                        fuente_datos     = excluded.fuente_datos,
                        es_finalizado    = excluded.es_finalizado,
-                       fecha_finalizacion = excluded.fecha_finalizacion,
+                       fecha_finalizacion = COALESCE(presupuesto.fecha_finalizacion, excluded.fecha_finalizacion),
                        calidad_datos    = excluded.calidad_datos,
                        motivo_incompleto = excluded.motivo_incompleto,
                        metodo_resolucion_admin = excluded.metodo_resolucion_admin,
@@ -525,6 +541,10 @@ def actualizar_estado_presupuesto(ruta_excel: str, estado: str) -> Optional[str]
 def limpiar_presupuestos_huerfanos(rutas_vigentes: List[str]) -> int:
     """Elimina de la cache presupuestos cuya ruta_excel ya no está en disco.
 
+    Los presupuestos finalizados (``es_finalizado = 1``) nunca se eliminan:
+    son snapshots protegidos y su ausencia en un escaneo puede deberse a un
+    renombrado, una carpeta movida o una unidad de red no montada.
+
     Args:
         rutas_vigentes: Lista de rutas de Excel actualmente presentes en las carpetas.
 
@@ -532,7 +552,9 @@ def limpiar_presupuestos_huerfanos(rutas_vigentes: List[str]) -> int:
         Número de registros eliminados.
     """
     with database.get_connection() as conn:
-        cur = conn.execute("SELECT id, ruta_excel FROM presupuesto")
+        cur = conn.execute(
+            "SELECT id, ruta_excel FROM presupuesto WHERE COALESCE(es_finalizado, 0) = 0"
+        )
         all_cached = cur.fetchall()
         vigentes_set = set(rutas_vigentes)
         ids_to_delete = [

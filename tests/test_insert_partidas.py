@@ -323,3 +323,146 @@ class TestPartidaSpacerRow:
             rf'<row r="18"[^>]*ht="{SPACER_ROW_HEIGHT}"[^>]*customHeight="1"',
             sheet,
         ), "La fila separadora debe tener altura explícita mínima"
+
+
+# ---------------------------------------------------------------------------
+# Regresión: reescritura de partidas sobre un Excel que ya tiene partidas,
+# renumeración de filas con desplazamiento negativo y fórmulas del pie.
+# ---------------------------------------------------------------------------
+
+def _mk_partidas(n, tag, precio=100.0):
+    return [
+        {"concepto": f"{tag} partida {i}", "cantidad": 1, "unidad": "ud", "precio_unitario": precio}
+        for i in range(n)
+    ]
+
+
+def _row_numbers(sheet):
+    return [int(r) for r in re.findall(r'<row r="(\d+)"', sheet)]
+
+
+def _formula_cells(sheet):
+    """{celda: (formula, valor_cacheado)} de todas las celdas con fórmula."""
+    out = {}
+    for m in re.finditer(
+        r'<c r="([A-Z]+\d+)"[^>]*><f[^>]*>([^<]*)</f>(?:<v>([^<]*)</v>)?', sheet
+    ):
+        out[m.group(1)] = (m.group(2), m.group(3))
+    return out
+
+
+def _footer_rows(budget_file):
+    """Localiza las filas del pie por su etiqueta en la columna A (vía openpyxl)."""
+    import openpyxl
+
+    ws = openpyxl.load_workbook(budget_file).worksheets[0]
+    rows = {}
+    for row in ws.iter_rows(min_col=1, max_col=1):
+        cell = row[0]
+        text = str(cell.value or "").strip().upper()
+        if not text:
+            continue
+        if text.startswith("1.- ACTUACIONES"):
+            rows["capitulo"] = cell.row
+        elif "INCLUIDO" in text and "TOTAL" in text:
+            rows["total_iva"] = cell.row
+        elif "I.V.A" in text:
+            rows["iva"] = cell.row
+        elif text.startswith("TOTAL PRESUPUESTO"):
+            rows["total"] = cell.row
+        elif text.startswith("ASCIENDE"):
+            rows["asciende"] = cell.row
+    return rows
+
+
+@pytest.fixture
+def no_page_config(monkeypatch):
+    """Aísla la lógica XML de la inserción de cabeceras vía Excel COM."""
+    monkeypatch.setattr(
+        PartidasWriter, "_apply_page_config_after_write", staticmethod(lambda _p: None)
+    )
+
+
+@pytest.mark.usefixtures("no_page_config")
+class TestRewritePartidas:
+    @pytest.mark.parametrize("n", [1, 2, 4, 5, 6, 12])
+    def test_row_numbers_unique_and_ascending(self, budget_file, n):
+        em = ExcelManager()
+        assert em.insert_partidas_via_xml(budget_file, _mk_partidas(n, "A"))
+        rows = _row_numbers(_read_sheet2(budget_file))
+        assert rows == sorted(set(rows)), "Filas duplicadas o desordenadas en el XML"
+
+    @pytest.mark.parametrize("n", [1, 3, 5, 8])
+    def test_footer_formulas_point_to_subtotal(self, budget_file, n):
+        em = ExcelManager()
+        assert em.insert_partidas_via_xml(budget_file, _mk_partidas(n, "A", precio=100.0))
+        sheet = _read_sheet2(budget_file)
+        subtotal_row = 17 + 2 * n
+        f = _formula_cells(sheet)
+        assert f[f"I{subtotal_row}"][0] == f"SUM(I17:I{subtotal_row - 1})"
+
+        ft = _footer_rows(budget_file)
+        cap, tot, iva, tiva = ft["capitulo"], ft["total"], ft["iva"], ft["total_iva"]
+        assert f[f"I{cap}"][0] == f"I{subtotal_row}"
+        assert f[f"I{tot}"][0] == f"SUM(I{cap}:I{tot - 1})"
+        assert f[f"I{iva}"][0] in (f"I{tot}*10%", f"I{tot}*0.1")
+        assert f[f"I{tiva}"][0] == f"I{tot}+I{iva}"
+
+        esperado = 100.0 * n
+        assert float(f[f"I{cap}"][1]) == pytest.approx(esperado)
+        assert float(f[f"I{tot}"][1]) == pytest.approx(esperado)
+        assert float(f[f"I{iva}"][1]) == pytest.approx(esperado * 0.1)
+        assert float(f[f"I{tiva}"][1]) == pytest.approx(esperado * 1.1)
+
+        # Ninguna fórmula del pie (aparte del capítulo) puede referenciar el subtotal:
+        # evita dobles conteos y referencias circulares.
+        refs_subtotal = [c for c, (fx, _) in f.items() if fx == f"I{subtotal_row}"]
+        assert refs_subtotal == [f"I{cap}"]
+        assert not any(fx == c for c, (fx, _) in f.items()), "Referencia circular"
+
+    @pytest.mark.parametrize("primera,segunda", [(10, 2), (2, 10), (1, 1), (3, 7), (7, 3)])
+    def test_replace_existing_partidas_leaves_no_leftovers(self, budget_file, primera, segunda):
+        em = ExcelManager()
+        assert em.insert_partidas_via_xml(budget_file, _mk_partidas(primera, "VIEJA"))
+        assert em.insert_partidas_via_xml(budget_file, _mk_partidas(segunda, "NUEVA", precio=50.0))
+        sheet = _read_sheet2(budget_file)
+
+        assert "VIEJA" not in sheet
+        assert sheet.count("NUEVA partida") == segunda
+        rows = _row_numbers(sheet)
+        assert rows == sorted(set(rows))
+        subtotales = re.findall(r"<f>SUM\(I17:I\d+\)</f>", sheet)
+        assert subtotales == [f"<f>SUM(I17:I{16 + 2 * segunda})</f>"]
+
+        ft = _footer_rows(budget_file)
+        f = _formula_cells(sheet)
+        assert float(f[f"I{ft['total_iva']}"][1]) == pytest.approx(50.0 * segunda * 1.1)
+        assert "IVA INCLUIDO" in sheet
+
+    def test_replace_matches_fresh_insert(self, temp_dir, budget_file):
+        """Reescribir sobre un Excel con partidas da el mismo XML que escribir sobre la plantilla."""
+        em = ExcelManager()
+        fresh = os.path.join(temp_dir, "fresh.xlsx")
+        shutil.copy(budget_file, fresh)
+        assert em.insert_partidas_via_xml(fresh, _mk_partidas(3, "N"))
+
+        assert em.insert_partidas_via_xml(budget_file, _mk_partidas(9, "X"))
+        assert em.insert_partidas_via_xml(budget_file, _mk_partidas(3, "N"))
+        assert _read_sheet2(budget_file) == _read_sheet2(fresh)
+
+    def test_append_keeps_existing_and_adds_new(self, budget_file):
+        em = ExcelManager()
+        assert em.insert_partidas_via_xml(budget_file, _mk_partidas(3, "PRIMERA"))
+        assert em.append_partidas_via_xml(budget_file, _mk_partidas(2, "SEGUNDA"))
+        sheet = _read_sheet2(budget_file)
+        assert sheet.count("PRIMERA partida") == 3
+        assert sheet.count("SEGUNDA partida") == 2
+        assert re.findall(r"<f>SUM\(I17:I\d+\)</f>", sheet) == ["<f>SUM(I17:I26)</f>"]
+
+    def test_result_opens_with_openpyxl(self, budget_file):
+        import openpyxl
+
+        em = ExcelManager()
+        assert em.insert_partidas_via_xml(budget_file, _mk_partidas(8, "A"))
+        assert em.insert_partidas_via_xml(budget_file, _mk_partidas(2, "B"))
+        openpyxl.load_workbook(budget_file)

@@ -10,6 +10,7 @@ export_context_pack() vuelca los cuatro ficheros del paquete (patrones,
 repertorio, vocabulario, estructura) desde una base de solo lectura.
 """
 
+import pytest
 from datetime import datetime
 from pathlib import Path
 
@@ -45,6 +46,23 @@ class TestScrubTextRemovesPersonalData:
         text, reasons = scrub_text("Pintura Comunidad de Propietarios Los Olivos")
         assert text == "Pintura"
         assert "comunidad" in reasons
+
+    @pytest.mark.parametrize("raw,esperado", [
+        ("Pintura de escalera C.P. BLASCO IBAÑEZ 18, planta baja", "Pintura de escalera, planta baja"),
+        ("Revisión C. P. Los Olivos de la zona", "Revisión de la zona"),
+        ("Obra en C.P. DR. FLEMING Nº 3 reparación de bajante", "Obra en reparación de bajante"),
+        ("Suministro de bajante C.P. GARAJE BERNARDO LÓPEZ GARCÍA 5-7", "Suministro de bajante"),
+    ])
+    def test_removes_comunidad_abreviada_cp(self, raw, esperado):
+        """Regresión: "C.P. <nombre>" (Comunidad de Propietarios abreviada)
+        aparecía en 59 conceptos reales y salía sin filtrar hacia Claude."""
+        text, reasons = scrub_text(raw)
+        assert text == esperado
+        assert "comunidad" in reasons
+
+    @pytest.mark.parametrize("raw", ["Tubo PVC C.P.V.C. de 32 mm", "Cemento CEM II 42,5 R"])
+    def test_no_toca_codigos_tecnicos_parecidos_a_cp(self, raw):
+        assert scrub_text(raw) == (raw, [])
 
     def test_removes_cif(self):
         text, reasons = scrub_text("Obra para cliente B12345678 impermeabilizacion")

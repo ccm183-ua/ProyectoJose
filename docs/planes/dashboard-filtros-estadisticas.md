@@ -1,5 +1,7 @@
 # Plan: Mejoras en el Dashboard — Filtros y Estadísticas por Administración/Comunidad
 
+> **Estado (2026-11-11):** A medias: los datos (comunidad_id, administracion_id en la caché) existen; el panel de filtros, las estadísticas y la exportación CSV no.
+
 ## 1. Contexto de la aplicación
 
 ### 1.1 Estado actual del dashboard
