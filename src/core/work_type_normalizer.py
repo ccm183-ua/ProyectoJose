@@ -2,6 +2,7 @@
 Normalización de texto y tipo de obra para inteligencia histórica.
 """
 
+import math
 import re
 import unicodedata
 from typing import List
@@ -19,6 +20,14 @@ ABBREVIATIONS = {
     "cub": "cubierta",
     "fachad": "fachada",
     "baj": "bajante",
+    # Errata frecuente en el histórico real (44 apariciones).
+    "imperbeabilizacion": "impermeabilizacion",
+    # Formas que la expansión por prefijo antigua ya llevaba a
+    # impermeabilizacion y que son del mismo dominio (lámina/mortero
+    # impermeable, "Impermor"): se conservan explícitamente.
+    "impermeable": "impermeabilizacion",
+    "impermeables": "impermeabilizacion",
+    "impermor": "impermeabilizacion",
 }
 
 # Claves excluidas de la coincidencia por PREFIJO (Decision 20, familia
@@ -37,7 +46,21 @@ ABBREVIATIONS = {
 # de toda la app, no solo a esta familia, y merece su propio plan con el
 # mismo cuidado que este documento, no un parche de paso. Ver
 # "Pendiente" mas abajo.
+#
+# Resuelto el 2026-11-11 en _expand_abbreviation: por prefijo solo se expande
+# un truncamiento o una forma flexionada con raíz común larga. Medido sobre
+# 19.205 partidas reales: 1.002 dejan de recibir un módulo por falso positivo
+# (979 sustitucion_bajante por "planta baja"/"bajo"/"bajada"; 27
+# impermeabilizacion) y ninguna gana o pierde un módulo legítimo.
 _PREFIX_MATCH_EXCLUDED = {"cub"}
+
+# Palabras reales que son truncamiento literal de una forma completa pero NO
+# son abreviatura suya: "baja" (planta baja, dar de baja) no es "bajante".
+_PREFIX_MATCH_STOPWORDS = {"baja"}
+
+# Raíz común mínima (fracción de la palabra completa) para aceptar una forma
+# flexionada: "reparar"/"reparacion" (6/10) sí; "reparto" (5/10) no.
+_INFLECTION_MIN_SHARED_RATIO = 0.6
 
 _SIGNAL_TERMS = {
     "bajante",
@@ -103,13 +126,40 @@ def keyword_in_text(keyword: str, normalized_text: str) -> bool:
     return pattern.search(normalized_text) is not None
 
 
+def _shared_prefix_len(a: str, b: str) -> int:
+    n = 0
+    for x, y in zip(a, b):
+        if x != y:
+            break
+        n += 1
+    return n
+
+
 def _expand_abbreviation(token: str) -> str:
+    """Expande una abreviatura a su forma completa.
+
+    Por prefijo solo se expande cuando el token es de verdad la misma palabra:
+      - un truncamiento de la forma completa ("impermeab", "sustit"), o
+      - una forma flexionada que comparte una raíz larga con ella
+        ("reparar", "bajantes", "sustituyendo").
+    Antes bastaba con empezar por la clave, así que "reposicion",
+    "replanteo" o "repicado" pasaban a "reparacion"; "bajo" y "baja" a
+    "bajante"; "sustancia" a "sustitucion"; "imperfecciones" a
+    "impermeabilizacion".
+    """
     if token in ABBREVIATIONS:
         return ABBREVIATIONS[token]
+    if token in _PREFIX_MATCH_STOPWORDS:
+        return token
     for short, full in ABBREVIATIONS.items():
         if short in _PREFIX_MATCH_EXCLUDED:
             continue
-        if token.startswith(short) and len(token) >= len(short):
+        if len(token) < len(short) or not token.startswith(short):
+            continue
+        if full.startswith(token):
+            return full
+        min_shared = math.ceil(_INFLECTION_MIN_SHARED_RATIO * len(full))
+        if _shared_prefix_len(token, full) >= min_shared:
             return full
     return token
 

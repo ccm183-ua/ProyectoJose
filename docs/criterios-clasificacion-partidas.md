@@ -756,3 +756,21 @@ privada — y confirmar que el informe de evidencia identifica las fuentes de
 los dos primeros y declara sin ambigüedad que el tercero requiere
 estimación/revisión.
 
+## Expansión de abreviaturas por prefijo (2026-11-11)
+
+Resuelve el hallazgo sistémico anotado en la Decisión 20 ("baj", "rep",
+"sust", "imper" capturaban palabras reales por prefijo). `_expand_abbreviation`
+solo expande por prefijo cuando el token es un **truncamiento** de la forma
+completa ("impermeab", "sustit") o una **forma flexionada** que comparte con
+ella al menos el 60 % de la palabra ("reparar", "bajantes", "sustituyendo").
+"baja" se excluye explícitamente (planta baja). Se añaden como abreviaturas
+exactas la errata "imperbeabilizacion" y, para no cambiar la clasificación
+previa, "impermeable(s)" e "impermor".
+
+Medido sobre 19.205 partidas reales: 1.002 cambian de módulo, todas perdiendo
+un falso positivo (979 `sustitucion_bajante`, 27 `impermeabilizacion`).
+
+Queda para decidir: "repicado" ya no se expande a "reparacion", pero tampoco
+casa con el keyword "picado" (los keywords casan desde inicio de palabra);
+si debe contar como demolición hay que añadirlo al vocabulario.
+

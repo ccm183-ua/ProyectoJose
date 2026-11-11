@@ -27,6 +27,25 @@ class TestNormalizeText:
         assert "cubricion" in value
         assert "cubierta" not in value
 
+    def test_palabras_que_solo_empiezan_por_la_abreviatura_no_se_expanden(self):
+        """Regresión: la expansión por prefijo convertía palabras reales."""
+        value = normalize_text("Reposición de baldosa en planta baja, bajo replanteo")
+        assert "reparacion" not in value
+        assert "bajante" not in value
+        assert value.split() == [
+            "reposicion", "de", "baldosa", "en", "planta", "baja", "bajo", "replanteo",
+        ]
+        assert "sustitucion" not in normalize_text("sustancia")
+        assert "impermeabilizacion" not in normalize_text("imperfecciones")
+        assert normalize_text("repicado") == "repicado"
+
+    def test_truncamientos_y_formas_flexionadas_si_se_expanden(self):
+        assert normalize_text("impermeab sustit filtrac") == "impermeabilizacion sustitucion filtracion"
+        assert normalize_text("bajantes") == "bajante"
+        assert normalize_text("reparar") == "reparacion"
+        assert normalize_text("sustituyendo") == "sustitucion"
+        assert normalize_text("imperbeabilizacion") == "impermeabilizacion"
+
 
 class TestNormalizeWorkType:
     def test_normalize_work_type(self):
