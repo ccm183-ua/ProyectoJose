@@ -1,5 +1,7 @@
 # Completar la revision del vocabulario cerrado (8 familias) Implementation Plan
 
+> **Estado (2026-11-11):** completado. La octava familia (`estructura`) se cerró con las Decisiones 34-37 de `docs/criterios-clasificacion-partidas.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task (NOT subagent-driven-development — Task 3 requires a live, synchronous decision from the human user that a background subagent cannot obtain). Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Cerrar las ocho revisiones de vocabulario cerrado que

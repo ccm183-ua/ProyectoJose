@@ -53,7 +53,8 @@ que evita que una partida multietiqueta duplique su precio en varios módulos
 (línea base: 168 partidas con >1 módulo, 536 asignaciones para 254 líneas).
 
 Cada tabla es una lista **ordenada** de `(categoría, keywords)`: gana la primera
-categoría cuyo keyword aparece como substring en el texto normalizado, no "todas
+categoría cuyo keyword aparece en el texto normalizado empezando en inicio de
+palabra (desde 2026-11-11; antes, como substring), no "todas
 las que matchean" (a diferencia de la clasificación de módulos). El orden
 codifica la prioridad cuando dos categorías podrían aplicar a la vez.
 
@@ -62,13 +63,18 @@ reparación de..." describe la intervención global, no el paso previo de picado
 
 | action | keywords |
 | --- | --- |
-| `repair` | reparacion, reparar |
-| `demolish` | demolicion, demoler, picado, levantado, desmontaje |
-| `install` | instalacion, instalar, colocacion, colocar, montaje |
-| `paint` | pintura, pintado, pintar |
+| `repair` | reparacion, reparar, reposicion, reponer, repaso |
+| `demolish` | demolicion, demoler, picado, levantado, desmontaje, quitar, derribar, quitan, desmontar, arranque, tirar |
+| `install` | instalacion, instalar, colocacion, colocar, montaje, sustitucion |
+| `paint` | pintura, pintado, pintar, esmalte, esmaltado, barnizado, barnizar, imprimacion |
 | `waterproof` | impermeabilizacion, impermeabilizar |
+| `seal` | sellado, sellar |
+| `render` | enlucido, maestreado |
 | `clean` | limpieza, limpiar |
 | `rent` | alquiler, arrendamiento |
+| `build` *(último recurso)* | formacion de, formacion en — excepto "formacion del personal", "formacion e informacion" |
+
+*Tabla generada desde `_ACTION_SYNONYMS` (2026-11-11).*
 
 **element** — prioridad: formas compuestas (p.ej. "revoco en fachada") antes
 que la genérica ("fachada") para no perder precisión cuando ambas aparecen.
@@ -201,8 +207,9 @@ fachada 24, cerrajería 20...); dos hallazgos confirmados y corregidos:
 - De las 182 líneas `composite`, solo se revisaron ejemplos representativos
   de 3 familias (pintura, gestión de residuos, fachada). El resto
   (~~demolición~~, ~~alicatado~~, ~~albañilería~~, ~~impermeabilización~~,
-  ~~carpintería~~, ~~cerrajería~~ y ~~sustitución de bajante~~ ya
-  revisadas (ver abajo), estructura) queda pendiente de revisión.
+  ~~carpintería~~, ~~cerrajería~~, ~~sustitución de bajante~~ y
+  ~~estructura~~ ya revisadas, ver abajo) — **las 8 familias quedan revisadas
+  (2026-11-11)**.
 - Se observó un problema de codificación en `concepto_original` para varias
   partidas reales (acentos mostrados como `�`) — no es un problema de
   clasificación, es un problema de origen de datos; no investigado en esta
@@ -773,4 +780,86 @@ un falso positivo (979 `sustitucion_bajante`, 27 `impermeabilizacion`).
 Queda para decidir: "repicado" ya no se expande a "reparacion", pero tampoco
 casa con el keyword "picado" (los keywords casan desde inicio de palabra);
 si debe contar como demolición hay que añadirlo al vocabulario.
+
+## Revisión de noviembre de 2026: acciones y familia `estructura`
+
+Decisiones tomadas por el usuario el 2026-11-11 a partir de
+`docs/decisiones-pendientes.md`, con las cifras medidas sobre una copia de la
+base de datos real (19.205 partidas). Verificación conjunta: 135 → 137
+patrones, 0 fuentes de patrón inválidas.
+
+### Decisión 30 — "reposición"/"reponer" es `repair`
+
+- **Expresión habitual**: "Reposición de gresite desprendido", "Reposición
+  monocapa fachada".
+- **Motivo**: reponer lo dañado forma parte de la misma reparación. Hasta
+  ahora llegaba a `repair` por el fallo de la expansión de "rep", ya corregido;
+  sin esta decisión 25 partidas se quedaban sin acción y se perdía el patrón de
+  "reposición monocapa fachada".
+
+### Decisión 31 — "formación de/en" es `build` (acción nueva, de último recurso)
+
+- **Expresión habitual**: "Suministro y formación de nuevo tabique cerámico",
+  "Formación de base de mostrador de pladur", "Formación de pendientes".
+- **Motivo**: describe ejecutar un elemento de obra nueva. La Decisión 18 lo
+  descartó por genérico; medido, el único sentido distinto real es "formación
+  del personal" (seguridad y salud), que se excluye explícitamente.
+- **Condiciones**: solo se asigna si no hay otra acción, y **no cuenta como
+  segunda acción** para marcar una partida como compuesta (si no, "Demolición
+  de pavimento y formación de pendientes" perdía su patrón).
+- **Datos**: 245 partidas sin acción la ganan (11 de presupuestos INCLUDED).
+
+### Decisión 32 — "tirar" es `demolish`
+
+- **Expresión habitual**: "Tirar tabiques existentes…", "Tirar techo de
+  escayola…".
+- **Motivo**: las Decisiones 3 y 5 lo aplazaron porque casaba dentro de
+  "re**tirar**"; desde que los keywords casan desde inicio de palabra ya no.
+  Nuevo patrón "tirar tabiques" (3 presupuestos, 550 €).
+
+### Decisión 33 — "repaso" es `repair`; "saneado" no
+
+- **Motivo**: "Repaso de grietas" es reparación. "Saneado" se propuso también,
+  pero al medirlo resultó ser un paso de preparación en pintura ("saneado de
+  zonas oxidadas + imprimación + esmalte"): volvía compuestas 3 partidas con
+  patrón sin ganar ninguna. **Descartado.**
+
+### Decisión 34 — fuera "garaje" y "parking" de `estructura`
+
+- **Motivo**: son lugares, no elementos. Eran la única señal de estructura en
+  99 partidas ("Pintura puerta vehículos garaje", "Puerta cortafuegos en
+  parking").
+
+### Decisión 35 — señales débiles de `estructura`
+
+- "hormigón", "refuerzo", "forjado" y "armadura" solo cuentan con un keyword
+  estructural fuerte (viga, pilar, zuncho, estructura…) o con **dos señales
+  débiles juntas** ("frente de forjado de hormigón", "armaduras… hormigón").
+- **Motivo**: solas aparecen en "pintura al silicato sobre hormigón",
+  "refuerzo en rejilla", "picar en el forjado para la caldereta".
+- **Implementación**: `WEAK_MODULE_KEYWORDS` en
+  `historical_partida_classifier.py`.
+
+### Decisión 36 — fuera los plurales/derivados redundantes
+
+- "vigas", "pilares", "estructural" y "dados" ya los casan "viga", "pilar",
+  "estructura" y "dado" desde inicio de palabra; contaban dos veces e inflaban
+  la confianza.
+
+### Decisión 37 — "entrevigado" es `estructura`
+
+- "viga" no lo casa (empieza a mitad de palabra).
+
+**Efecto conjunto 34-37**: 550 partidas dejan de marcarse como estructura
+(pistas de tenis, transporte de residuos de hormigón, alicatados, medianeras…)
+y 9 reparaciones reales de frente de forjado pasan a detectarse. En 157
+partidas (limpieza de óxido de armaduras, imprimación de frente de forjado)
+estructura pasa a ser el módulo principal en lugar de cerrajería.
+
+### Pendiente tras esta revisión
+
+- "chapa" no es keyword de cerrajería: "Rampa de chapa lagrimada" se queda sin
+  módulo al quitar "garaje"/"parking".
+- "muro", "solera", "losa", "cimentación" no se han evaluado como señales de
+  estructura.
 

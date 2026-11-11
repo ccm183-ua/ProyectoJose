@@ -7,7 +7,7 @@ Si añades un documento nuevo, apúntalo aquí.
 
 | Documento | Para qué sirve |
 |---|---|
-| [`decisiones-pendientes.md`](decisiones-pendientes.md) | **Todas las decisiones abiertas**, con datos medidos, opciones y recomendación. |
+| [`decisiones-pendientes.md`](decisiones-pendientes.md) | **Decisiones que siguen abiertas**, con datos, opciones y recomendación. Las ya tomadas están en `criterios-clasificacion-partidas.md` (vocabulario) y en el historial de commits. |
 
 ## Referencia (vigente)
 
@@ -35,7 +35,6 @@ Si añades un documento nuevo, apúntalo aquí.
 | [`planes/sugerir-comunidad.md`](planes/sugerir-comunidad.md) | A medias (mínimo): solo el prefill de dirección. |
 | [`superpowers/plans/2026-07-22-historico-estructurado-y-cruce-fiable.md`](superpowers/plans/2026-07-22-historico-estructurado-y-cruce-fiable.md) | 54/63 pasos. |
 | [`superpowers/plans/2026-07-22-fixes-historico-evidenciado.md`](superpowers/plans/2026-07-22-fixes-historico-evidenciado.md) | 30/35 pasos; faltan E2E y aceptación manual. |
-| [`superpowers/plans/2026-08-04-completar-vocabulario-cerrado.md`](superpowers/plans/2026-08-04-completar-vocabulario-cerrado.md) | 7/8 familias revisadas; falta `estructura`. |
 
 ## Pruebas manuales
 
@@ -56,7 +55,7 @@ Se conservan como historia; cada uno lleva una cabecera con su estado.
 | [`archivo/boceto-estado-y-vision.md`](archivo/boceto-estado-y-vision.md) | Insumo del ROADMAP. |
 | [`archivo/prompt-maestro-roadmap.md`](archivo/prompt-maestro-roadmap.md) | Insumo del ROADMAP. |
 | [`archivo/handoff-sesion-h0-h2.md`](archivo/handoff-sesion-h0-h2.md) | Histórico. |
-| `superpowers/plans/2026-08-04-paquete-contexto-ia.md`, `superpowers/specs/*` | Hechos. |
+| `superpowers/plans/2026-08-04-paquete-contexto-ia.md`, `superpowers/plans/2026-08-04-completar-vocabulario-cerrado.md`, `superpowers/specs/*` | Hechos (el de vocabulario, con las 8 familias revisadas el 2026-11-11). |
 
 ## Ramas del repositorio
 
