@@ -61,8 +61,10 @@ Se conservan como historia; cada uno lleva una cabecera con su estado.
 
 | Rama | Estado |
 |---|---|
-| `prueba-claude` | Rama de trabajo principal. |
-| `fix/bugs-revision` | Arreglos de la revisión de noviembre de 2026 (pendiente de fusionar en `prueba-claude`). |
+| `prueba-claude` | Rama de trabajo principal (en GitHub incluye el trabajo de septiembre de 2026). |
+| `integracion-noviembre` | `origin/prueba-claude` + los commits de agosto que no se subieron + la revisión de noviembre. Pendiente de pruebas manuales y de subir. |
+| `fix/bugs-revision` | Revisión de noviembre hecha sobre la base de agosto; ya integrada en `integracion-noviembre`. |
+| `h10-ui-fluida`, `r02-cobertura-modulo`, `sprint2-memoria-contexto`, `sprint3-directo` | Ramas de septiembre, ya contenidas en `prueba-claude`. |
 | `Develop`, `main`, `sistema_Aprendizaje_Presupuestos`, `Funcionalidades-(AbrirPresupuestoExistente)` | Ya contenidas en `prueba-claude`. |
 | `IA-BuscadorPlantillasPresupuestos` | Su contenido ya está en `prueba-claude` (reimplementado). |
 | `Plantillas-IA` | Botones de plantillas para la GUI wxPython; no se fusionó (habría que rehacerlo en Qt). |

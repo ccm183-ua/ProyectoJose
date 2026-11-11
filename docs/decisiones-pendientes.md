@@ -11,15 +11,20 @@
 
 ---
 
-## 1. Fusionar `fix/bugs-revision` y subir a GitHub
+## 1. Subir `integracion-noviembre` a GitHub
 
-- La rama contiene todos los arreglos de la revisión de noviembre y las
-  decisiones ya tomadas; la suite completa pasa.
-- `git push` (y `pip install`) fallan en este equipo con un error de
-  certificado SSL ("unable to get local issuer certificate"), probablemente
-  por un antivirus o proxy que inspecciona HTTPS.
-- **Recomendación**: probar la app (ver más abajo), fusionar en
-  `prueba-claude` y arreglar el certificado para poder subir.
+- **Certificado arreglado (2026-11-11)**: el error SSL lo causaba el escudo
+  web de Norton Antivirus, que firma las conexiones HTTPS con su propia raíz.
+  git usa ahora el almacén de Windows (`http.sslBackend schannel`) y pip se ha
+  actualizado a una versión que también lo usa.
+- Al conectar apareció trabajo de septiembre que no estaba en este equipo (51
+  commits en `origin/prueba-claude`), y los 13 commits de agosto de este
+  equipo nunca se habían subido. Todo está integrado en la rama
+  `integracion-noviembre`: suite completa en verde (incluidos los tests de la
+  API) y los mismos 137 patrones sobre una copia de la BD real.
+- **Recomendación**: hacer las pruebas manuales de abajo y, después, subir
+  `integracion-noviembre` y fusionarla en `prueba-claude` (por pull request,
+  como en septiembre).
 
 ## 2. Administraciones del `datos.db` antiguo
 
