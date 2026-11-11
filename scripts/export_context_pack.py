@@ -39,6 +39,18 @@ _RE_COMUNIDAD = re.compile(
     re.IGNORECASE,
 )
 
+# "C.P. BLASCO IBAÑEZ 18", "C. P. Los Olivos": la abreviatura de Comunidad de
+# Propietarios seguida del nombre/dirección de la comunidad, que en los datos
+# reales va en mayúsculas o capitalizado. Se consume "C.P." y las palabras
+# siguientes que empiecen por mayúscula o dígito (más conectores "de", "y"...
+# entre ellas), y se para en la primera palabra en minúscula, que ya es la
+# descripción de la obra. 59 conceptos reales lo tenían y no se filtraban.
+_NOMBRE_TOKEN = r"[A-ZÁÉÍÓÚÑÜ0-9][\wÁÉÍÓÚÑÜáéíóúñü.ºª/\-]*"
+_RE_COMUNIDAD_ABREV = re.compile(
+    r"\s*(?<!\w)C\.\s?P\.(?:\s+(?:" + _NOMBRE_TOKEN
+    + r"|(?:de|del|la|las|los|el|y|n[ºo]\.?)(?=\s+" + _NOMBRE_TOKEN + r")))+",
+)
+
 # CIF/NIF: letra + 8 digitos, u 8 digitos + letra.
 _RE_CIF_NIF = re.compile(r"\b[A-Za-z]\d{8}\b|\b\d{8}[A-Za-z]\b")
 
@@ -60,6 +72,11 @@ def scrub_text(text: str) -> Tuple[str, List[str]]:
     if _RE_COMUNIDAD.search(cleaned):
         cleaned = _RE_COMUNIDAD.sub("", cleaned)
         reasons.append("comunidad")
+
+    if _RE_COMUNIDAD_ABREV.search(cleaned):
+        cleaned = _RE_COMUNIDAD_ABREV.sub("", cleaned)
+        if "comunidad" not in reasons:
+            reasons.append("comunidad")
 
     if _RE_CIF_NIF.search(cleaned):
         cleaned = _RE_CIF_NIF.sub("", cleaned)
