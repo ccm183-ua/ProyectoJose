@@ -26,6 +26,10 @@ AI_PROVIDER_GEMINI = "GEMINI"
 AI_PROVIDER_DEEPSEEK = "DEEPSEEK"
 DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-flash"
+LEGACY_DEEPSEEK_MODEL_ALIASES = {
+    "deepseek-chat": "deepseek-v4-flash",
+    "deepseek-reasoner": "deepseek-v4-flash",
+}
 
 # Nombre del archivo de configuración local
 CONFIG_FILENAME = "cubiapp_config.json"
@@ -170,7 +174,11 @@ class Settings:
         self._save_config_value("gemini_model", (model or "").strip() or DEFAULT_GEMINI_MODEL)
 
     def get_deepseek_model(self) -> str:
-        return self._get_config_text("deepseek_model", DEFAULT_DEEPSEEK_MODEL)
+        model = self._get_config_text("deepseek_model", DEFAULT_DEEPSEEK_MODEL)
+        # DeepSeek retiró "deepseek-chat" y "deepseek-reasoner" el 2026-07-24;
+        # su documentación los hace corresponder con deepseek-v4-flash. Una
+        # configuración guardada antes de esa fecha fallaba en cada llamada.
+        return LEGACY_DEEPSEEK_MODEL_ALIASES.get(model.lower(), model)
 
     def save_deepseek_model(self, model: str) -> None:
         self._save_config_value("deepseek_model", (model or "").strip() or DEFAULT_DEEPSEEK_MODEL)

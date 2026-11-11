@@ -170,3 +170,27 @@ def test_use_cases_do_not_import_provider_sdk_directly(module_path):
     assert "google.genai" not in source
     assert "from google import genai" not in source
     assert "import openai" not in source
+
+
+def test_gemini_client_se_crea_con_timeout(monkeypatch):
+    """Regresión: genai.Client se creaba sin timeout y una llamada colgada
+    bloqueaba la generación sin límite."""
+    from google import genai
+
+    from src.core.ai_clients import GEMINI_TIMEOUT_MS
+
+    captured = {}
+
+    class _FakeModels:
+        def generate_content(self, **kwargs):
+            return type("R", (), {"text": "ok", "usage_metadata": None})()
+
+    class _FakeClient:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+            self.models = _FakeModels()
+
+    monkeypatch.setattr(genai, "Client", _FakeClient)
+    client = GeminiAIClient("AI-test-key-not-real", "gemini-test")
+    assert client.generate_text("hola") == "ok"
+    assert captured["http_options"].timeout == GEMINI_TIMEOUT_MS

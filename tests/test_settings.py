@@ -274,3 +274,18 @@ class TestConfigNoSeBorraAlFallarLaLectura:
         assert len(copias) == 1
         with open(os.path.join(temp_dir, copias[0]), encoding="utf-8") as f:
             assert '"gemini_api_key": "clave"' in f.read()
+
+
+@pytest.mark.parametrize("legacy", ["deepseek-chat", "deepseek-reasoner", "DeepSeek-Chat"])
+def test_alias_retirados_de_deepseek_se_migran_a_v4_flash(temp_dir, legacy):
+    """DeepSeek retiró estos alias el 2026-07-24: una config antigua no puede
+    seguir enviándolos a la API."""
+    settings = Settings(config_dir=temp_dir)
+    settings.save_deepseek_model(legacy)
+    assert Settings(config_dir=temp_dir).get_deepseek_model() == "deepseek-v4-flash"
+
+
+def test_modelo_deepseek_vigente_no_se_toca(temp_dir):
+    settings = Settings(config_dir=temp_dir)
+    settings.save_deepseek_model("deepseek-v4-pro")
+    assert Settings(config_dir=temp_dir).get_deepseek_model() == "deepseek-v4-pro"

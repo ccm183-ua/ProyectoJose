@@ -106,6 +106,7 @@ class AIProviderClient(ABC):
 
 GEMINI_MAX_RETRIES_PER_MODEL = 1
 GEMINI_RETRY_DELAY_SECONDS = 10
+GEMINI_TIMEOUT_MS = 60_000
 
 
 class GeminiAIClient(AIProviderClient):
@@ -166,7 +167,12 @@ class GeminiAIClient(AIProviderClient):
             raise ImportError("La librería 'google-genai' no está instalada. Ejecute: pip install google-genai") from exc
 
         if self._client is None:
-            self._client = genai.Client(api_key=self._api_key)
+            # Sin timeout explícito una llamada colgada bloqueaba el flujo sin
+            # límite (DeepSeek ya tenía 30 s).
+            self._client = genai.Client(
+                api_key=self._api_key,
+                http_options=types.HttpOptions(timeout=GEMINI_TIMEOUT_MS),
+            )
 
         config = types.GenerateContentConfig(
             temperature=temperature,
