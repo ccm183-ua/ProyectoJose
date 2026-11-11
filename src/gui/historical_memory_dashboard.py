@@ -1394,7 +1394,8 @@ class HistoricalMemoryDashboard(QDialog):
             "- Registros de analisis por carpeta y de reconstruccion de patrones\n\n"
             "No se borra la cache del dashboard de presupuestos por carpetas (tabla presupuesto), "
             "ni comunidades, administraciones ni contactos.\n\n"
-            "Esta accion no se puede deshacer. ¿Continuar?",
+            "Antes de borrar se guarda una copia de seguridad de la base de datos "
+            "en Documents/CubiApp/backups (before_clear_historical). ¿Continuar?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )

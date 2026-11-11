@@ -1413,25 +1413,38 @@ def clear_all_historical_analysis_data() -> Tuple[bool, str]:
     ``suggestion_template``, ``execution_module``, ``historial_presupuesto``,
     ``historical_memory_event`` (log de auditoría).
     """
+    # Backup previo obligatorio: la memoria histórica es la única fuente de
+    # verdad cuando el Excel original ya no existe (ADR 0001).
+    try:
+        from src.core.database_backup import create_database_backup
+
+        create_database_backup("before_clear_historical")
+    except Exception as e:  # noqa: BLE001 - sin backup no se borra nada
+        return False, f"No se pudo crear la copia de seguridad previa; no se ha borrado nada: {e}"
+
+    tables = (
+        "suggested_partida_pattern_source",
+        "suggested_partida_pattern",
+        "historical_partida_module",
+        "budget_module_summary",
+        "historical_budget_issue",
+        "historical_budget_enrichment",
+        "historical_partida",
+        "historical_budget",
+        "historical_analysis_run",
+        "historical_pattern_build_run",
+    )
     with database.get_connection() as conn:
         try:
             conn.execute("PRAGMA foreign_keys = ON")
             cur = conn.execute("SELECT COUNT(*) FROM historical_budget")
             n_budgets = int((cur.fetchone() or [0])[0] or 0)
-            conn.executescript(
-                """
-                DELETE FROM suggested_partida_pattern_source;
-                DELETE FROM suggested_partida_pattern;
-                DELETE FROM historical_partida_module;
-                DELETE FROM budget_module_summary;
-                DELETE FROM historical_budget_issue;
-                DELETE FROM historical_budget_enrichment;
-                DELETE FROM historical_partida;
-                DELETE FROM historical_budget;
-                DELETE FROM historical_analysis_run;
-                DELETE FROM historical_pattern_build_run;
-                """
-            )
+            # Sentencias individuales dentro de una sola transacción: el
+            # executescript anterior hacía COMMIT previo y cada DELETE iba en
+            # autocommit, así que un fallo a medias dejaba un borrado parcial.
+            conn.execute("BEGIN")
+            for table in tables:
+                conn.execute(f"DELETE FROM {table}")
             conn.commit()
             return True, str(n_budgets)
         except sqlite3.Error as e:
