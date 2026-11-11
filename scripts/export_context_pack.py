@@ -38,7 +38,9 @@ from src.core.historical_partida_features import _ACTION_SYNONYMS, _ELEMENT_SYNO
 # marcador de una direccion postal real; "C/" y "Avda." casi no se usan con
 # otro sentido. El "en" delante es opcional.
 _RE_DIRECCION = re.compile(
-    r"(?:\s+en)?\s+(?:c/|avda\.?\b)[^,]*",
+    # También al principio del texto ("C/ Mayor 12, pintura fachada"): antes
+    # se exigía un espacio delante y esas direcciones salían sin filtrar.
+    r"(?:^\s*|(?:\s+en)?\s+)(?:c/|avda\.?\b)[^,]*",
     re.IGNORECASE,
 )
 
@@ -132,6 +134,8 @@ def scrub_text(text: str) -> Tuple[str, List[str]]:
         reasons.append("email")
 
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    # Si se quitó algo al principio, no dejar la coma huérfana (", pintura").
+    cleaned = cleaned.lstrip(",;: ").strip()
     return cleaned, reasons
 
 

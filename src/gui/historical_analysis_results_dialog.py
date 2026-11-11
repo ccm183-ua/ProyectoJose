@@ -663,6 +663,8 @@ class HistoricalAnalysisResultsDialog(BusyOperationsMixin, QDialog):
             "Confirmar exclusión de memoria histórica",
             f"¿Excluir '{file_name}' del aprendizaje?\n"
             "Dejará de sugerir precio en presupuestos futuros.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
         )
         if resp != QMessageBox.StandardButton.Yes:
             return

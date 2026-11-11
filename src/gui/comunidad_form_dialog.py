@@ -182,6 +182,7 @@ class ComunidadFormDialog(QDialog):
             self, "Confirmar eliminación",
             "¿Eliminar esta administración?\n\nEsta acción no se puede deshacer.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
         )
         if resp != QMessageBox.StandardButton.Yes:
             return None
@@ -219,6 +220,7 @@ class ComunidadFormDialog(QDialog):
             self, "Confirmar eliminación",
             "¿Eliminar este contacto?\n\nEsta acción no se puede deshacer.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
         )
         if resp != QMessageBox.StandardButton.Yes:
             return None

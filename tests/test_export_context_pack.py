@@ -64,6 +64,15 @@ class TestScrubTextRemovesPersonalData:
     def test_no_toca_codigos_tecnicos_parecidos_a_cp(self, raw):
         assert scrub_text(raw) == (raw, [])
 
+    @pytest.mark.parametrize("raw,esperado", [
+        ("C/ Mayor 12, pintura fachada", "pintura fachada"),
+        ("Avda. Constitucion 45, limpieza", "limpieza"),
+    ])
+    def test_removes_direccion_al_principio_del_texto(self, raw, esperado):
+        text, reasons = scrub_text(raw)
+        assert text == esperado
+        assert "direccion" in reasons
+
     def test_removes_cif(self):
         text, reasons = scrub_text("Obra para cliente B12345678 impermeabilizacion")
         assert "B12345678" not in text
