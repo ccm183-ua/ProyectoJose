@@ -355,7 +355,7 @@ def upsert_presupuesto_finalizado(
                        num_partidas     = excluded.num_partidas,
                        fuente_datos     = excluded.fuente_datos,
                        es_finalizado    = excluded.es_finalizado,
-                       fecha_finalizacion = excluded.fecha_finalizacion,
+                       fecha_finalizacion = COALESCE(presupuesto.fecha_finalizacion, excluded.fecha_finalizacion),
                        calidad_datos    = excluded.calidad_datos,
                        motivo_incompleto = excluded.motivo_incompleto,
                        metodo_resolucion_admin = excluded.metodo_resolucion_admin,

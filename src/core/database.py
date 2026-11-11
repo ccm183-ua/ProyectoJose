@@ -15,6 +15,7 @@ Prioridad de ruta:
 """
 
 import os
+import logging
 import sqlite3
 import subprocess
 import sys
@@ -251,13 +252,32 @@ def _migrate_historical_budget_sha256_unique_index(conn: sqlite3.Connection) -> 
     """Índice único parcial: el mismo contenido de fichero (hash) no puede
     ocupar dos presupuestos históricos distintos (fixes histórico evidenciado,
     Tarea 1). NULL/'' se excluyen porque `file_sha256` no se calculaba antes
-    de esta migración y muchas filas existentes lo tienen vacío."""
-    conn.execute(
-        """CREATE UNIQUE INDEX IF NOT EXISTS idx_historical_budget_sha256_unique
-           ON historical_budget(file_sha256)
-           WHERE file_sha256 IS NOT NULL AND file_sha256 <> ''"""
-    )
-    conn.commit()
+    de esta migración y muchas filas existentes lo tienen vacío.
+
+    Si ya hay hashes repetidos, el índice no se puede crear: se registra un
+    aviso y se continúa (antes lanzaba IntegrityError en cada arranque y la
+    base de datos no se podía abrir). Los duplicados quedan visibles en el
+    diagnóstico de integridad del histórico."""
+    try:
+        conn.execute(
+            """CREATE UNIQUE INDEX IF NOT EXISTS idx_historical_budget_sha256_unique
+               ON historical_budget(file_sha256)
+               WHERE file_sha256 IS NOT NULL AND file_sha256 <> ''"""
+        )
+        conn.commit()
+    except sqlite3.IntegrityError:
+        conn.rollback()
+        dups = conn.execute(
+            """SELECT COUNT(*) FROM (
+                   SELECT file_sha256 FROM historical_budget
+                   WHERE file_sha256 IS NOT NULL AND file_sha256 <> ''
+                   GROUP BY file_sha256 HAVING COUNT(*) > 1)"""
+        ).fetchone()[0]
+        logging.getLogger(__name__).warning(
+            "No se creó el índice único de file_sha256: %d hash(es) repetidos "
+            "en historical_budget. Revisa los duplicados en el diagnóstico.",
+            dups,
+        )
 
 
 def _seed_execution_modules(conn: sqlite3.Connection) -> None:

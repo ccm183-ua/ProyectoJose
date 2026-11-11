@@ -333,3 +333,21 @@ class TestBudgetReaderSheetSelection:
             expected_numero="61-26",
         )
         assert selected is None
+
+
+def test_subtotal_e_iva_no_leidos_quedan_como_none_y_no_como_cero():
+    """Regresión: sin filas de subtotal/IVA se devolvía 0.0, que se guardaba
+    en la caché como si fuera un dato real."""
+    from src.core.budget_reader import BudgetReader
+
+    def _cell(text):
+        return {"attrs": 't="inlineStr"', "inner": f"<is><t>{text}</t></is>"}
+
+    rows = {
+        46: {
+            "A": _cell("TOTAL PRESUPUESTO, I.V.A. INCLUIDO."),
+            "I": {"attrs": "", "inner": "<v>1100</v>"},
+        }
+    }
+    totals = BudgetReader()._read_totals_from_cells(rows, [])
+    assert totals == {"subtotal": None, "iva": None, "total": 1100.0}

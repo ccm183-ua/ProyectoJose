@@ -455,8 +455,8 @@ class BudgetReader:
             iva = round(total - subtotal, 2)
 
         return {
-            "subtotal": float(subtotal) if subtotal else 0.0,
-            "iva": float(iva) if iva else 0.0,
+            "subtotal": float(subtotal) if subtotal is not None else None,
+            "iva": float(iva) if iva is not None else None,
             "total": float(total),
         }
 

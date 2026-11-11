@@ -209,3 +209,23 @@ def test_orphan_cleanup_never_deletes_finalized_snapshots(db_env, tmp_path):
     assert db_repository.get_presupuesto_por_ruta(cache) is None
     _row, partidas = _finalized_partidas(finalizado)
     assert len(partidas) == 1
+
+
+def test_refinalizar_conserva_la_fecha_de_finalizacion_original(db_env, tmp_path):
+    file_path = str(tmp_path / "obra.xlsx")
+    open(file_path, "w").close()
+    assert _make_service(_sample_data()).finalize_budget(file_path) is True
+    from src.core import database
+
+    with database.get_connection() as conn:
+        conn.execute(
+            "UPDATE presupuesto SET fecha_finalizacion = '2026-01-15 10:00:00' WHERE ruta_excel = ?",
+            (file_path,),
+        )
+        conn.commit()
+
+    assert _make_service(_sample_data()).finalize_budget(file_path) is True
+    assert _make_service(_sample_data()).refresh_budget_cache_entry(file_path) is True
+
+    row = db_repository.get_presupuesto_por_ruta(file_path)
+    assert row["fecha_finalizacion"] == "2026-01-15 10:00:00"
