@@ -136,3 +136,98 @@ def test_load_ignora_lineas_invalidas_y_las_cuenta(db_biblioteca):
 
     assert len(lib.lines) == 3
     assert lib.ignored == 1
+
+
+# ── H3: búsqueda, agrupación, cifras y orden ────────────────────────────
+
+from src.core.partida_library import (
+    WARNING_LUMP_SUM,
+    WARNING_NO_APPROVED,
+    LibraryLine,
+)
+
+
+def _line(pid, concepto_norm, precio, status="approved", unidad="m2", budget=None, fecha=None, module="fachada"):
+    return LibraryLine(
+        partida_id=pid, budget_id=budget if budget is not None else pid, proyecto=f"obra {pid}",
+        concepto=concepto_norm.upper(), concepto_norm=concepto_norm, unidad=unidad,
+        unidad_canon=canonical_unit(unidad), precio=precio, status=status, fecha=fecha, module=module,
+    )
+
+
+def test_busqueda_exige_todas_las_palabras_desde_inicio_de_palabra():
+    lib = PartidaLibrary([
+        _line(1, "impermeabilizacion de cubierta plana", 20),
+        _line(2, "alicatado de bano", 30, module="alicatado"),
+        _line(3, "impermeabilizacion de terraza", 25),
+    ])
+    conceptos = [g.concepto_norm for g in lib.search("imperm cubierta").groups]
+    assert conceptos == ["impermeabilizacion de cubierta plana"]
+    assert lib.search("atado").groups == []       # no casa dentro de "alicatado"
+
+
+def test_consulta_vacia_sin_filtros_no_devuelve_nada():
+    lib = PartidaLibrary([_line(1, "bajante pvc", 30)])
+    assert lib.search("").groups == []
+    assert [g.concepto_norm for g in lib.search("", module="fachada").groups] == ["bajante pvc"]
+
+
+def test_agrupa_por_concepto_y_unidad_canonica_con_cifras():
+    lib = PartidaLibrary([
+        _line(1, "bajante pvc", 30, unidad="ml", fecha=date(2026, 1, 10)),
+        _line(2, "bajante pvc", 34, unidad="m", status="unreviewed", fecha=date(2026, 3, 1)),
+        _line(3, "bajante pvc", 50, unidad="M", status="unreviewed"),
+        _line(4, "bajante pvc", 90, unidad="ud"),          # otra unidad: otro grupo
+    ])
+    grupos = {g.unidad_canon: g for g in lib.search("bajante").groups}
+    g = grupos["m"]
+    assert len(g.lines) == 3 and g.n_budgets == 3
+    assert (g.price_min, g.price_median, g.price_max) == (30, 34, 50)
+    assert g.approved_median == 30
+    assert g.status == "approved"
+    assert g.fecha == date(2026, 3, 1)
+    assert (g.proposed_price, g.price_basis) == (30, "median_approved")
+    assert g.warnings == ()
+
+
+def test_sin_aprobadas_propone_la_mediana_de_todas_con_aviso():
+    lib = PartidaLibrary([
+        _line(1, "picado fachada", 10, status="unreviewed", unidad="p.a."),
+        _line(2, "picado fachada", 20, status="unreviewed", unidad="P.A."),
+    ])
+    g = lib.search("picado").groups[0]
+    assert (g.proposed_price, g.price_basis, g.approved_median) == (15, "median_all", None)
+    assert WARNING_NO_APPROVED in g.warnings and WARNING_LUMP_SUM in g.warnings
+
+
+def test_filtros_de_estado_unidad_y_modulo():
+    lib = PartidaLibrary([
+        _line(1, "pintura escalera", 100, status="approved", unidad="p.a.", module="pintura"),
+        _line(2, "pintura fachada", 200, status="ineligible", unidad="m2", module="pintura"),
+        _line(3, "pintura techo", 50, status="unreviewed", unidad="m2", module="pintura"),
+    ])
+    assert {g.concepto_norm for g in lib.search("pintura", status_filter="approved").groups} == {"pintura escalera"}
+    assert {g.concepto_norm for g in lib.search("pintura", status_filter="no_ineligible").groups} == {
+        "pintura escalera", "pintura techo"}
+    assert {g.concepto_norm for g in lib.search("pintura", unit="m2").groups} == {"pintura fachada", "pintura techo"}
+    assert lib.search("pintura", module="fachada").groups == []
+
+
+def test_orden_aprobadas_primero_luego_obras_y_fecha():
+    lib = PartidaLibrary([
+        _line(1, "sellado junta a", 10, status="unreviewed", budget=1),
+        _line(2, "sellado junta a", 11, status="unreviewed", budget=2),
+        _line(3, "sellado junta b", 12, status="approved", budget=3),
+        _line(4, "sellado junta c", 13, status="unreviewed", budget=4, fecha=date(2026, 5, 1)),
+    ])
+    assert [g.concepto_norm for g in lib.search("sellado").groups] == [
+        "sellado junta b",   # evidencia aprobada
+        "sellado junta a",   # 2 obras
+        "sellado junta c",   # 1 obra, con fecha
+    ]
+
+
+def test_limite_de_grupos():
+    lib = PartidaLibrary([_line(i, f"partida {i:03d}", 10) for i in range(250)])
+    result = lib.search("partida")
+    assert len(result.groups) == 200 and result.total_groups == 250 and result.truncated

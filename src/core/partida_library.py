@@ -8,13 +8,15 @@ from __future__ import annotations
 
 import math
 import re
+import statistics
 import unicodedata
-from dataclasses import dataclass
+from collections import Counter, defaultdict
+from dataclasses import dataclass, field
 from datetime import date, timedelta
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from src.core import database
-from src.core.work_type_normalizer import normalize_text
+from src.core.work_type_normalizer import keyword_in_text, normalize_text
 
 STATUS_RANK: Dict[str, int] = {"approved": 0, "unreviewed": 1, "ineligible": 2}
 STATUS_LABELS: Dict[str, str] = {"approved": "aprobada", "unreviewed": "sin revisar", "ineligible": "no apta"}
@@ -97,6 +99,89 @@ class LibraryLine:
     module: str
 
 
+WARNING_NO_APPROVED = "sin evidencia aprobada"
+WARNING_LUMP_SUM = "partida alzada: revisa el alcance"
+WARNING_UNKNOWN_UNIT = "unidad no reconocida"
+MAX_GROUPS = 200
+
+
+@dataclass
+class LibraryGroup:
+    concepto_norm: str
+    unidad_canon: str
+    lines: List[LibraryLine]
+    n_budgets: int = 0
+    price_min: float = 0.0
+    price_median: float = 0.0
+    price_max: float = 0.0
+    approved_median: Optional[float] = None
+    status: str = "ineligible"
+    fecha: Optional[date] = None
+    module: str = ""
+    proposed_price: float = 0.0
+    price_basis: str = "median_all"
+    warnings: Tuple[str, ...] = field(default_factory=tuple)
+
+    @property
+    def representative(self) -> LibraryLine:
+        """Línea cuyo texto se usa al insertar: mejor estado y, a igualdad, la más reciente."""
+        return min(
+            self.lines,
+            key=lambda l: (STATUS_RANK[l.status], -(l.fecha.toordinal() if l.fecha else 0), l.partida_id),
+        )
+
+
+@dataclass
+class SearchResult:
+    groups: List[LibraryGroup]
+    total_groups: int
+
+    @property
+    def truncated(self) -> bool:
+        return self.total_groups > len(self.groups)
+
+
+def _build_group(concepto_norm: str, unidad_canon: str, lines: List[LibraryLine]) -> LibraryGroup:
+    prices = [l.precio for l in lines]
+    approved = [l.precio for l in lines if l.status == "approved"]
+    fechas = [l.fecha for l in lines if l.fecha]
+    modules = Counter(l.module for l in lines if l.module)
+    group = LibraryGroup(
+        concepto_norm=concepto_norm,
+        unidad_canon=unidad_canon,
+        lines=lines,
+        n_budgets=len({l.budget_id for l in lines}),
+        price_min=min(prices),
+        price_median=statistics.median(prices),
+        price_max=max(prices),
+        approved_median=statistics.median(approved) if approved else None,
+        status=min((l.status for l in lines), key=STATUS_RANK.__getitem__),
+        fecha=max(fechas) if fechas else None,
+        module=modules.most_common(1)[0][0] if modules else "",
+    )
+    warnings: List[str] = []
+    if group.approved_median is not None:
+        group.proposed_price, group.price_basis = group.approved_median, "median_approved"
+    else:
+        group.proposed_price, group.price_basis = group.price_median, "median_all"
+        warnings.append(WARNING_NO_APPROVED)
+    if unidad_canon == "p.a.":
+        warnings.append(WARNING_LUMP_SUM)
+    if unidad_canon == "?":
+        warnings.append(WARNING_UNKNOWN_UNIT)
+    group.warnings = tuple(warnings)
+    return group
+
+
+def _group_sort_key(group: LibraryGroup):
+    return (
+        0 if group.approved_median is not None else 1,
+        -group.n_budgets,
+        -(group.fecha.toordinal() if group.fecha else 0),
+        group.concepto_norm,
+    )
+
+
 _LOAD_SQL = """
     SELECT hp.id, hp.historical_budget_id, COALESCE(hb.nombre_proyecto, ''),
            COALESCE(NULLIF(hp.concepto_original, ''), hp.titulo, ''),
@@ -143,4 +228,31 @@ class PartidaLibrary:
                 module=(module or "").strip(),
             ))
         return cls(lines, ignored)
+
+    def search(self, query: str = "", module: str = "", unit: str = "",
+               status_filter: str = "all", limit: int = MAX_GROUPS) -> SearchResult:
+        """Grupos que contienen todas las palabras de `query` desde inicio de palabra.
+
+        `status_filter`: "all", "approved" o "no_ineligible". Sin texto ni
+        filtros no devuelve nada (no se listan las ~17.000 partidas).
+        """
+        tokens = normalize_text(query or "").split()
+        if not tokens and not module and not unit:
+            return SearchResult([], 0)
+        buckets: Dict[Tuple[str, str], List[LibraryLine]] = defaultdict(list)
+        for line in self.lines:
+            if module and line.module != module:
+                continue
+            if unit and line.unidad_canon != unit:
+                continue
+            if status_filter == "approved" and line.status != "approved":
+                continue
+            if status_filter == "no_ineligible" and line.status == "ineligible":
+                continue
+            if not all(keyword_in_text(t, line.concepto_norm) for t in tokens):
+                continue
+            buckets[(line.concepto_norm, line.unidad_canon)].append(line)
+        groups = [_build_group(c, u, ls) for (c, u), ls in buckets.items()]
+        groups.sort(key=_group_sort_key)
+        return SearchResult(groups[:limit], len(groups))
 
