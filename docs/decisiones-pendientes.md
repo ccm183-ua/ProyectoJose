@@ -45,6 +45,9 @@
   "muro", 29 "solera", 24 "losa", 9 "cimentación").
 - **Recomendación**: revisarlas con el mismo método (muestra real → decisión →
   test → medir patrones) cuando haya tiempo; ninguna es urgente.
+- **Biblioteca de partidas**: medir con el uso real si los grupos por concepto
+  normalizado exacto se quedan cortos (variantes de redacción de la misma
+  partida) antes de diseñar la mejora 2.
 
 ## 4. Seguridad de la API (H4)
 
