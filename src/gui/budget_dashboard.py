@@ -1772,7 +1772,7 @@ class BudgetDashboardFrame(QMainWindow):
         if apply_reviewed_partidas(svc, ruta, selected, MODE_APPEND):
             svc.finalize_budget(ruta, estado=self._current_state() or "")
             QMessageBox.information(self, "Éxito", f"{len(selected)} partidas añadidas.")
-            self._load_data()
+            self._refresh_rows([ruta])
         else:
             QMessageBox.critical(self, "Error", "Error al añadir partidas.")
 

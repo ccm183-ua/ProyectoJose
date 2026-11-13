@@ -160,6 +160,7 @@ def test_dashboard_anade_desde_la_biblioteca_sin_duplicados(qapp, monkeypatch):
     dash = bd.BudgetDashboardFrame.__new__(bd.BudgetDashboardFrame)
     dash._current_state = lambda: "PRESUPUESTADO"
     dash._load_data = lambda: None
+    dash._refresh_rows = lambda rutas, on_done=None: None
     bd.BudgetDashboardFrame._edit_add_from_library(dash, "C:/obra/p.xlsx")
 
     assert [p["titulo"] for p in escritas] == ["Pintura escalera"]
