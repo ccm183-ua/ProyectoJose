@@ -19,6 +19,7 @@ import shutil
 import subprocess
 import sys
 import threading
+from datetime import date
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
@@ -30,6 +31,8 @@ from PySide6.QtWidgets import (
 
 from src.core import folder_scanner
 from src.core.budget_cache import _wait_for_excel_change, cleanup_orphaned_cache
+from src.core.obra_planning import aviso_text, color_category, duracion_text, retraso_text
+from src.core.obra_planning_service import PLANNING_STATES, enrich_with_planning
 from src.core.project_data_resolver import build_relation_index, resolve_projects
 from src.core.settings import Settings
 from src.gui import theme
@@ -90,6 +93,26 @@ _TAB_ORDER = [
 _STATE_FOLDERS = list(folder_scanner.STATE_FOLDER_NAMES)
 
 _CENTER_BUDGET_COLS = {0, 6, 7, 8, 9}
+
+# ── Planificación de obras (pieza A) ─────────────────────────────
+# Columnas que se añaden al final (índices lógicos) y se muestran detrás de
+# "Proyecto". Ocultar/mostrar columnas por índice no se ve afectado.
+_PLANNING_COLUMNS = {
+    "EJECUTAR": [("Inicio previsto", 110), ("Fin previsto", 100), ("Aviso", 170)],
+    "EJECUTANDO": [("Inicio real", 100), ("Fin previsto", 100), ("Retraso", 90)],
+    "TERMINADO": [("Inicio real", 100), ("Fin real", 100), ("Duración", 90)],
+}
+_PLANNING_VISUAL_START = 2  # justo detrás de "Proyecto"
+
+
+def _columns_for_state(state_name: str) -> list:
+    return _COLUMNS + _PLANNING_COLUMNS.get((state_name or "").upper(), [])
+
+
+def _fmt_date(value, aproximada: bool = False) -> str:
+    if not value:
+        return ""
+    return ("≈ " if aproximada else "") + value.strftime("%d/%m/%Y")
 
 
 def _sort_tabs(states: list[str]) -> list[str]:
@@ -178,6 +201,8 @@ class BudgetDashboardFrame(QMainWindow):
         self._explorer_mode: bool = False
         self._show_extra_columns: bool = True
         self._excel_watchers: dict[str, threading.Event] = {}
+        # Números de proyecto repetidos en el último escaneo completo (no se planifican).
+        self._planning_duplicates: set[str] = set()
         # Excels en los que el usuario ya dijo "No" a finalizar al guardar.
         self._excel_no_finalize: set[str] = set()
 
@@ -398,7 +423,15 @@ class BudgetDashboardFrame(QMainWindow):
                 else:
                     scanned = folder_scanner.scan_projects(state_dir)
                     data[state] = resolve_projects(scanned, rel_index, state)
-            return rel_index, states, data
+            duplicates = set()
+            if not explorer:
+                try:
+                    # Planificación de obras: una consulta en bloque y detección de
+                    # obras movidas de estado fuera de la app (solo en recarga completa).
+                    duplicates = enrich_with_planning(data, date.today(), reconcile=True)
+                except Exception:
+                    logger.exception("No se pudo cargar la planificación de obras")
+            return rel_index, states, data, duplicates
 
         def _on_done(ok, payload):
             self._set_toolbar_enabled(True)
@@ -406,7 +439,8 @@ class BudgetDashboardFrame(QMainWindow):
                 self._view_ctx = None
                 self._show_empty_state(f"Error al cargar: {payload}")
                 return
-            rel_index, states, prefetched = payload
+            rel_index, states, prefetched, duplicates = payload
+            self._planning_duplicates = duplicates
             self._relation_index = rel_index
             if not states:
                 self._view_ctx = None
@@ -447,12 +481,22 @@ class BudgetDashboardFrame(QMainWindow):
             return
 
         rel_index = self._relation_index
+        known_duplicates = set(getattr(self, "_planning_duplicates", set()))
 
         def _work():
-            return {
+            resolved = {
                 state: resolve_projects([scanned for _, scanned in items], rel_index, state)
                 for state, items in jobs.items()
             }
+            try:
+                # Las filas refrescadas conservan su planificación (sin reconciliar:
+                # estas acciones no mueven carpetas). Va en el dict que devuelve
+                # _work para que _done la sustituya junto con el resto de la fila.
+                enrich_with_planning(resolved, date.today(), reconcile=False,
+                                     known_duplicates=known_duplicates)
+            except Exception:
+                logger.exception("No se pudo cargar la planificación de obras")
+            return resolved
 
         def _done(ok, payload):
             try:
@@ -559,10 +603,11 @@ class BudgetDashboardFrame(QMainWindow):
                     resolved = resolve_projects(scanned, self._relation_index, state_name)
                 self._tab_data[state_name] = resolved
                 table = self._create_base_table(
-                    tab_widget, _COLUMNS,
+                    tab_widget, _columns_for_state(state_name),
                     self._on_item_dblclick,
                     self._on_context_menu, state_name,
                 )
+                self._place_planning_columns(table, state_name)
                 self._apply_extra_columns_visibility(table)
 
             saved = ctx["tabs"].get(state_name)
@@ -600,6 +645,95 @@ class BudgetDashboardFrame(QMainWindow):
                 cleanup_orphaned_cache(all_rutas)
 
         self._update_buttons()
+
+    def _fill_planning_cells(self, table, row, proj, state_name):
+        """Rellena las columnas de planificación de una fila (si la pestaña las tiene)."""
+        state = (state_name or "").upper()
+        if state not in _PLANNING_COLUMNS:
+            return
+        base = len(_COLUMNS)
+        hoy = date.today()
+        plan = proj.get("planificacion") or {}
+
+        def _date_item(value, aproximada=False):
+            return _SortableItem(_fmt_date(value, aproximada), value.isoformat() if value else "")
+
+        if proj.get("planificacion_duplicado"):
+            for k in range(3):
+                item = _SortableItem("nº repetido" if k == 0 else "", "")
+                item.setForeground(QColor(theme.TEXT_TERTIARY))
+                item.setToolTip(
+                    "Hay otra carpeta con el mismo número de proyecto: renómbrala para "
+                    "poder planificar esta obra."
+                )
+                table.setItem(row, base + k, item)
+            return
+
+        if state == "EJECUTAR":
+            margen = plan.get("margen_aviso_dias")
+            if margen is None:
+                margen = self._planning_margin()
+            inicio = plan.get("inicio_previsto")
+            propuesta = proj.get("planificacion_propuesta")
+            if inicio is None and propuesta:
+                item_inicio = _SortableItem(
+                    _fmt_date(propuesta[0], propuesta[1]), propuesta[0].isoformat()
+                )
+                font = item_inicio.font()
+                font.setItalic(True)
+                item_inicio.setFont(font)
+                item_inicio.setForeground(QColor(theme.TEXT_TERTIARY))
+                item_inicio.setToolTip(
+                    "Fecha propuesta desde el nombre de la carpeta. Haz doble clic para confirmarla."
+                )
+            else:
+                item_inicio = _date_item(inicio)
+            aviso = aviso_text(inicio, plan.get("avisado_en"), margen, hoy)
+            item_aviso = _SortableItem(aviso, inicio.isoformat() if inicio else "")
+            categoria = color_category(inicio, margen, hoy) if not plan.get("avisado_en") else ""
+            if categoria:
+                color = theme.ERROR if categoria == "late" else theme.WARNING
+                item_inicio.setForeground(theme.qcolor(color))
+                item_aviso.setForeground(theme.qcolor(color))
+            items = [item_inicio, _date_item(plan.get("fin_previsto")), item_aviso]
+        elif state == "EJECUTANDO":
+            retraso = retraso_text(plan.get("fin_previsto"), hoy)
+            fin_prev = plan.get("fin_previsto")
+            item_retraso = _SortableItem(retraso, (hoy - fin_prev).days if retraso else -1)
+            if retraso:
+                item_retraso.setForeground(theme.qcolor(theme.ERROR))
+            items = [
+                _date_item(plan.get("inicio_real"), plan.get("inicio_real_aproximado")),
+                _date_item(plan.get("fin_previsto")),
+                item_retraso,
+            ]
+        else:  # TERMINADO
+            duracion = duracion_text(plan.get("inicio_real"), plan.get("fin_real"))
+            dias = (plan["fin_real"] - plan["inicio_real"]).days if duracion else -1
+            items = [
+                _date_item(plan.get("inicio_real"), plan.get("inicio_real_aproximado")),
+                _date_item(plan.get("fin_real"), plan.get("fin_real_aproximado")),
+                _SortableItem(duracion, dias),
+            ]
+        for k, item in enumerate(items):
+            if not item.toolTip():
+                item.setToolTip("Doble clic para editar la planificación de la obra.")
+            table.setItem(row, base + k, item)
+
+    def _planning_margin(self) -> int:
+        try:
+            return self._settings.get_obra_margen_aviso_dias()
+        except Exception:
+            return 7
+
+    @staticmethod
+    def _place_planning_columns(table, state_name):
+        """Muestra las columnas de planificación justo detrás de "Proyecto"."""
+        extra = _PLANNING_COLUMNS.get((state_name or "").upper(), [])
+        hdr = table.horizontalHeader()
+        for k in range(len(extra)):
+            logical = len(_COLUMNS) + k
+            hdr.moveSection(hdr.visualIndex(logical), _PLANNING_VISUAL_START + k)
 
     def _create_base_table(self, parent, columns, dblclick_handler, ctx_menu_handler, state_name):
         """Crea y configura un QTableWidget con las propiedades comunes a ambos modos."""
@@ -929,6 +1063,7 @@ class BudgetDashboardFrame(QMainWindow):
                     tip += f"\nDetalle: {motivo}"
                 item_calidad.setToolTip(tip)
 
+            self._fill_planning_cells(table, i, proj, state_name)
             self._align_budget_row_items(table, i)
 
         # Re-habilitar sort conservando el orden elegido (por defecto Nº descendente)
@@ -1042,6 +1177,11 @@ class BudgetDashboardFrame(QMainWindow):
 
         menu = QMenu(self)
 
+        if state_name.upper() in _PLANNING_COLUMNS:
+            act_plan = menu.addAction("Planificación…")
+            act_plan.triggered.connect(self._on_planning)
+            menu.addSeparator()
+
         # Sub-menú "Mover a..."
         move_menu = menu.addMenu("Mover a...")
         for target_state in _STATE_FOLDERS:
@@ -1103,7 +1243,7 @@ class BudgetDashboardFrame(QMainWindow):
             dest_folder = os.path.join(self._root_path, to_state, folder_name)
             if os.path.exists(dest_folder):
                 continue
-            valid_moves.append((src_folder, dest_folder, folder_name))
+            valid_moves.append((src_folder, dest_folder, str(project.get("numero") or "").strip()))
 
         if not valid_moves:
             QMessageBox.warning(
@@ -1120,14 +1260,24 @@ class BudgetDashboardFrame(QMainWindow):
         if confirm != QMessageBox.StandardButton.Yes:
             return
 
+        from src.core.repositories.obra_planificacion_repository import record_state_change
+
         moved = 0
         failed = 0
-        for src_folder, dest_folder, _folder_name in valid_moves:
+        duplicates = getattr(self, "_planning_duplicates", set())
+        for src_folder, dest_folder, numero in valid_moves:
             try:
                 shutil.move(src_folder, dest_folder)
                 moved += 1
             except Exception:
                 failed += 1
+                continue
+            # Planificación: al pasar a EJECUTANDO/TERMINADO queda la fecha real
+            # (exacta, porque el movimiento lo hace la app ahora mismo).
+            if numero and numero not in duplicates:
+                err = record_state_change(numero, to_state.upper(), date.today(), aproximada=False)
+                if err:
+                    logger.warning("No se pudo registrar la fecha de %s: %s", numero, err)
 
         QMessageBox.information(
             self, "Mover proyectos",
@@ -1286,8 +1436,59 @@ class BudgetDashboardFrame(QMainWindow):
             self._btn_edit.setEnabled(False)
             self._btn_regen_fields.setEnabled(False)
 
-    def _on_item_dblclick(self):
+    def _on_item_dblclick(self, index=None):
+        """Doble clic: en una columna de planificación edita las fechas; en el resto, vista previa."""
+        state = (self._current_state() or "").upper()
+        if (
+            index is not None
+            and state in _PLANNING_COLUMNS
+            and index.column() >= len(_COLUMNS)
+        ):
+            self._on_planning()
+            return
         self._on_preview()
+
+    def _on_planning(self):
+        """Edita la planificación de la obra (o de varias a la vez) seleccionada."""
+        from src.core.repositories.obra_planificacion_repository import upsert_plan
+        from src.gui.obra_planning_dialog import ObraPlanningDialog
+
+        selected = self._get_selected_many()
+        if not selected:
+            return
+        if any(s.get("planificacion_duplicado") for s in selected):
+            QMessageBox.warning(
+                self, "Planificación",
+                "Alguna obra seleccionada tiene un número de proyecto repetido o vacío. "
+                "Renombra su carpeta para poder planificarla.",
+            )
+            return
+        varias = len(selected) > 1
+        first = selected[0]
+        if varias:
+            titulo = f"{len(selected)} obras seleccionadas: se aplicarán las mismas fechas previstas."
+            plan, propuesta = {}, None
+        else:
+            titulo = os.path.basename(os.path.normpath(first.get("ruta_carpeta") or "")) or first.get("numero", "")
+            plan, propuesta = first.get("planificacion") or {}, first.get("planificacion_propuesta")
+        dlg = ObraPlanningDialog(
+            self, titulo=titulo, plan=plan, margen_general=self._planning_margin(),
+            propuesta=propuesta, varias=varias,
+        )
+        if dlg.exec() != 1 or dlg.get_changes() is None:
+            return
+        changes = dlg.get_changes()
+        errores = [
+            err for s in selected
+            if (err := upsert_plan(str(s.get("numero") or ""), **changes))
+        ]
+        if errores:
+            QMessageBox.critical(self, "Planificación", f"No se pudo guardar:\n{errores[0]}")
+        rutas = [s.get("ruta_excel") for s in selected if s.get("ruta_excel")]
+        if rutas:
+            self._refresh_rows(rutas)
+        else:
+            self._load_data()
 
     # ------------------------------------------------------------------
     # Acciones
