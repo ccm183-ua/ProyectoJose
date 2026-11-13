@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
 from src.core import folder_scanner
 from src.core.budget_cache import _wait_for_excel_change, cleanup_orphaned_cache
 from src.core.obra_planning import aviso_text, color_category, duracion_text, retraso_text
-from src.core.obra_planning_service import PLANNING_STATES, enrich_with_planning
+from src.core.obra_planning_service import PLANNING_STATES, enrich_with_planning, planning_key
 from src.core.project_data_resolver import build_relation_index, resolve_projects
 from src.core.settings import Settings
 from src.gui import theme
@@ -659,13 +659,16 @@ class BudgetDashboardFrame(QMainWindow):
             return _SortableItem(_fmt_date(value, aproximada), value.isoformat() if value else "")
 
         if proj.get("planificacion_duplicado"):
+            donde = ", ".join(proj.get("planificacion_duplicado_en") or [])
+            tip = (
+                "Hay otra carpeta con el mismo número de proyecto"
+                + (f" (en: {donde})" if donde else "")
+                + ". Renombra o elimina la que sobre para poder planificar esta obra."
+            )
             for k in range(3):
                 item = _SortableItem("nº repetido" if k == 0 else "", "")
                 item.setForeground(QColor(theme.TEXT_TERTIARY))
-                item.setToolTip(
-                    "Hay otra carpeta con el mismo número de proyecto: renómbrala para "
-                    "poder planificar esta obra."
-                )
+                item.setToolTip(tip)
                 table.setItem(row, base + k, item)
             return
 
@@ -1243,7 +1246,7 @@ class BudgetDashboardFrame(QMainWindow):
             dest_folder = os.path.join(self._root_path, to_state, folder_name)
             if os.path.exists(dest_folder):
                 continue
-            valid_moves.append((src_folder, dest_folder, str(project.get("numero") or "").strip()))
+            valid_moves.append((src_folder, dest_folder, planning_key(project)))
 
         if not valid_moves:
             QMessageBox.warning(
@@ -1480,7 +1483,7 @@ class BudgetDashboardFrame(QMainWindow):
         changes = dlg.get_changes()
         errores = [
             err for s in selected
-            if (err := upsert_plan(str(s.get("numero") or ""), **changes))
+            if (err := upsert_plan(planning_key(s), **changes))
         ]
         if errores:
             QMessageBox.critical(self, "Planificación", f"No se pudo guardar:\n{errores[0]}")

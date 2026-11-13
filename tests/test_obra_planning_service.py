@@ -62,3 +62,25 @@ def test_reconcilia_solo_si_se_pide(db):
     enrich_with_planning(data, hoy=HOY, reconcile=True)
     assert get_planes(["107-26"])["107-26"]["estado_conocido"] == "EJECUTANDO"
     assert data["EJECUTANDO"][0]["planificacion"]["inicio_real"] is None   # primer escaneo
+
+
+def test_identidad_con_sufijo_desde_el_nombre_de_la_carpeta(db):
+    from src.core.obra_planning_service import planning_key
+
+    assert planning_key({"numero": "160-26", "ruta_carpeta": "C:/r/PRESUPUESTADO/160-26-2 C.P. DR. BERGEZ"}) == "160-26-2"
+    assert planning_key({"numero": "160-26", "ruta_carpeta": "C:/r/PRESUPUESTADO/160-26 C.P. DR. BERGEZ"}) == "160-26"
+    assert planning_key({"numero": "42-26", "ruta_carpeta": ""}) == "42-26"
+
+
+def test_subpresupuestos_no_cuentan_como_repetidos_y_se_indica_donde_esta_la_copia(db):
+    data = {
+        "EJECUTAR": [_row("42-26", "42-26-2 C.P. FELIPE HERRERO (ATORNILLAR VENTANAS)"),
+                     _row("127-25", "127-25 C.P. TENIENTE LLORCA SE EJECUTARÁ EN JULIO'26")],
+        "TERMINADO": [_row("42-26", "42-26 C.P. FELIPE HERRERO (REP. FACHADA)"),
+                      _row("127-25", "127-25 C.P. TENIENTE LLORCA")],
+    }
+    duplicados = enrich_with_planning(data, hoy=HOY, reconcile=False)
+    assert duplicados == {"127-25"}
+    sub, copia = data["EJECUTAR"]
+    assert not sub["planificacion_duplicado"]
+    assert copia["planificacion_duplicado"] and copia["planificacion_duplicado_en"] == ["EJECUTAR", "TERMINADO"]

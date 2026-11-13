@@ -47,9 +47,12 @@ previo como las anteriores). No se guarda nada en el Excel.
 | `estado_conocido` | TEXT | último estado visto (para detectar movimientos externos) |
 | `actualizado_en` | TEXT | marca de tiempo |
 
-**Identidad**: `numero_proyecto`. Si en el escaneo dos carpetas comparten
+**Identidad**: el número al principio del nombre de la carpeta, **con sufijo de
+subpresupuesto** ("160-26-2"); el escáner del dashboard lo recorta a "160-26",
+pero son obras distintas (con datos reales: de 8 números "repetidos" se pasa
+a 5 repeticiones reales). Si en el escaneo dos carpetas comparten
 número, ninguna de ellas lee ni escribe planificación: la tabla muestra
-"nº repetido" en sus celdas de fecha. Una carpeta sin número no se planifica.
+"nº repetido" en sus celdas de fecha, con los estados donde está la otra copia. Una carpeta sin número no se planifica.
 
 **Fecha propuesta desde el nombre de la carpeta** (no se guarda sola):
 

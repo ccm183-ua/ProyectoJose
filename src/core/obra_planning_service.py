@@ -8,7 +8,8 @@ conexión por obra.
 from __future__ import annotations
 
 import os
-from collections import Counter
+import re
+from collections import Counter, defaultdict
 from datetime import date
 from typing import Dict, Iterable, List, Optional, Set
 
@@ -19,13 +20,27 @@ PLANNING_STATES = ("EJECUTAR", "EJECUTANDO", "TERMINADO")
 PROPOSAL_STATE = "EJECUTAR"
 
 
-def _numero(row: Dict) -> str:
-    return str(row.get("numero") or "").strip()
+# Número al principio del nombre de la carpeta, con sufijo de subpresupuesto
+# ("160-26-2"): el escáner del dashboard lo recorta a "160-26", pero para
+# planificar son obras distintas.
+_KEY_RE = re.compile(r"^\s*(\d+-\d+(?:-\d+)?)")
 
 
 def _folder_name(row: Dict) -> str:
     carpeta = row.get("ruta_carpeta") or ""
     return os.path.basename(os.path.normpath(carpeta)) if carpeta else str(row.get("nombre_proyecto") or "")
+
+
+def planning_key(row: Dict) -> str:
+    """Identidad de la obra para planificar: número con sufijo del nombre de la
+    carpeta; si no se puede leer, el número que da el escáner."""
+    match = _KEY_RE.match(_folder_name(row))
+    if match:
+        return match.group(1)
+    return str(row.get("numero") or "").strip()
+
+
+_numero = planning_key
 
 
 def enrich_with_planning(
@@ -47,6 +62,11 @@ def enrich_with_planning(
     """
     conteo = Counter(_numero(r) for rows in data.values() for r in rows if _numero(r))
     duplicados = {n for n, c in conteo.items() if c > 1} | set(known_duplicates or ())
+    ubicaciones = defaultdict(set)
+    for estado, rows in data.items():
+        for r in rows:
+            if _numero(r) in duplicados:
+                ubicaciones[_numero(r)].add(estado)
 
     if reconcile:
         reconcile_scan({estado: [_numero(r) for r in rows] for estado, rows in data.items()}, hoy)
@@ -64,6 +84,7 @@ def enrich_with_planning(
             plan = {} if repetido else planes.get(numero, {})
             row["planificacion"] = plan
             row["planificacion_duplicado"] = repetido
+            row["planificacion_duplicado_en"] = sorted(ubicaciones.get(numero, ())) if repetido else []
             propuesta = None
             if estado == PROPOSAL_STATE and not repetido and not plan.get("inicio_previsto"):
                 propuesta = date_from_folder_name(_folder_name(row))
