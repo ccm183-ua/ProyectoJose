@@ -32,7 +32,9 @@ from src.core.db_repository import (
     buscar_administracion_por_nombre,
     buscar_comunidad_por_nombre,
     get_presupuesto_por_ruta,
+    get_presupuestos_por_rutas,
     limpiar_presupuestos_huerfanos,
+    marcar_verificacion_presupuesto,
     upsert_presupuesto,
 )
 from src.utils.budget_utils import (
@@ -43,6 +45,23 @@ from src.utils.budget_utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# Súbela cuando el lector aprenda a extraer algo nuevo (p. ej. otro formato de
+# totales): invalida las verificaciones guardadas y cada Excel se relee una vez.
+READER_REVISION = "1"
+
+
+def _verification_key(mtime_iso: str) -> str:
+    """Clave con la que se recuerda la comprobación de hoja de un Excel."""
+    return f"{READER_REVISION}|{mtime_iso}"
+
+
+def _mark_verified(ruta_excel: str, mtime_iso: str, has_match: Optional[bool]) -> None:
+    try:
+        marcar_verificacion_presupuesto(ruta_excel, _verification_key(mtime_iso), has_match)
+    except Exception:
+        logger.debug("No se pudo marcar la verificación de %s", ruta_excel)
 
 
 _NUMERIC_TEXT_RE = re.compile(r"^\s*\d+(?:[.,]\d+)?\s*$")
@@ -190,6 +209,10 @@ def sync_presupuestos(
     """
     reader = BudgetReader()
     result: List[Dict] = []
+    # Una sola consulta para toda la pestaña en vez de una conexión por proyecto.
+    cache_by_ruta = get_presupuestos_por_rutas(
+        [p.get("ruta_excel", "") for p in scanned_projects]
+    )
 
     for proj in scanned_projects:
         numero = proj.get("numero_proyecto", "")
@@ -212,7 +235,7 @@ def sync_presupuestos(
             continue
 
         # Buscar en cache
-        cached = get_presupuesto_por_ruta(ruta_excel)
+        cached = cache_by_ruta.get(ruta_excel.strip())
 
         # Si el presupuesto ya está finalizado en DB, el escaneo no debe
         # sobreescribir su contenido aunque el Excel haya cambiado. Pero
@@ -238,6 +261,19 @@ def sync_presupuestos(
             continue
 
         if cached and cached.get("fecha_modificacion_excel") == mtime_actual:
+            if cached.get("clave_verificacion") == _verification_key(mtime_actual):
+                # Ya se comprobó la hoja (y se aplicó la política) con este mtime
+                # y esta revisión del lector: no hace falta volver a abrir el Excel.
+                if cached.get("estado") != state_name and state_name:
+                    cached["estado"] = state_name
+                    try:
+                        actualizar_estado_presupuesto(ruta_excel, state_name)
+                    except Exception:
+                        logger.debug("No se pudo actualizar estado en cache para %s", ruta_excel)
+                _fill_entry_from_cache(entry, cached)
+                result.append(entry)
+                continue
+
             # Aunque el mtime no cambie, validar la regla de coincidencia de hoja
             # para evitar seguir mostrando datos antiguos/incorrectos en cache.
             has_match = reader.has_matching_project_sheet(ruta_excel, numero) if numero else None
@@ -255,12 +291,14 @@ def sync_presupuestos(
 
             if refresh_due_to_policy:
                 datos_cache = _build_cache_data(
-                    proj, reader, relation_index, ruta_excel, mtime_actual, state_name
+                    proj, reader, relation_index, ruta_excel, mtime_actual, state_name,
+                    has_match=has_match,
                 )
                 try:
                     upsert_presupuesto(datos_cache)
                 except Exception:
                     logger.exception("Error al refrescar cache por política: %s", ruta_excel)
+                _mark_verified(ruta_excel, mtime_actual, has_match)
                 persisted = get_presupuesto_por_ruta(ruta_excel)
                 _fill_entry_from_cache(entry, persisted or datos_cache)
                 result.append(entry)
@@ -275,13 +313,16 @@ def sync_presupuestos(
                 except Exception:
                     logger.debug("No se pudo actualizar estado en cache para %s", ruta_excel)
 
+            _mark_verified(ruta_excel, mtime_actual, has_match)
             _fill_entry_from_cache(entry, cached)
             result.append(entry)
             continue
 
         # Cache no válida o inexistente: necesitamos leer datos
+        has_match = reader.has_matching_project_sheet(ruta_excel, numero) if numero else None
         datos_cache = _build_cache_data(
-            proj, reader, relation_index, ruta_excel, mtime_actual, state_name
+            proj, reader, relation_index, ruta_excel, mtime_actual, state_name,
+            has_match=has_match,
         )
 
         # Intentar vincular FK a comunidad/administración
@@ -292,6 +333,7 @@ def sync_presupuestos(
             upsert_presupuesto(datos_cache)
         except Exception:
             logger.exception("Error al guardar en cache: %s", ruta_excel)
+        _mark_verified(ruta_excel, mtime_actual, has_match)
 
         # Rellenar la entrada para la UI
         persisted = get_presupuesto_por_ruta(ruta_excel)
@@ -397,6 +439,7 @@ def _build_cache_data(
     ruta_excel: str,
     mtime_iso: str,
     state_name: str,
+    has_match: Optional[bool] = None,
 ) -> Dict:
     """Construye el dict de datos para guardar en cache.
 
@@ -422,7 +465,7 @@ def _build_cache_data(
 
     # Regla estricta: si ninguna hoja coincide con el número esperado,
     # NO guardar datos de contenido del presupuesto.
-    has_match = reader.has_matching_project_sheet(ruta_excel, numero) if numero else None
+    # *has_match* lo calcula el llamador para no leer el Excel dos veces.
     if has_match is False:
         _apply_no_matching_sheet_policy(datos, numero)
         return datos

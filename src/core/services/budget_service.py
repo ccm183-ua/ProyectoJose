@@ -15,7 +15,7 @@ from src.core.excel_manager import ExcelManager
 from src.core.file_manager import FileManager
 from src.core.partida_normalizer import normalize_partida_for_excel
 from src.core.template_manager import TemplateManager
-from src.utils.budget_utils import normalize_date, strip_obra_prefix
+from src.utils.budget_utils import normalize_date, normalize_project_num, strip_obra_prefix
 
 logger = logging.getLogger(__name__)
 
@@ -361,6 +361,35 @@ class BudgetService:
     def read_budget(self, file_path: str, expected_numero: str = "") -> Optional[Dict]:
         """Lee los datos de un presupuesto."""
         return self._reader.read(file_path, expected_numero=expected_numero)
+
+    def diagnose_read_failure(self, file_path: str, expected_numero: str = "") -> str:
+        """Explica en una frase por qué no se pudo leer un presupuesto.
+
+        Solo se llama para los que fallaron, así que la lectura extra no
+        penaliza el caso normal.
+        """
+        if not file_path or not os.path.exists(file_path):
+            return "No existe el fichero"
+        unreadable = "No se pudo leer el Excel (formato no reconocido o fichero dañado)"
+        reader = self._reader
+        file_bytes = reader._load_file_bytes(file_path)
+        if file_bytes is None:
+            return "No se pudo abrir el fichero (¿está bloqueado por otro programa?)"
+        sheets = reader._read_all_sheets(file_bytes)
+        if not sheets:
+            return unreadable
+        expected = normalize_project_num(expected_numero or "")
+        if expected:
+            shared = reader._read_shared_strings(file_bytes)
+            numeros = [
+                (reader._extract_header(reader._extract_rows(sh["sheet_xml"]), shared).get("numero") or "").strip()
+                for sh in sheets
+            ]
+            if not any(normalize_project_num(n) == expected for n in numeros if n):
+                shown = ", ".join(dict.fromkeys(n for n in numeros if n))
+                detalle = f"E5 dice {shown}" if shown else "E5 vacío en todas las hojas"
+                return f"Ninguna hoja coincide con {expected_numero}: {detalle}"
+        return unreadable
 
     def update_header_fields(self, file_path: str, data: Dict) -> bool:
         """Actualiza los campos de cabecera de un presupuesto existente."""

@@ -167,6 +167,7 @@ def copy_database_as_active(source_path: str) -> Dict:
     if active.exists():
         backup_path = create_database_backup("before_db_copy")
     shutil.copy2(source, active)
+    database.invalidate_schema_cache()
     with database.get_connection() as _conn:
         pass
     log_historical_memory_event(
