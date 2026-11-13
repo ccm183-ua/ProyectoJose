@@ -109,3 +109,88 @@ def test_dialogo_quitar_de_la_cesta_y_boton_continuar(qapp):
     dlg._basket_list.setCurrentRow(0)
     dlg._remove_from_basket()
     assert dlg._basket == [] and not dlg._btn_ok.isEnabled()
+
+
+# ── H7: dashboard ───────────────────────────────────────────────────────
+
+def test_dashboard_anade_desde_la_biblioteca_sin_duplicados(qapp, monkeypatch):
+    import src.gui.budget_dashboard as bd
+    from src.core import services
+
+    candidata = to_candidate(_library().search("bajante").groups[0])
+    otra = to_candidate(_library().search("pintura").groups[0])
+    escritas = []
+
+    class _FakeService:
+        def read_budget(self, ruta):
+            return {"partidas": [dict(candidata)]}          # la bajante ya está en el Excel
+
+        def append_partidas(self, ruta, partidas):
+            escritas.extend(partidas)
+            return True
+
+        def finalize_budget(self, ruta, estado=""):
+            return True
+
+    class _FakeLibraryDialog:
+        def __init__(self, parent=None, library=None):
+            pass
+
+        def exec(self):
+            return 1
+
+        def get_candidates(self):
+            return [candidata, otra]
+
+    class _FakeReview:
+        def __init__(self, parent, library_partidas=None, **kw):
+            self._p = library_partidas
+
+        def exec(self):
+            return 1
+
+        def get_selected_partidas(self):
+            return self._p
+
+    monkeypatch.setattr(services, "BudgetService", _FakeService)
+    monkeypatch.setattr("src.gui.partida_library_dialog.PartidaLibraryDialog", _FakeLibraryDialog)
+    monkeypatch.setattr("src.gui.combined_partidas_review_dialog.CombinedPartidasReviewDialog", _FakeReview)
+    monkeypatch.setattr(QMessageBox, "information", staticmethod(lambda *a, **k: None))
+
+    dash = bd.BudgetDashboardFrame.__new__(bd.BudgetDashboardFrame)
+    dash._current_state = lambda: "PRESUPUESTADO"
+    dash._load_data = lambda: None
+    bd.BudgetDashboardFrame._edit_add_from_library(dash, "C:/obra/p.xlsx")
+
+    assert [p["titulo"] for p in escritas] == ["Pintura escalera"]
+
+
+def test_dashboard_biblioteca_cancelada_no_escribe(qapp, monkeypatch):
+    import src.gui.budget_dashboard as bd
+    from src.core import services
+
+    escritas = []
+
+    class _FakeService:
+        def read_budget(self, ruta):
+            return {"partidas": []}
+
+        def append_partidas(self, ruta, partidas):
+            escritas.extend(partidas)
+            return True
+
+    class _Cancelled:
+        def __init__(self, parent=None, library=None):
+            pass
+
+        def exec(self):
+            return 0
+
+        def get_candidates(self):
+            return []
+
+    monkeypatch.setattr(services, "BudgetService", _FakeService)
+    monkeypatch.setattr("src.gui.partida_library_dialog.PartidaLibraryDialog", _Cancelled)
+    dash = bd.BudgetDashboardFrame.__new__(bd.BudgetDashboardFrame)
+    bd.BudgetDashboardFrame._edit_add_from_library(dash, "C:/obra/p.xlsx")
+    assert escritas == []

@@ -1236,6 +1236,8 @@ class BudgetDashboardFrame(QMainWindow):
         menu = QMenu(self)
         act_regen = menu.addAction("Regenerar todas las partidas (IA)")
         act_add = menu.addAction("Añadir más partidas (IA)")
+        act_lib = menu.addAction("Añadir partidas desde la biblioteca")
+        act_lib.triggered.connect(lambda: self._edit_add_from_library(ruta))
         menu.addSeparator()
         act_pdf = menu.addAction("Exportar PDF")
         act_regen.triggered.connect(lambda: self._edit_regen_all(ruta))
@@ -1639,6 +1641,42 @@ class BudgetDashboardFrame(QMainWindow):
             self._load_data()
         else:
             QMessageBox.critical(self, "Error", "Error al insertar partidas.")
+
+    def _edit_add_from_library(self, ruta):
+        """Añade partidas elegidas en la biblioteca, sin duplicados, tras revisarlas."""
+        from src.core.services import BudgetService
+        from src.core.services.budget_partidas_flow import (
+            MODE_APPEND, apply_reviewed_partidas, split_generated_partidas_for_review,
+        )
+        # Por módulo (no `from ... import Clase`) para que los tests puedan sustituirlas.
+        from src.gui import combined_partidas_review_dialog as review_mod
+        from src.gui import partida_library_dialog as library_mod
+
+        svc = BudgetService()
+        existing_partidas = (svc.read_budget(ruta) or {}).get("partidas", []) or []
+        dlg = library_mod.PartidaLibraryDialog(self)
+        if dlg.exec() != 1 or not dlg.get_candidates():
+            return
+        _hist, candidatas = split_generated_partidas_for_review(
+            dlg.get_candidates(), MODE_APPEND, existing_partidas=existing_partidas
+        )
+        if not candidatas:
+            QMessageBox.information(
+                self, "Biblioteca", "Todas las partidas elegidas ya están en el presupuesto."
+            )
+            return
+        review = review_mod.CombinedPartidasReviewDialog(self, library_partidas=candidatas)
+        if review.exec() != 1:
+            return
+        selected = review.get_selected_partidas()
+        if not selected:
+            return
+        if apply_reviewed_partidas(svc, ruta, selected, MODE_APPEND):
+            svc.finalize_budget(ruta, estado=self._current_state() or "")
+            QMessageBox.information(self, "Éxito", f"{len(selected)} partidas añadidas.")
+            self._load_data()
+        else:
+            QMessageBox.critical(self, "Error", "Error al añadir partidas.")
 
     def _edit_add_partidas(self, ruta):
         from src.core.services import BudgetService
