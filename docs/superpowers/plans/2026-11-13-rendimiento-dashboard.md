@@ -175,3 +175,16 @@ número de otro presupuesto (copias sin actualizar) y el usuario no sabe cuáles
 
 - [ ] Ejecutar y anotar resultados en este plan (tabla «Medición final»).
 - [ ] Suite completa verde; commit `chore(bench): script de medición de la recarga del dashboard`.
+
+## Medición final (13-11-2026, copia de la BD real, 234 proyectos)
+
+`scripts/bench_dashboard_reload.py --veces 3`:
+
+| Recarga | Tiempo | Lecturas de Excel | Conexiones SQLite |
+|---|---|---|---|
+| Antes (cualquiera, caché caliente) | 9,1–11,6 s | 312 | 380 |
+| 1.ª tras actualizar (valida y marca cada Excel una vez; migración v5) | 4,9–6,2 s | 237 | 387 |
+| 2.ª y siguientes | 0,11–0,16 s | 0 | 6 |
+
+Además, escanear, abrir, guardar un Excel vigilado y editar ya no disparan la recarga completa:
+solo se vuelve a resolver la fila tocada.
