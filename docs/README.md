@@ -31,6 +31,7 @@ Si añades un documento nuevo, apúntalo aquí.
 
 | Documento | Estado |
 |---|---|
+| [`superpowers/plans/2026-11-13-planificacion-obras.md`](superpowers/plans/2026-11-13-planificacion-obras.md) | Pieza A de la batería de obras (fechas previstas y reales en EJECUTAR/EJECUTANDO/TERMINADO). Implementada (P1-P8); falta la prueba manual. Siguen B (avisos y correo) y C (calendario y métricas). Diseño: [`superpowers/specs/2026-11-13-planificacion-obras-design.md`](superpowers/specs/2026-11-13-planificacion-obras-design.md). |
 | [`superpowers/plans/2026-11-12-biblioteca-partidas.md`](superpowers/plans/2026-11-12-biblioteca-partidas.md) | Mejora 1 de 4 de la batería de redacción (biblioteca de partidas). Implementada (H1-H9); falta la prueba manual en la app. Diseño: [`superpowers/specs/2026-11-12-biblioteca-partidas-design.md`](superpowers/specs/2026-11-12-biblioteca-partidas-design.md). Validación: `scripts/library_benchmark.py`. |
 | [`planes/dashboard-filtros-estadisticas.md`](planes/dashboard-filtros-estadisticas.md) | A medias: hay datos, falta toda la interfaz. |
 | [`planes/sugerir-comunidad.md`](planes/sugerir-comunidad.md) | A medias (mínimo): solo el prefill de dirección. |

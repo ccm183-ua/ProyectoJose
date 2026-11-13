@@ -49,6 +49,17 @@
   normalizado exacto se quedan cortos (variantes de redacción de la misma
   partida) antes de diseñar la mejora 2.
 
+## 3b. Carpetas de obra a revisar (planificación de obras, 2026-11-13)
+
+- **Números de proyecto repetidos** (no se pueden planificar hasta limpiarlos):
+  109-26 (PRESUPUESTADO y TERMINADO), 127-25 (EJECUTAR y TERMINADO), 196-26
+  (dos obras distintas en PRESUPUESTADO y PTE. PRESUPUESTAR), 228-24 (dos
+  carpetas en TERMINADO) y 78-26 (una es "Prueba (Se puede borrar)").
+  Probablemente carpetas copiadas en vez de movidas.
+- **Obras de EJECUTAR con la fecha ya pasada en el nombre**: 114-26 (13/07),
+  208-26 (25/06), 30-26 (julio) y 48-25 (19/05). Si ya se hicieron, conviene
+  moverlas a EJECUTANDO o TERMINADO.
+
 ## 4. Seguridad de la API (H4)
 
 - Pendiente: límite de intentos de login, rutas de salida arbitrarias en las
