@@ -32,6 +32,7 @@ from src.core.db_repository import (
     buscar_administracion_por_nombre,
     buscar_comunidad_por_nombre,
     get_presupuesto_por_ruta,
+    get_presupuestos_por_rutas,
     limpiar_presupuestos_huerfanos,
     upsert_presupuesto,
 )
@@ -190,6 +191,10 @@ def sync_presupuestos(
     """
     reader = BudgetReader()
     result: List[Dict] = []
+    # Una sola consulta para toda la pestaña en vez de una conexión por proyecto.
+    cache_by_ruta = get_presupuestos_por_rutas(
+        [p.get("ruta_excel", "") for p in scanned_projects]
+    )
 
     for proj in scanned_projects:
         numero = proj.get("numero_proyecto", "")
@@ -212,7 +217,7 @@ def sync_presupuestos(
             continue
 
         # Buscar en cache
-        cached = get_presupuesto_por_ruta(ruta_excel)
+        cached = cache_by_ruta.get(ruta_excel.strip())
 
         # Si el presupuesto ya está finalizado en DB, el escaneo no debe
         # sobreescribir su contenido aunque el Excel haya cambiado. Pero

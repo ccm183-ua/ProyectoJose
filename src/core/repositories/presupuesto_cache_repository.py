@@ -105,6 +105,34 @@ def get_presupuesto_por_ruta(ruta_excel: str) -> Optional[Dict]:
         return _row_to_presupuesto_cache(r)
 
 
+# SQLite limita los parámetros por sentencia (999 en versiones antiguas).
+_BULK_BATCH = 500
+
+
+def get_presupuestos_por_rutas(rutas: List[str]) -> Dict[str, Dict]:
+    """Devuelve ``{ruta_excel: datos}`` de la cache para varias rutas en una conexión.
+
+    Las rutas vacías o sin fila en la cache no aparecen en el resultado.
+    """
+    unique = list(dict.fromkeys((r or "").strip() for r in rutas or []))
+    unique = [r for r in unique if r]
+    if not unique:
+        return {}
+    result: Dict[str, Dict] = {}
+    with database.get_connection() as conn:
+        for start in range(0, len(unique), _BULK_BATCH):
+            batch = unique[start:start + _BULK_BATCH]
+            placeholders = ",".join("?" for _ in batch)
+            cur = conn.execute(
+                f"SELECT {_PRESUPUESTO_COLS} FROM presupuesto WHERE ruta_excel IN ({placeholders})",
+                batch,
+            )
+            for r in cur.fetchall():
+                row = _row_to_presupuesto_cache(r)
+                result[row["ruta_excel"]] = row
+    return result
+
+
 def get_presupuesto_por_id(presupuesto_id: int) -> Optional[Dict]:
     """Busca un presupuesto en la cache por su id."""
     with database.get_connection() as conn:
