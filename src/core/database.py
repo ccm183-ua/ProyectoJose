@@ -121,12 +121,35 @@ def connect(read_only: bool = False) -> sqlite3.Connection:
         uri = f"file:{path}?mode=ro"
         conn = sqlite3.connect(uri, uri=True)
     else:
-        conn = sqlite3.connect(str(path))
+        key = str(path)
+        existed = path.exists()
+        conn = sqlite3.connect(key)
         conn.execute("PRAGMA foreign_keys = ON")
-        # Crear tablas solo si no existen (no pisa datos existentes)
-        init_schema(conn)
+        # Crear tablas solo si no existen (no pisa datos existentes). Se hace
+        # una vez por proceso y ruta: reejecutarlo en cada conexión costaba
+        # ~5 ms y el dashboard abre cientos por recarga.
+        if not (existed and key in _SCHEMA_READY and _schema_is_current(conn)):
+            init_schema(conn)
+            _SCHEMA_READY.add(key)
 
     return conn
+
+
+# Rutas de BD cuyo esquema ya se aplicó en este proceso.
+_SCHEMA_READY: set = set()
+
+
+def invalidate_schema_cache() -> None:
+    """Olvida qué BDs tienen el esquema aplicado (p. ej. tras sustituir el fichero)."""
+    _SCHEMA_READY.clear()
+
+
+def _schema_is_current(conn: sqlite3.Connection) -> bool:
+    """Comprobación barata: la BD sigue marcada con la versión de esquema actual."""
+    try:
+        return get_schema_version(conn) >= CURRENT_SCHEMA_VERSION
+    except sqlite3.Error:
+        return False
 
 
 @contextmanager
