@@ -207,6 +207,8 @@ class MainFrame(QMainWindow):
         act_templates.triggered.connect(self._open_template_manager)
         act_paths = m_config.addAction("Rutas por defecto...")
         act_paths.triggered.connect(self._open_default_paths)
+        act_obras = m_config.addAction("Avisos de obras...")
+        act_obras.triggered.connect(self._configure_obra_margin)
 
         m_tools = menubar.addMenu("&Herramientas")
         act_hist = m_tools.addAction("Analizar presupuestos terminados...")
@@ -525,6 +527,23 @@ class MainFrame(QMainWindow):
     def _obtain_project_data(self):
         from src.gui.dialogs import obtain_project_data
         return obtain_project_data(self)
+
+    def _configure_obra_margin(self):
+        """Margen general de aviso antes del inicio previsto de una obra (EJECUTAR)."""
+        from PySide6.QtWidgets import QInputDialog
+
+        from src.core.settings import Settings
+
+        settings = Settings()
+        actual = settings.get_obra_margen_aviso_dias()
+        dias, ok = QInputDialog.getInt(
+            self, "Avisos de obras",
+            "Avisar cuántos días antes del inicio previsto de cada obra:\n"
+            "(se puede cambiar en una obra concreta desde «Planificación…»)",
+            actual, 0, 365,
+        )
+        if ok:
+            settings.save_obra_margen_aviso_dias(dias)
 
     def _open_default_paths(self):
         from src.gui.dialogs import DefaultPathsDialog

@@ -238,3 +238,24 @@ def test_doble_clic_segun_columna(qapp):
     dash._current_state = lambda: "PRESUPUESTADO"
     bd.BudgetDashboardFrame._on_item_dblclick(dash, _Index(len(bd._COLUMNS)))
     assert llamadas == ["planificacion", "vista previa", "vista previa"]
+
+
+# ── P7: margen general desde Configuración ──────────────────────────────
+
+def test_configurar_margen_de_aviso(qapp, monkeypatch, tmp_path):
+    import src.gui.main_frame as mf
+    from PySide6.QtWidgets import QInputDialog
+    from src.core.settings import Settings
+
+    monkeypatch.setenv("CUBIAPP_CONFIG_DIR", str(tmp_path / "config"))
+    vistos = []
+    monkeypatch.setattr(QInputDialog, "getInt",
+                        staticmethod(lambda *a, **k: vistos.append(a[3]) or (15, True)))
+    frame = mf.MainFrame.__new__(mf.MainFrame)
+    mf.MainFrame._configure_obra_margin(frame)
+    assert vistos == [7]                                  # muestra el valor actual
+    assert Settings().get_obra_margen_aviso_dias() == 15
+
+    monkeypatch.setattr(QInputDialog, "getInt", staticmethod(lambda *a, **k: (30, False)))
+    mf.MainFrame._configure_obra_margin(frame)            # cancelar no guarda
+    assert Settings().get_obra_margen_aviso_dias() == 15
