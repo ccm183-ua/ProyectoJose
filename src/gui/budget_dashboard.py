@@ -1238,9 +1238,11 @@ class BudgetDashboardFrame(QMainWindow):
         act_add = menu.addAction("Añadir más partidas (IA)")
         menu.addSeparator()
         act_pdf = menu.addAction("Exportar PDF")
+        act_print = menu.addAction("Imprimir")
         act_regen.triggered.connect(lambda: self._edit_regen_all(ruta))
         act_add.triggered.connect(lambda: self._edit_add_partidas(ruta))
         act_pdf.triggered.connect(self._on_export_pdf)
+        act_print.triggered.connect(self._on_print_selected)
 
         menu.exec(self._btn_edit.mapToGlobal(self._btn_edit.rect().bottomLeft()))
 
@@ -1311,6 +1313,62 @@ class BudgetDashboardFrame(QMainWindow):
 
         self._refresh_in_progress = True
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        run_in_background(_work, _done)
+
+    def _on_print_selected(self):
+        """Imprime los presupuestos seleccionados en la impresora predeterminada."""
+        from src.core.pdf_exporter import PDFExporter
+
+        rutas = [
+            os.path.normpath(s.get("ruta_excel", ""))
+            for s in self._get_selected_many()
+            if s.get("ruta_excel")
+        ]
+        rutas = [r for r in rutas if os.path.exists(r)]
+        if not rutas:
+            QMessageBox.warning(self, "Imprimir", "No hay ningún presupuesto seleccionado que exista.")
+            return
+        exporter = PDFExporter()
+        if not exporter.is_available():
+            QMessageBox.warning(self, "Imprimir", "Para imprimir hace falta Microsoft Excel y pywin32.")
+            return
+        printer = PDFExporter.default_printer_name()
+        if PDFExporter.is_virtual_printer(printer):
+            QMessageBox.warning(
+                self, "Imprimir",
+                f"La impresora predeterminada de Windows es «{printer or 'ninguna'}», que no es una "
+                "impresora física: abriría un cuadro de «Guardar como» oculto.\n\n"
+                "Elige tu impresora como predeterminada en Configuración de Windows → Impresoras, "
+                "o usa «Exportar PDF».",
+            )
+            return
+        n = len(rutas)
+        resp = QMessageBox.question(
+            self, "Imprimir",
+            f"¿Imprimir {n} presupuesto{'s' if n != 1 else ''} en «{printer}» (impresora predeterminada)?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if resp != QMessageBox.StandardButton.Yes:
+            return
+
+        def _work():
+            return [(ruta, exporter.print_workbook(ruta)) for ruta in rutas]
+
+        def _done(ok, payload):
+            if not ok:
+                QMessageBox.critical(self, "Imprimir", f"Error al imprimir:\n{payload}")
+                return
+            fallos = [(r, msg) for r, (ok_r, msg) in payload if not ok_r]
+            impresos = len(payload) - len(fallos)
+            if not fallos:
+                QMessageBox.information(self, "Imprimir", f"Impresos: {impresos}.")
+                return
+            detalle = "\n".join(f"• {os.path.basename(r)}: {msg}" for r, msg in fallos)
+            QMessageBox.warning(
+                self, "Imprimir", f"Impresos: {impresos}. Con error: {len(fallos)}\n\n{detalle}"
+            )
+
         run_in_background(_work, _done)
 
     def _on_export_pdf(self):

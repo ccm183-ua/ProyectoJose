@@ -399,3 +399,64 @@ class TestComInstanceOwnership:
         script = PDFExporter._COM_WORKER_SCRIPT
         assert 'DispatchEx("Excel.Application")' in script
         assert not re.search(r"\.Dispatch\(", script)
+
+
+# ------------------------------------------------------------------
+# Imprimir directamente (decisión D, 2026-11-13)
+# ------------------------------------------------------------------
+
+class TestPrintWorkbook:
+
+    def _run(self, xlsx, mock_excel, copies=1):
+        mock_w32, mock_cl, mock_pycom = _make_com_mocks(mock_excel)
+        with patch.object(PDFExporter, "is_available", return_value=True), \
+             patch.dict("sys.modules", {
+                 "win32com": mock_w32,
+                 "win32com.client": mock_cl,
+                 "pythoncom": mock_pycom,
+             }):
+            return PDFExporter().print_workbook(xlsx, copies=copies), mock_cl
+
+    def test_imprime_cierra_sin_guardar_y_sale_de_excel(self, tmp_path):
+        xlsx = _create_test_xlsx(tmp_path / "presupuesto.xlsx")
+        mock_wb = MagicMock()
+        mock_excel = MagicMock()
+        mock_excel.Workbooks.Open.return_value = mock_wb
+
+        (ok, msg), mock_cl = self._run(xlsx, mock_excel, copies=2)
+
+        assert ok is True
+        mock_cl.DispatchEx.assert_called_once_with("Excel.Application")
+        mock_wb.PrintOut.assert_called_once_with(Copies=2)
+        mock_wb.Close.assert_called_once_with(SaveChanges=False)
+        mock_excel.Quit.assert_called_once()
+
+    def test_si_falla_la_impresion_cierra_igualmente_excel(self, tmp_path):
+        xlsx = _create_test_xlsx(tmp_path / "presupuesto.xlsx")
+        mock_wb = MagicMock()
+        mock_wb.PrintOut.side_effect = RuntimeError("impresora sin conexión")
+        mock_excel = MagicMock()
+        mock_excel.Workbooks.Open.return_value = mock_wb
+
+        (ok, msg), _ = self._run(xlsx, mock_excel)
+
+        assert ok is False and "impresora sin conexión" in msg
+        mock_wb.Close.assert_called_once_with(SaveChanges=False)
+        mock_excel.Quit.assert_called_once()
+
+    def test_fichero_inexistente(self, tmp_path):
+        ok, msg = PDFExporter().print_workbook(str(tmp_path / "no_existe.xlsx"))
+        assert ok is False and "no existe" in msg
+
+
+@pytest.mark.parametrize("nombre,virtual", [
+    ("Microsoft Print to PDF", True),
+    ("Microsoft XPS Document Writer", True),
+    ("OneNote (Desktop)", True),
+    ("Fax", True),
+    ("", True),                       # sin impresora predeterminada
+    ("HP LaserJet Pro M404", False),
+    ("Brother MFC-L2710DW", False),
+])
+def test_impresoras_virtuales(nombre, virtual):
+    assert PDFExporter.is_virtual_printer(nombre) is virtual
