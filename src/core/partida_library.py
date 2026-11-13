@@ -6,10 +6,15 @@ docs/superpowers/specs/2026-11-12-biblioteca-partidas-design.md.
 
 from __future__ import annotations
 
+import math
 import re
 import unicodedata
+from dataclasses import dataclass
 from datetime import date, timedelta
-from typing import Dict, Optional
+from typing import Dict, List, Optional
+
+from src.core import database
+from src.core.work_type_normalizer import normalize_text
 
 STATUS_RANK: Dict[str, int] = {"approved": 0, "unreviewed": 1, "ineligible": 2}
 STATUS_LABELS: Dict[str, str] = {"approved": "aprobada", "unreviewed": "sin revisar", "ineligible": "no apta"}
@@ -75,3 +80,67 @@ def line_status(learning_status: str, analysis_status: str) -> str:
     if learning_status == "PENDING_REVIEW":
         return "unreviewed"
     return "ineligible"
+
+
+@dataclass(frozen=True)
+class LibraryLine:
+    partida_id: int
+    budget_id: int
+    proyecto: str
+    concepto: str
+    concepto_norm: str
+    unidad: str
+    unidad_canon: str
+    precio: float
+    status: str
+    fecha: Optional[date]
+    module: str
+
+
+_LOAD_SQL = """
+    SELECT hp.id, hp.historical_budget_id, COALESCE(hb.nombre_proyecto, ''),
+           COALESCE(NULLIF(hp.concepto_original, ''), hp.titulo, ''),
+           COALESCE(hp.concepto_normalizado, ''), COALESCE(hp.unidad, ''),
+           hp.precio_unitario, COALESCE(hb.learning_status, ''),
+           COALESCE(hb.analysis_status, ''), COALESCE(hb.fecha_presupuesto, ''),
+           COALESCE(f.primary_module_id, '')
+    FROM historical_partida hp
+    JOIN historical_budget hb ON hb.id = hp.historical_budget_id
+    LEFT JOIN historical_partida_feature f ON f.partida_id = hp.id
+    WHERE hp.precio_unitario > 0
+"""
+
+
+class PartidaLibrary:
+    """Partidas con precio del histórico, cargadas en memoria para buscar."""
+
+    def __init__(self, lines: List[LibraryLine], ignored: int = 0):
+        self.lines = list(lines)
+        self.ignored = ignored
+
+    @classmethod
+    def load(cls) -> "PartidaLibrary":
+        lines: List[LibraryLine] = []
+        ignored = 0
+        with database.get_connection(read_only=True) as conn:
+            rows = conn.execute(_LOAD_SQL).fetchall()
+        for (pid, bid, proyecto, concepto, concepto_norm, unidad, precio,
+             learning, analysis, fecha_raw, module) in rows:
+            concepto = (concepto or "").replace("\r\n", "\n").strip()
+            norm = (concepto_norm or "").strip() or normalize_text(concepto)
+            try:
+                price = float(precio)
+            except (TypeError, ValueError):
+                price = float("nan")
+            if not norm or not math.isfinite(price) or price <= 0:
+                ignored += 1
+                continue
+            lines.append(LibraryLine(
+                partida_id=int(pid), budget_id=int(bid), proyecto=proyecto or "",
+                concepto=concepto, concepto_norm=norm, unidad=(unidad or "").strip(),
+                unidad_canon=canonical_unit(unidad), precio=price,
+                status=line_status(learning, analysis), fecha=parse_budget_date(fecha_raw),
+                module=(module or "").strip(),
+            ))
+        return cls(lines, ignored)
+
