@@ -727,9 +727,10 @@ class MainFrame(QMainWindow):
         box = QMessageBox(self)
         box.setWindowTitle("Partidas del presupuesto")
         box.setText("¿Cómo quieres añadir las partidas?")
-        btn_lib = box.addButton("Elegir de la biblioteca", QMessageBox.ButtonRole.AcceptRole)
-        btn_ai = box.addButton("Generar con IA", QMessageBox.ButtonRole.ActionRole)
-        box.addButton("Dejar vacío", QMessageBox.ButtonRole.RejectRole)
+        # Textos cortos: con los largos no se leían por falta de espacio.
+        btn_lib = box.addButton("Biblioteca", QMessageBox.ButtonRole.AcceptRole)
+        btn_ai = box.addButton("IA", QMessageBox.ButtonRole.ActionRole)
+        box.addButton("Vacío", QMessageBox.ButtonRole.RejectRole)
         box.setDefaultButton(btn_lib)
         box.exec()
         clicked = box.clickedButton()
