@@ -231,3 +231,56 @@ def test_limite_de_grupos():
     lib = PartidaLibrary([_line(i, f"partida {i:03d}", 10) for i in range(250)])
     result = lib.search("partida")
     assert len(result.groups) == 200 and result.total_groups == 250 and result.truncated
+
+
+# ── H4: conversión a candidata ──────────────────────────────────────────
+
+from src.core.partida_library import to_candidate
+from src.core.services.budget_partidas_flow import MODE_APPEND, split_generated_partidas_for_review
+
+
+def _grupo_bajante():
+    lines = [
+        LibraryLine(1, 10, "001-26", "SUSTITUCIÓN BAJANTE PVC.\nSustitución de bajante de PVC de 110 mm",
+                    "sustitucion bajante pvc", "ml", "m", 30.0, "approved", date(2026, 1, 1), "sustitucion_bajante"),
+        LibraryLine(2, 11, "002-26", "Bajante PVC", "sustitucion bajante pvc", "m", "m", 34.0, "unreviewed",
+                    date(2026, 3, 1), "sustitucion_bajante"),
+    ]
+    return PartidaLibrary(lines).search("bajante").groups[0]
+
+
+def test_candidata_con_la_mediana_del_grupo():
+    c = to_candidate(_grupo_bajante())
+    assert c["titulo"] == "SUSTITUCIÓN BAJANTE PVC."
+    assert c["descripcion"] == "Sustitución de bajante de PVC de 110 mm"
+    assert c["unidad"] == "ml" and c["cantidad"] == 1.0
+    assert c["precio_unitario"] == 30.0
+    assert c["source"] == "library"
+    assert c["library_status"] == "approved"
+    assert c["library_price_basis"] == "median_approved"
+    assert c["library_partida_ids"] == [1, 2] and c["library_budget_ids"] == [10, 11]
+
+
+def test_candidata_con_el_precio_de_una_obra_concreta():
+    grupo = _grupo_bajante()
+    obra = [l for l in grupo.lines if l.partida_id == 2][0]
+    c = to_candidate(grupo, obra)
+    assert c["precio_unitario"] == 34.0
+    assert c["library_price_basis"] == "instance"
+    assert c["library_status"] == "unreviewed"
+    assert c["titulo"] == "Bajante PVC" and c["descripcion"] == ""
+    assert c["library_partida_ids"] == [2]
+
+
+def test_candidatas_de_biblioteca_no_cuentan_como_historicas():
+    historicas, otras = split_generated_partidas_for_review([to_candidate(_grupo_bajante())], "create")
+    assert historicas == [] and len(otras) == 1
+
+
+def test_en_modo_anadir_se_descarta_el_duplicado_exacto():
+    candidata = to_candidate(_grupo_bajante())
+    existente = dict(candidata)
+    historicas, otras = split_generated_partidas_for_review(
+        [candidata], MODE_APPEND, existing_partidas=[existente]
+    )
+    assert historicas == [] and otras == []

@@ -182,6 +182,38 @@ def _group_sort_key(group: LibraryGroup):
     )
 
 
+def to_candidate(group: LibraryGroup, line: Optional[LibraryLine] = None) -> Dict:
+    """Partida candidata para la revisión. Nunca lleva un source 'historical*'.
+
+    Sin `line`, usa el precio propuesto del grupo y el texto de su línea
+    representativa; con `line`, el precio y el texto de esa obra concreta.
+    """
+    if line is None:
+        rep = group.representative
+        lines = group.lines
+        price, basis, status = group.proposed_price, group.price_basis, group.status
+        units = Counter(l.unidad for l in lines if l.unidad)
+        unidad = rep.unidad or (units.most_common(1)[0][0] if units else "ud")
+    else:
+        rep, lines = line, [line]
+        price, basis, status = line.precio, "instance", line.status
+        unidad = line.unidad or "ud"
+    titulo, _, descripcion = rep.concepto.partition("\n")
+    return {
+        "titulo": titulo.strip(),
+        "descripcion": descripcion.strip(),
+        "concepto": rep.concepto,
+        "unidad": unidad,
+        "cantidad": 1.0,
+        "precio_unitario": round(float(price), 2),
+        "source": "library",
+        "library_status": status,
+        "library_price_basis": basis,
+        "library_partida_ids": sorted(l.partida_id for l in lines),
+        "library_budget_ids": sorted({l.budget_id for l in lines}),
+    }
+
+
 _LOAD_SQL = """
     SELECT hp.id, hp.historical_budget_id, COALESCE(hb.nombre_proyecto, ''),
            COALESCE(NULLIF(hp.concepto_original, ''), hp.titulo, ''),
