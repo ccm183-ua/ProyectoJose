@@ -194,3 +194,71 @@ def test_dashboard_biblioteca_cancelada_no_escribe(qapp, monkeypatch):
     dash = bd.BudgetDashboardFrame.__new__(bd.BudgetDashboardFrame)
     bd.BudgetDashboardFrame._edit_add_from_library(dash, "C:/obra/p.xlsx")
     assert escritas == []
+
+
+# ── H8: crear presupuesto ───────────────────────────────────────────────
+
+@pytest.mark.parametrize("eleccion,esperado", [("library", "lib"), ("ai", "ai"), ("empty", "cancelled")])
+def test_crear_elige_biblioteca_ia_o_vacio(qapp, eleccion, esperado):
+    import src.gui.main_frame as mf
+
+    frame = mf.MainFrame.__new__(mf.MainFrame)
+    frame._choose_partidas_source = lambda: eleccion
+    frame._offer_partidas_from_library = lambda excel, pd: "lib"
+    frame._offer_partidas_unified = lambda excel, pd: "ai"
+
+    assert mf.MainFrame._offer_partidas_for_new_budget(frame, "C:/obra/p.xlsx", {}) == esperado
+
+
+def test_biblioteca_al_crear_pasa_por_la_revision_y_escribe(qapp, monkeypatch):
+    import src.gui.main_frame as mf
+
+    candidata = to_candidate(_library().search("bajante").groups[0])
+
+    class _FakeLibraryDialog:
+        def __init__(self, parent=None, library=None):
+            pass
+
+        def exec(self):
+            return 1
+
+        def get_candidates(self):
+            return [candidata]
+
+    class _FakeReview:
+        def __init__(self, parent, library_partidas=None, **kw):
+            self._p = library_partidas
+
+        def exec(self):
+            return 1
+
+        def get_selected_partidas(self):
+            return self._p
+
+    monkeypatch.setattr("src.gui.partida_library_dialog.PartidaLibraryDialog", _FakeLibraryDialog)
+    monkeypatch.setattr("src.gui.combined_partidas_review_dialog.CombinedPartidasReviewDialog", _FakeReview)
+    escritas = []
+    frame = mf.MainFrame.__new__(mf.MainFrame)
+    frame._insert_final_partidas_once = lambda excel, sel, pd: escritas.extend(sel) or "applied"
+
+    assert mf.MainFrame._offer_partidas_from_library(frame, "C:/obra/p.xlsx", {}) == "applied"
+    assert escritas == [candidata]
+
+
+def test_biblioteca_al_crear_cancelada_no_escribe(qapp, monkeypatch):
+    import src.gui.main_frame as mf
+
+    class _Cancelled:
+        def __init__(self, parent=None, library=None):
+            pass
+
+        def exec(self):
+            return 0
+
+        def get_candidates(self):
+            return []
+
+    monkeypatch.setattr("src.gui.partida_library_dialog.PartidaLibraryDialog", _Cancelled)
+    frame = mf.MainFrame.__new__(mf.MainFrame)
+    frame._insert_final_partidas_once = lambda *a: pytest.fail("no debe escribir")
+    assert mf.MainFrame._offer_partidas_from_library(frame, "C:/obra/p.xlsx", {}) == "cancelled"
