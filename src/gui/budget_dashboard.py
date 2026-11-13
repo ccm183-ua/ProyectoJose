@@ -98,6 +98,20 @@ def _sort_tabs(states: list[str]) -> list[str]:
     return sorted(states, key=lambda s: order_map.get(s.upper(), 999))
 
 
+_SCAN_SUMMARY_MAX = 15
+
+
+def _scan_summary(ok_count: int, failures: list[tuple[str, str]]) -> str:
+    """Resumen de «Escanear presupuestos» con el motivo de cada fallo."""
+    text = f"Actualizados: {ok_count}\nCon error: {len(failures)}"
+    if failures:
+        lines = [f"· {nombre}: {motivo}" for nombre, motivo in failures[:_SCAN_SUMMARY_MAX]]
+        if len(failures) > _SCAN_SUMMARY_MAX:
+            lines.append(f"… y {len(failures) - _SCAN_SUMMARY_MAX} más")
+        text += "\n\n" + "\n".join(lines)
+    return text
+
+
 # ── Parseo de número de proyecto para ordenación numérica ─────────────
 
 
@@ -1363,16 +1377,17 @@ class BudgetDashboardFrame(QMainWindow):
 
         def _work():
             svc = BudgetService()
-            ok_count = fail_count = 0
+            ok_count = 0
+            failures = []
             for ruta, numero in targets:
-                if not ruta or not os.path.exists(ruta):
-                    fail_count += 1
-                    continue
-                if svc.refresh_budget_cache_entry(ruta, estado=estado, expected_numero=numero):
+                if ruta and os.path.exists(ruta) and svc.refresh_budget_cache_entry(
+                    ruta, estado=estado, expected_numero=numero
+                ):
                     ok_count += 1
-                else:
-                    fail_count += 1
-            return ok_count, fail_count
+                    continue
+                nombre = os.path.basename(ruta) if ruta else (numero or "(sin Excel)")
+                failures.append((nombre, svc.diagnose_read_failure(ruta, numero)))
+            return ok_count, failures
 
         def _done(success, payload):
             self._refresh_in_progress = False
@@ -1380,12 +1395,10 @@ class BudgetDashboardFrame(QMainWindow):
             if not success:
                 QMessageBox.critical(self, "Escanear presupuestos", f"Error al escanear:\n{payload}")
                 return
-            ok_count, fail_count = payload
+            ok_count, failures = payload
             self._refresh_rows([ruta for ruta, _numero in targets])
             QMessageBox.information(
-                self,
-                "Escanear presupuestos",
-                f"Actualizados: {ok_count}\nCon error: {fail_count}",
+                self, "Escanear presupuestos", _scan_summary(ok_count, failures)
             )
 
         self._refresh_in_progress = True

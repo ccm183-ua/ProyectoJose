@@ -129,3 +129,18 @@ def test_scan_selected_refreshes_rows_instead_of_full_reload(monkeypatch, dashbo
     frame._on_refresh_selected()
 
     assert refreshed == [sorted(rutas)]
+
+
+def test_scan_summary_lists_reason_per_failure():
+    failures = [(f"{i}-26.xlsx", "Ninguna hoja coincide") for i in range(17)]
+
+    text = bd._scan_summary(3, failures)
+
+    assert text.startswith("Actualizados: 3\nCon error: 17")
+    assert "· 0-26.xlsx: Ninguna hoja coincide" in text
+    assert "16-26.xlsx" not in text
+    assert text.endswith("… y 2 más")
+
+
+def test_scan_summary_without_failures():
+    assert bd._scan_summary(5, []) == "Actualizados: 5\nCon error: 0"
