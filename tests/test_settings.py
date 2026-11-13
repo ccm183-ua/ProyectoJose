@@ -314,3 +314,17 @@ def test_modelo_deepseek_vigente_no_se_toca(temp_dir):
     settings = Settings(config_dir=temp_dir)
     settings.save_deepseek_model("deepseek-v4-pro")
     assert Settings(config_dir=temp_dir).get_deepseek_model() == "deepseek-v4-pro"
+
+
+def test_margen_aviso_obras_por_defecto_y_guardado(temp_dir):
+    settings = Settings(config_dir=temp_dir)
+    assert settings.get_obra_margen_aviso_dias() == 7
+    settings.save_obra_margen_aviso_dias(15)
+    assert Settings(config_dir=temp_dir).get_obra_margen_aviso_dias() == 15
+
+
+@pytest.mark.parametrize("valor,esperado", [(-3, 0), (400, 365), ("10", 10), ("abc", 7)])
+def test_margen_aviso_obras_se_acota(temp_dir, valor, esperado):
+    settings = Settings(config_dir=temp_dir)
+    settings._save_config_value("obra_margen_aviso_dias", valor)
+    assert settings.get_obra_margen_aviso_dias() == esperado

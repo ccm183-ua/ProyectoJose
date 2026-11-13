@@ -174,6 +174,22 @@ class Settings:
     def save_gemini_model(self, model: str) -> None:
         self._save_config_value("gemini_model", (model or "").strip() or DEFAULT_GEMINI_MODEL)
 
+    # ── Planificación de obras ──────────────────────────────────────────
+
+    def get_obra_margen_aviso_dias(self) -> int:
+        """Días antes del inicio previsto en que una obra entra en aviso (0-365, por defecto 7)."""
+        from src.core.obra_planning import DEFAULT_MARGEN_AVISO_DIAS
+
+        raw = self._load_config().get("obra_margen_aviso_dias", DEFAULT_MARGEN_AVISO_DIAS)
+        try:
+            value = int(str(raw).strip())
+        except (TypeError, ValueError):
+            return DEFAULT_MARGEN_AVISO_DIAS
+        return max(0, min(365, value))
+
+    def save_obra_margen_aviso_dias(self, dias: int) -> None:
+        self._save_config_value("obra_margen_aviso_dias", max(0, min(365, int(dias))))
+
     def get_deepseek_model(self) -> str:
         model = self._get_config_text("deepseek_model", DEFAULT_DEEPSEEK_MODEL)
         # DeepSeek retiró "deepseek-chat" y "deepseek-reasoner" el 2026-07-24;
