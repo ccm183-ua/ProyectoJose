@@ -32,11 +32,15 @@ class CombinedPartidasReviewDialog(QDialog):
         ai_partidas=None,
         merge_duplicates_note: str = "",
         cobertura=None,
+        library_partidas=None,
     ):
         super().__init__(parent)
         self.setWindowTitle("Revisión final de partidas")
         self._historical_partidas = historical_partidas or []
         self._ai_partidas = ai_partidas or []
+        # Partidas elegidas en la biblioteca (source="library"): no son
+        # evidencia de precio, se etiquetan con su estado de aprobación.
+        self._library_partidas = library_partidas or []
         self._merge_duplicates_note = (merge_duplicates_note or "").strip()
         self._cobertura = cobertura or {}
         self._rows = []
@@ -103,6 +107,15 @@ class CombinedPartidasReviewDialog(QDialog):
             raw.setdefault("source", "ai_completion")
             self._rows.append(
                 {"origin": "IA complementaria", "raw": raw, "partida": normalize_partida_for_excel(raw)}
+            )
+        from src.core.partida_library import STATUS_LABELS
+
+        for partida in self._library_partidas:
+            raw = dict(partida or {})
+            raw.setdefault("source", "library")
+            estado = STATUS_LABELS.get(raw.get("library_status", ""), "sin revisar")
+            self._rows.append(
+                {"origin": f"Biblioteca · {estado}", "raw": raw, "partida": normalize_partida_for_excel(raw)}
             )
     def _build_ui(self):
         main = QVBoxLayout(self)
@@ -232,11 +245,17 @@ class CombinedPartidasReviewDialog(QDialog):
                 motivo = partida.get("reason") or partida.get("source") or partida.get("module") or ""
                 total = cantidad * precio
 
+                base = {
+                    "median_approved": "mediana de obras aprobadas",
+                    "median_all": "mediana de todas las obras (sin evidencia aprobada)",
+                    "instance": "precio de una obra concreta",
+                }.get(row["raw"].get("library_price_basis", ""), "")
                 tooltip = (
                     f"Título: {concepto or '-'}\n"
                     f"Descripción: {descripcion or '-'}\n"
                     f"Origen: {origin}\n"
-                    f"Usa «Ver procedencia» para el detalle."
+                    + (f"Base del precio: {base}\n" if base else "")
+                    + "Usa «Ver procedencia» para el detalle."
                 )
 
                 use_item = QTableWidgetItem()
