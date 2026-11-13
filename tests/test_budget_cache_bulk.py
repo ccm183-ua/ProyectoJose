@@ -65,6 +65,9 @@ def test_sync_with_cached_projects_opens_few_connections(tmp_path, monkeypatch):
             "ruta_carpeta": str(tmp_path),
         })
 
+    # La primera pasada marca cada fila como verificada; se mide la siguiente.
+    sync_presupuestos(scanned, {}, "PRESUPUESTADO")
+
     calls = []
     original = database.connect
     monkeypatch.setattr(database, "connect", lambda *a, **k: (calls.append(1), original(*a, **k))[1])

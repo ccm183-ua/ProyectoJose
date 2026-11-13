@@ -272,6 +272,25 @@ def _migrate_pattern_evidence_columns(conn: sqlite3.Connection) -> None:
         conn.commit()
 
 
+def _migrate_presupuesto_verificacion(conn: sqlite3.Connection) -> None:
+    """Añade a presupuesto la verificación de hoja recordada por mtime (v5).
+
+    ``clave_verificacion`` = revisión del lector + mtime del Excel con el que se
+    comprobó si alguna hoja coincide con el número de proyecto; ``hoja_coincide``
+    es el resultado (1/0/NULL). Permite que la recarga del dashboard no vuelva a
+    abrir un Excel que no ha cambiado.
+    """
+    cur = conn.execute("PRAGMA table_info(presupuesto)")
+    columns = {row[1] for row in cur.fetchall()}
+    changed = False
+    for col_name, col_def in (("clave_verificacion", "TEXT"), ("hoja_coincide", "INTEGER")):
+        if col_name not in columns:
+            conn.execute(f"ALTER TABLE presupuesto ADD COLUMN {col_name} {col_def}")
+            changed = True
+    if changed:
+        conn.commit()
+
+
 def _migrate_historical_budget_sha256_unique_index(conn: sqlite3.Connection) -> None:
     """Índice único parcial: el mismo contenido de fichero (hash) no puede
     ocupar dos presupuestos históricos distintos (fixes histórico evidenciado,
@@ -336,7 +355,7 @@ def _ensure_presupuesto_v2_indexes(conn: sqlite3.Connection) -> None:
 # Version explicita del esquema. Se incrementa al añadir una migracion nueva
 # a _MIGRATIONS; una BDD nueva se crea ya en esta version (las CREATE TABLE
 # de _SCHEMA_SQL/_HISTORICAL_SCHEMA_SQL incluyen todas las columnas).
-CURRENT_SCHEMA_VERSION = 4
+CURRENT_SCHEMA_VERSION = 5
 
 # Migraciones ordenadas e idempotentes (cada una comprueba su propio estado
 # antes de tocar nada). Se ejecutan en este orden porque el seed de módulos
@@ -351,6 +370,7 @@ _MIGRATIONS = [
     _migrate_historical_budget_source_kind,
     _migrate_pattern_evidence_columns,
     _migrate_historical_budget_sha256_unique_index,
+    _migrate_presupuesto_verificacion,
 ]
 
 
