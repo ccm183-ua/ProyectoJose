@@ -121,7 +121,8 @@ def test_guardar_excel_pregunta_antes_de_finalizar(qapp, monkeypatch, respuesta,
     dash = bd.BudgetDashboardFrame.__new__(bd.BudgetDashboardFrame)
     dash._excel_watchers = {}
     dash._excel_no_finalize = set()
-    dash._load_data = lambda: llamadas.append("reload")
+    dash._load_data = lambda: llamadas.append("full-reload")
+    dash._refresh_rows = lambda rutas, on_done=None: llamadas.append("reload")
     bd.BudgetDashboardFrame._watch_excel_changes_and_refresh(dash, "C:/obra/presupuesto.xlsx", "PRESUPUESTADO")
 
     if respuesta == "No":
@@ -172,6 +173,7 @@ def test_vigilancia_excel_se_para_si_se_cierra_durante_la_finalizacion(qapp, mon
     dash._excel_watchers = {}
     dash._excel_no_finalize = set()
     dash._load_data = lambda: None
+    dash._refresh_rows = lambda rutas, on_done=None: None
     bases = []
     mtimes = iter([100.0, 250.0])
 
@@ -203,6 +205,7 @@ def test_vigilancia_excel_rearma_con_el_mtime_del_guardado_detectado(qapp, monke
     dash._excel_watchers = {}
     dash._excel_no_finalize = set()
     dash._load_data = lambda: None
+    dash._refresh_rows = lambda rutas, on_done=None: None
     bases = []
     mtimes = iter([100.0, 250.0])
 
