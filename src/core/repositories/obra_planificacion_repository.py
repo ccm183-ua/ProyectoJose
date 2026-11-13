@@ -52,18 +52,30 @@ def _now() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
-def get_planes(numeros: Iterable[str]) -> Dict[str, Dict]:
-    """Planes existentes de los números dados (los que no tienen fila no aparecen)."""
-    wanted = [n for n in {str(n).strip() for n in numeros} if n]
-    if not wanted:
-        return {}
-    placeholders = ",".join("?" for _ in wanted)
-    with database.get_connection(read_only=True) as conn:
+_CHUNK = 500  # por debajo del límite de parámetros de SQLite
+
+
+def _fetch_many(conn: sqlite3.Connection, numeros: List[str]) -> Dict[str, Dict]:
+    """Planes de muchos números con una consulta por bloque (no una por obra)."""
+    out: Dict[str, Dict] = {}
+    for i in range(0, len(numeros), _CHUNK):
+        chunk = numeros[i:i + _CHUNK]
+        placeholders = ",".join("?" for _ in chunk)
         rows = conn.execute(
             f"SELECT {', '.join(_COLUMNS)} FROM obra_planificacion WHERE numero_proyecto IN ({placeholders})",
-            wanted,
+            chunk,
         ).fetchall()
-    return {row[0]: _row_to_plan(row) for row in rows}
+        out.update({row[0]: _row_to_plan(row) for row in rows})
+    return out
+
+
+def get_planes(numeros: Iterable[str]) -> Dict[str, Dict]:
+    """Planes existentes de los números dados (los que no tienen fila no aparecen)."""
+    wanted = sorted(n for n in {str(n or "").strip() for n in numeros} if n)
+    if not wanted:
+        return {}
+    with database.get_connection(read_only=True) as conn:
+        return _fetch_many(conn, wanted)
 
 
 def _upsert(conn: sqlite3.Connection, numero: str, fields: Dict) -> None:
@@ -144,13 +156,15 @@ def reconcile_scan(numeros_por_estado: Dict[str, List[str]], hoy: date) -> Optio
     - Estado distinto del conocido: transición con la fecha del escaneo, aproximada.
     """
     conteo = Counter(n.strip() for ns in numeros_por_estado.values() for n in ns if n and n.strip())
+    unicos = sorted(n for n, c in conteo.items() if c == 1)
     with database.get_connection() as conn:
         try:
+            existentes = _fetch_many(conn, unicos)
             for estado, numeros in numeros_por_estado.items():
                 for numero in {n.strip() for n in numeros if n and n.strip()}:
                     if conteo[numero] != 1:
                         continue
-                    current = _get_one(conn, numero)
+                    current = existentes.get(numero)
                     known = (current or {}).get("estado_conocido")
                     if not known:
                         _upsert(conn, numero, {"estado_conocido": estado})
