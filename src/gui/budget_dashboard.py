@@ -12,6 +12,7 @@ Funcionalidades:
 - Orden personalizado de pestañas.
 """
 
+import logging
 import os
 import re
 import shutil
@@ -34,6 +35,8 @@ from src.core.settings import Settings
 from src.gui import theme
 from src.utils.budget_utils import RE_PROJECT_NUM, normalize_date
 from src.utils.helpers import run_in_background
+
+logger = logging.getLogger(__name__)
 
 # ── Columnas del modo presupuestos ─────────────────────────────────
 
@@ -93,6 +96,20 @@ def _sort_tabs(states: list[str]) -> list[str]:
     """Ordena las pestañas según ``_TAB_ORDER``; las no listadas van al final."""
     order_map = {name.upper(): i for i, name in enumerate(_TAB_ORDER)}
     return sorted(states, key=lambda s: order_map.get(s.upper(), 999))
+
+
+_SCAN_SUMMARY_MAX = 15
+
+
+def _scan_summary(ok_count: int, failures: list[tuple[str, str]]) -> str:
+    """Resumen de «Escanear presupuestos» con el motivo de cada fallo."""
+    text = f"Actualizados: {ok_count}\nCon error: {len(failures)}"
+    if failures:
+        lines = [f"· {nombre}: {motivo}" for nombre, motivo in failures[:_SCAN_SUMMARY_MAX]]
+        if len(failures) > _SCAN_SUMMARY_MAX:
+            lines.append(f"… y {len(failures) - _SCAN_SUMMARY_MAX} más")
+        text += "\n\n" + "\n".join(lines)
+    return text
 
 
 # ── Parseo de número de proyecto para ordenación numérica ─────────────
@@ -403,6 +420,82 @@ class BudgetDashboardFrame(QMainWindow):
             )
 
         run_in_background(_scan, _on_done)
+
+    def _refresh_rows(self, rutas, on_done=None):
+        """Vuelve a resolver solo las filas de *rutas* y repinta sus pestañas.
+
+        Sustituye a la recarga completa tras acciones sobre presupuestos
+        concretos: no reconstruye pestañas ni bloquea la barra. Conserva la
+        búsqueda, el orden y la selección de cada pestaña.
+        """
+        targets = {os.path.normpath(r) for r in rutas or () if r}
+        jobs: dict[str, list[tuple[int, dict]]] = {}
+        if targets and not self._explorer_mode:
+            for state, rows in self._tab_data.items():
+                for i, proj in enumerate(rows):
+                    ruta = proj.get("ruta_excel") or ""
+                    if ruta and os.path.normpath(ruta) in targets:
+                        jobs.setdefault(state, []).append((i, {
+                            "nombre_carpeta": proj.get("nombre_proyecto", ""),
+                            "numero_proyecto": proj.get("numero", ""),
+                            "ruta_excel": ruta,
+                            "ruta_carpeta": proj.get("ruta_carpeta", ""),
+                        }))
+        if not jobs:
+            if on_done:
+                on_done()
+            return
+
+        rel_index = self._relation_index
+
+        def _work():
+            return {
+                state: resolve_projects([scanned for _, scanned in items], rel_index, state)
+                for state, items in jobs.items()
+            }
+
+        def _done(ok, payload):
+            try:
+                if ok:
+                    for state, resolved in payload.items():
+                        rows = self._tab_data.get(state)
+                        if rows is None:
+                            continue
+                        for (i, scanned), new_row in zip(jobs[state], resolved):
+                            # Si entretanto hubo una recarga completa, la fila ya no es la misma.
+                            if i < len(rows) and rows[i].get("ruta_excel") == scanned["ruta_excel"]:
+                                rows[i] = new_row
+                        selected = self._selected_rutas(state)
+                        self._populate_table(state)
+                        self._reselect_rutas(state, selected)
+                else:
+                    logger.warning("No se pudieron refrescar filas: %s", payload)
+            except RuntimeError:  # el dashboard se cerró mientras tanto
+                return
+            if on_done:
+                on_done()
+
+        run_in_background(_work, _done)
+
+    def _selected_rutas(self, state_name: str) -> set:
+        table = self._tab_tables.get(state_name)
+        if table is None:
+            return set()
+        rutas = set()
+        for idx in table.selectionModel().selectedRows():
+            entry = self._get_row_data(state_name, idx.row())
+            if entry and entry.get("ruta_excel"):
+                rutas.add(entry["ruta_excel"])
+        return rutas
+
+    def _reselect_rutas(self, state_name: str, rutas: set) -> None:
+        table = self._tab_tables.get(state_name)
+        if table is None or not rutas:
+            return
+        for row in range(table.rowCount()):
+            entry = self._get_row_data(state_name, row)
+            if entry and entry.get("ruta_excel") in rutas:
+                table.selectRow(row)
 
     def _set_toolbar_enabled(self, enabled):
         for btn in (self._btn_edit, self._btn_regen_fields, self._btn_refresh_selected,
@@ -1286,16 +1379,17 @@ class BudgetDashboardFrame(QMainWindow):
 
         def _work():
             svc = BudgetService()
-            ok_count = fail_count = 0
+            ok_count = 0
+            failures = []
             for ruta, numero in targets:
-                if not ruta or not os.path.exists(ruta):
-                    fail_count += 1
-                    continue
-                if svc.refresh_budget_cache_entry(ruta, estado=estado, expected_numero=numero):
+                if ruta and os.path.exists(ruta) and svc.refresh_budget_cache_entry(
+                    ruta, estado=estado, expected_numero=numero
+                ):
                     ok_count += 1
-                else:
-                    fail_count += 1
-            return ok_count, fail_count
+                    continue
+                nombre = os.path.basename(ruta) if ruta else (numero or "(sin Excel)")
+                failures.append((nombre, svc.diagnose_read_failure(ruta, numero)))
+            return ok_count, failures
 
         def _done(success, payload):
             self._refresh_in_progress = False
@@ -1303,12 +1397,10 @@ class BudgetDashboardFrame(QMainWindow):
             if not success:
                 QMessageBox.critical(self, "Escanear presupuestos", f"Error al escanear:\n{payload}")
                 return
-            ok_count, fail_count = payload
-            self._load_data()
+            ok_count, failures = payload
+            self._refresh_rows([ruta for ruta, _numero in targets])
             QMessageBox.information(
-                self,
-                "Escanear presupuestos",
-                f"Actualizados: {ok_count}\nCon error: {fail_count}",
+                self, "Escanear presupuestos", _scan_summary(ok_count, failures)
             )
 
         self._refresh_in_progress = True
@@ -1391,51 +1483,57 @@ class BudgetDashboardFrame(QMainWindow):
 
     def _on_open_excel(self):
         selected_many = self._get_selected_many()
-        if not selected_many:
+        if not selected_many or getattr(self, "_open_in_progress", False):
             return
-        from src.core.services import BudgetService
 
-        svc = BudgetService()
-        refreshed_any = False
-        to_open = []
-        unreadable_rutas = set()
+        estado = self._current_state() or ""
+        targets = []
         for selected in selected_many:
             ruta = os.path.normpath(selected.get("ruta_excel", ""))
-            if not os.path.exists(ruta):
-                continue
+            if os.path.exists(ruta):
+                targets.append((ruta, selected.get("numero", "")))
+        if not targets:
+            return
+
+        def _work():
+            from src.core.services import BudgetService
+
+            svc = BudgetService()
             # Refresco inmediato al abrir para no depender del mtime de cierre.
-            if svc.refresh_budget_cache_entry(
-                ruta,
-                estado=self._current_state() or "",
-                expected_numero=selected.get("numero", ""),
-            ):
-                refreshed_any = True
+            # Esa misma lectura dice si el Excel se pudo leer: una por fichero.
+            return [
+                (ruta, svc.refresh_budget_cache_entry(ruta, estado=estado, expected_numero=numero))
+                for ruta, numero in targets
+            ]
 
-            data = svc.read_budget(ruta, expected_numero=selected.get("numero", ""))
-            if not data:
-                unreadable_rutas.add(ruta)
-            to_open.append(ruta)
+        def _done(ok, payload):
+            self._open_in_progress = False
+            QApplication.restoreOverrideCursor()
+            results = payload if ok else [(ruta, False) for ruta, _numero in targets]
+            to_open = [ruta for ruta, _readable in results]
+            unreadable = {ruta for ruta, readable in results if not readable}
 
-        if unreadable_rutas:
-            resp = QMessageBox.question(
-                self,
-                "Lectura incompleta del Excel",
-                f"{len(unreadable_rutas)} de {len(to_open)} presupuestos seleccionados no se "
-                "pudieron leer bien.\n\n¿Deseas abrirlos igualmente y completarlos manualmente después?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            )
-            if resp != QMessageBox.StandardButton.Yes:
-                to_open = [r for r in to_open if r not in unreadable_rutas]
-
-        for ruta in to_open:
-            opened = self._open_file(ruta)
-            if opened:
-                self._watch_excel_changes_and_refresh(
-                    ruta_excel=ruta,
-                    estado=self._current_state() or "",
+            if unreadable:
+                resp = QMessageBox.question(
+                    self,
+                    "Lectura incompleta del Excel",
+                    f"{len(unreadable)} de {len(to_open)} presupuestos seleccionados no se "
+                    "pudieron leer bien.\n\n¿Deseas abrirlos igualmente y completarlos manualmente después?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 )
-        if refreshed_any:
-            self._load_data()
+                if resp != QMessageBox.StandardButton.Yes:
+                    to_open = [r for r in to_open if r not in unreadable]
+
+            for ruta in to_open:
+                if self._open_file(ruta):
+                    self._watch_excel_changes_and_refresh(ruta_excel=ruta, estado=estado)
+            refreshed = [ruta for ruta, readable in results if readable]
+            if refreshed:
+                self._refresh_rows(refreshed)
+
+        self._open_in_progress = True
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        run_in_background(_work, _done)
 
     def _watch_excel_changes_and_refresh(self, ruta_excel: str, estado: str):
         """Vigila el Excel abierto mientras el dashboard siga vivo.
@@ -1516,7 +1614,7 @@ class BudgetDashboardFrame(QMainWindow):
                     return
                 try:
                     if ok_apply and result:
-                        self._load_data()
+                        self._refresh_rows([ruta_excel])
                     elif finalizar:
                         QMessageBox.warning(
                             self, "Finalizar presupuesto",
@@ -1638,7 +1736,7 @@ class BudgetDashboardFrame(QMainWindow):
             QMessageBox.information(
                 self, "Éxito", f"Partidas regeneradas ({len(selected_partidas)})."
             )
-            self._load_data()
+            self._refresh_rows([ruta])
         else:
             QMessageBox.critical(self, "Error", "Error al insertar partidas.")
 
@@ -1698,7 +1796,7 @@ class BudgetDashboardFrame(QMainWindow):
                 self, "Éxito",
                 f"{len(selected_partidas)} partidas añadidas."
             )
-            self._load_data()
+            self._refresh_rows([ruta])
         else:
             QMessageBox.critical(self, "Error", "Error al añadir partidas.")
 
@@ -1824,7 +1922,7 @@ class BudgetDashboardFrame(QMainWindow):
         if failed:
             summary += "\n\nError en:\n" + "\n".join(f"· {n}" for n in failed[:10])
         QMessageBox.information(self, "Regenerar campos", summary)
-        self._load_data()
+        self._refresh_rows([ruta for ruta, _data, _name, _comunidad in ready])
 
     def _edit_regen_header(self, ruta, numero_proyecto="", ask_confirmation=True):
         if ask_confirmation:
@@ -1861,7 +1959,7 @@ class BudgetDashboardFrame(QMainWindow):
 
         if self._write_regenerated_header(ruta, project_data, project_name, comunidad_data):
             QMessageBox.information(self, "Éxito", "Campos actualizados.")
-            self._load_data()
+            self._refresh_rows([ruta])
         else:
             QMessageBox.critical(self, "Error", "Error al actualizar campos.")
 
