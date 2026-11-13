@@ -1468,51 +1468,57 @@ class BudgetDashboardFrame(QMainWindow):
 
     def _on_open_excel(self):
         selected_many = self._get_selected_many()
-        if not selected_many:
+        if not selected_many or getattr(self, "_open_in_progress", False):
             return
-        from src.core.services import BudgetService
 
-        svc = BudgetService()
-        refreshed_any = False
-        to_open = []
-        unreadable_rutas = set()
+        estado = self._current_state() or ""
+        targets = []
         for selected in selected_many:
             ruta = os.path.normpath(selected.get("ruta_excel", ""))
-            if not os.path.exists(ruta):
-                continue
+            if os.path.exists(ruta):
+                targets.append((ruta, selected.get("numero", "")))
+        if not targets:
+            return
+
+        def _work():
+            from src.core.services import BudgetService
+
+            svc = BudgetService()
             # Refresco inmediato al abrir para no depender del mtime de cierre.
-            if svc.refresh_budget_cache_entry(
-                ruta,
-                estado=self._current_state() or "",
-                expected_numero=selected.get("numero", ""),
-            ):
-                refreshed_any = True
+            # Esa misma lectura dice si el Excel se pudo leer: una por fichero.
+            return [
+                (ruta, svc.refresh_budget_cache_entry(ruta, estado=estado, expected_numero=numero))
+                for ruta, numero in targets
+            ]
 
-            data = svc.read_budget(ruta, expected_numero=selected.get("numero", ""))
-            if not data:
-                unreadable_rutas.add(ruta)
-            to_open.append(ruta)
+        def _done(ok, payload):
+            self._open_in_progress = False
+            QApplication.restoreOverrideCursor()
+            results = payload if ok else [(ruta, False) for ruta, _numero in targets]
+            to_open = [ruta for ruta, _readable in results]
+            unreadable = {ruta for ruta, readable in results if not readable}
 
-        if unreadable_rutas:
-            resp = QMessageBox.question(
-                self,
-                "Lectura incompleta del Excel",
-                f"{len(unreadable_rutas)} de {len(to_open)} presupuestos seleccionados no se "
-                "pudieron leer bien.\n\n¿Deseas abrirlos igualmente y completarlos manualmente después?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            )
-            if resp != QMessageBox.StandardButton.Yes:
-                to_open = [r for r in to_open if r not in unreadable_rutas]
-
-        for ruta in to_open:
-            opened = self._open_file(ruta)
-            if opened:
-                self._watch_excel_changes_and_refresh(
-                    ruta_excel=ruta,
-                    estado=self._current_state() or "",
+            if unreadable:
+                resp = QMessageBox.question(
+                    self,
+                    "Lectura incompleta del Excel",
+                    f"{len(unreadable)} de {len(to_open)} presupuestos seleccionados no se "
+                    "pudieron leer bien.\n\n¿Deseas abrirlos igualmente y completarlos manualmente después?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 )
-        if refreshed_any:
-            self._load_data()
+                if resp != QMessageBox.StandardButton.Yes:
+                    to_open = [r for r in to_open if r not in unreadable]
+
+            for ruta in to_open:
+                if self._open_file(ruta):
+                    self._watch_excel_changes_and_refresh(ruta_excel=ruta, estado=estado)
+            refreshed = [ruta for ruta, readable in results if readable]
+            if refreshed:
+                self._refresh_rows(refreshed)
+
+        self._open_in_progress = True
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        run_in_background(_work, _done)
 
     def _watch_excel_changes_and_refresh(self, ruta_excel: str, estado: str):
         """Vigila el Excel abierto mientras el dashboard siga vivo.
