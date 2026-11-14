@@ -144,3 +144,15 @@ def test_enter_opens_excel_unless_typing(monkeypatch, dash):
     monkeypatch.setattr(bd.QApplication, "focusWidget", staticmethod(lambda: frame._tab_searches[STATE]))
     frame._on_enter_shortcut()
     assert opened == [1]
+
+
+def test_enter_in_a_date_filter_does_not_open_excel(monkeypatch, dash):
+    from PySide6.QtWidgets import QDateEdit
+
+    frame, _ = dash
+    opened = []
+    date_edit = QDateEdit(frame)
+    monkeypatch.setattr(frame, "_on_open_excel", lambda: opened.append(1))
+    monkeypatch.setattr(bd.QApplication, "focusWidget", staticmethod(lambda: date_edit))
+    frame._on_enter_shortcut()
+    assert opened == []

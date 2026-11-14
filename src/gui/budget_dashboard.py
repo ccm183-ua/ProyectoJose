@@ -24,8 +24,8 @@ from datetime import date
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QApplication, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow, QMenu,
-    QMessageBox, QPushButton, QTableWidget, QTableWidgetItem,
+    QAbstractSpinBox, QApplication, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow,
+    QMenu, QMessageBox, QPushButton, QTableWidget, QTableWidgetItem,
     QTabWidget, QVBoxLayout, QWidget,
 )
 
@@ -128,7 +128,7 @@ _SCAN_SUMMARY_MAX = 15
 
 
 def _scan_summary(ok_count: int, failures: list[tuple[str, str]]) -> str:
-    """Resumen de «Escanear presupuestos» con el motivo de cada fallo."""
+    """Resumen de «Releer del Excel» con el motivo de cada fallo."""
     text = f"Actualizados: {ok_count}\nCon error: {len(failures)}"
     if failures:
         lines = [f"· {nombre}: {motivo}" for nombre, motivo in failures[:_SCAN_SUMMARY_MAX]]
@@ -1582,10 +1582,7 @@ class BudgetDashboardFrame(QMainWindow):
             dlg = BudgetPreviewDialog(self, ruta)
             dlg.show()
         if len(rutas) > 5:
-            QMessageBox.information(
-                self, "Previsualización",
-                f"Se abrieron 5 previsualizaciones de {len(rutas)} seleccionados.",
-            )
+            self._notify(f"Se abrieron 5 previsualizaciones de {len(rutas)} seleccionados.")
 
     def _build_edit_menu(self, parent) -> QMenu:
         menu = QMenu("Editar", parent)
@@ -1684,8 +1681,8 @@ class BudgetDashboardFrame(QMainWindow):
         run_in_background(_work, _done)
 
     def _on_enter_shortcut(self):
-        if isinstance(QApplication.focusWidget(), QLineEdit):
-            return  # Intro en el buscador o en un filtro no abre nada
+        if isinstance(QApplication.focusWidget(), (QLineEdit, QAbstractSpinBox)):
+            return  # Intro en el buscador o en un filtro (texto o fecha) no abre nada
         if self._explorer_mode:
             self._on_explorer_dblclick()
         else:
@@ -1703,7 +1700,7 @@ class BudgetDashboardFrame(QMainWindow):
             return
         if self._explorer_mode:
             QMessageBox.information(
-                self, "Escanear presupuestos",
+                self, "Releer del Excel",
                 "Esta acción está disponible en la vista de presupuestos.",
             )
             return
@@ -1737,13 +1734,14 @@ class BudgetDashboardFrame(QMainWindow):
             self._refresh_in_progress = False
             QApplication.restoreOverrideCursor()
             if not success:
-                QMessageBox.critical(self, "Escanear presupuestos", f"Error al escanear:\n{payload}")
+                QMessageBox.critical(self, "Releer del Excel", f"Error al escanear:\n{payload}")
                 return
             ok_count, failures = payload
             self._refresh_rows([ruta for ruta, _numero in targets])
-            QMessageBox.information(
-                self, "Escanear presupuestos", _scan_summary(ok_count, failures)
-            )
+            if failures:
+                QMessageBox.information(self, "Releer del Excel", _scan_summary(ok_count, failures))
+            else:
+                self._notify(f"Releídos {ok_count}")
 
         self._refresh_in_progress = True
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
@@ -1778,16 +1776,17 @@ class BudgetDashboardFrame(QMainWindow):
                 return
             ok, result = payload
             if ok:
-                resp = QMessageBox.question(
-                    self, "PDF exportado",
-                    f"PDF generado:\n{result}\n\n¿Desea abrirlo?",
-                )
-                if resp == QMessageBox.StandardButton.Yes:
-                    self._open_file(result)
+                self._notify(f"PDF generado: {os.path.basename(result)}", self._open_pdf_actions(result))
             else:
                 QMessageBox.critical(self, "Error", f"Error al exportar PDF:\n{result}")
 
         run_in_background(lambda: exporter.export(ruta), _on_pdf_done)
+
+    def _open_pdf_actions(self, pdf_path):
+        return [
+            ("Abrir", lambda: self._open_file(pdf_path)),
+            ("Carpeta", lambda: self._open_file(os.path.dirname(pdf_path))),
+        ]
 
     def _on_open_excel(self):
         selected_many = self._get_selected_many()
@@ -1809,35 +1808,30 @@ class BudgetDashboardFrame(QMainWindow):
             svc = BudgetService()
             # Refresco inmediato al abrir para no depender del mtime de cierre.
             # Esa misma lectura dice si el Excel se pudo leer: una por fichero.
-            return [
-                (ruta, svc.refresh_budget_cache_entry(ruta, estado=estado, expected_numero=numero))
-                for ruta, numero in targets
-            ]
+            out = []
+            for ruta, numero in targets:
+                readable = svc.refresh_budget_cache_entry(ruta, estado=estado, expected_numero=numero)
+                motivo = "" if readable else svc.diagnose_read_failure(ruta, numero)
+                out.append((ruta, readable, motivo))
+            return out
 
         def _done(ok, payload):
             self._open_in_progress = False
             QApplication.restoreOverrideCursor()
-            results = payload if ok else [(ruta, False) for ruta, _numero in targets]
-            to_open = [ruta for ruta, _readable in results]
-            unreadable = {ruta for ruta, readable in results if not readable}
-
-            if unreadable:
-                resp = QMessageBox.question(
-                    self,
-                    "Lectura incompleta del Excel",
-                    f"{len(unreadable)} de {len(to_open)} presupuestos seleccionados no se "
-                    "pudieron leer bien.\n\n¿Deseas abrirlos igualmente y completarlos manualmente después?",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                )
-                if resp != QMessageBox.StandardButton.Yes:
-                    to_open = [r for r in to_open if r not in unreadable]
-
-            for ruta in to_open:
+            results = payload if ok else [(ruta, False, "") for ruta, _numero in targets]
+            for ruta, _readable, _motivo in results:
                 if self._open_file(ruta):
                     self._watch_excel_changes_and_refresh(ruta_excel=ruta, estado=estado)
-            refreshed = [ruta for ruta, readable in results if readable]
-            if refreshed:
-                self._refresh_rows(refreshed)
+            unreadable = [(ruta, motivo) for ruta, readable, motivo in results if not readable]
+            if len(unreadable) == 1:
+                ruta, motivo = unreadable[0]
+                detalle = f": {motivo}" if motivo else ""
+                self._notify(f"No se pudo leer bien {os.path.basename(ruta)}{detalle}. "
+                             "Se ha abierto igualmente.")
+            elif unreadable:
+                self._notify(f"{len(unreadable)} Excels no se pudieron leer bien. "
+                             "Se han abierto igualmente; usa «Releer del Excel» para ver el motivo.")
+            self._refresh_rows([ruta for ruta, _readable, _motivo in results])
 
         self._open_in_progress = True
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
@@ -2041,9 +2035,7 @@ class BudgetDashboardFrame(QMainWindow):
 
         if apply_reviewed_partidas(svc, ruta, selected_partidas, MODE_REPLACE):
             svc.finalize_budget(ruta, estado=self._current_state() or "")
-            QMessageBox.information(
-                self, "Éxito", f"Partidas regeneradas ({len(selected_partidas)})."
-            )
+            self._notify(f"Partidas regeneradas ({len(selected_partidas)}).")
             self._refresh_rows([ruta])
         else:
             QMessageBox.critical(self, "Error", "Error al insertar partidas.")
@@ -2067,9 +2059,7 @@ class BudgetDashboardFrame(QMainWindow):
             dlg.get_candidates(), MODE_APPEND, existing_partidas=existing_partidas
         )
         if not candidatas:
-            QMessageBox.information(
-                self, "Biblioteca", "Todas las partidas elegidas ya están en el presupuesto."
-            )
+            self._notify("Todas las partidas elegidas ya están en el presupuesto.")
             return
         review = review_mod.CombinedPartidasReviewDialog(self, library_partidas=candidatas)
         if review.exec() != 1:
@@ -2079,7 +2069,7 @@ class BudgetDashboardFrame(QMainWindow):
             return
         if apply_reviewed_partidas(svc, ruta, selected, MODE_APPEND):
             svc.finalize_budget(ruta, estado=self._current_state() or "")
-            QMessageBox.information(self, "Éxito", f"{len(selected)} partidas añadidas.")
+            self._notify(f"{len(selected)} partidas añadidas.")
             self._refresh_rows([ruta])
         else:
             QMessageBox.critical(self, "Error", "Error al añadir partidas.")
@@ -2100,10 +2090,7 @@ class BudgetDashboardFrame(QMainWindow):
 
         if apply_reviewed_partidas(svc, ruta, selected_partidas, MODE_APPEND):
             svc.finalize_budget(ruta, estado=self._current_state() or "")
-            QMessageBox.information(
-                self, "Éxito",
-                f"{len(selected_partidas)} partidas añadidas."
-            )
+            self._notify(f"{len(selected_partidas)} partidas añadidas.")
             self._refresh_rows([ruta])
         else:
             QMessageBox.critical(self, "Error", "Error al añadir partidas.")
@@ -2229,21 +2216,13 @@ class BudgetDashboardFrame(QMainWindow):
         summary = f"Regenerados: {len(ready) - len(failed)}\nPendientes: {len(pending)}\nCon error: {len(failed)}"
         if failed:
             summary += "\n\nError en:\n" + "\n".join(f"· {n}" for n in failed[:10])
-        QMessageBox.information(self, "Regenerar campos", summary)
+        if failed or pending:
+            QMessageBox.information(self, "Regenerar campos", summary)
+        else:
+            self._notify(f"Campos regenerados en {len(ready)} presupuesto(s).")
         self._refresh_rows([ruta for ruta, _data, _name, _comunidad in ready])
 
-    def _edit_regen_header(self, ruta, numero_proyecto="", ask_confirmation=True):
-        if ask_confirmation:
-            confirm = QMessageBox.warning(
-                self, "Regenerar campos",
-                "Esta acción sobrescribirá los campos de cabecera del presupuesto "
-                "(cliente, dirección, fecha, etc.).\n\n¿Desea continuar?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
-            )
-            if confirm != QMessageBox.StandardButton.Yes:
-                return
-
+    def _edit_regen_header(self, ruta, numero_proyecto=""):
         project_data, project_name = self._obtain_project_data(
             preselect_numero=numero_proyecto
         )
@@ -2266,7 +2245,7 @@ class BudgetDashboardFrame(QMainWindow):
             )
 
         if self._write_regenerated_header(ruta, project_data, project_name, comunidad_data):
-            QMessageBox.information(self, "Éxito", "Campos actualizados.")
+            self._notify(f"Campos actualizados: {os.path.basename(ruta)}")
             self._refresh_rows([ruta])
         else:
             QMessageBox.critical(self, "Error", "Error al actualizar campos.")
