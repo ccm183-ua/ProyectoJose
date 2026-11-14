@@ -31,11 +31,13 @@ from PySide6.QtWidgets import (
 
 from src.core import folder_scanner
 from src.core.budget_cache import _wait_for_excel_change, cleanup_orphaned_cache
+from src.core.budget_filters import BudgetFilters, apply_filters, distinct_values, summarize
 from src.core.obra_planning import aviso_text, color_category, duracion_text, retraso_text
 from src.core.obra_planning_service import PLANNING_STATES, enrich_with_planning, planning_key
 from src.core.project_data_resolver import build_relation_index, resolve_projects
 from src.core.settings import Settings
 from src.gui import theme
+from src.gui.widgets.budget_filter_bar import BudgetFilterBar
 from src.utils.budget_utils import RE_PROJECT_NUM, normalize_date
 from src.utils.helpers import run_in_background
 
@@ -194,6 +196,10 @@ class BudgetDashboardFrame(QMainWindow):
         self._tab_data: dict[str, list[dict]] = {}
         self._tab_tables: dict[str, QTableWidget] = {}
         self._tab_searches: dict[str, QLineEdit] = {}
+        # Filtros por pestaña: sobreviven a las recargas; se pierden al cerrar.
+        self._tab_filters: dict[str, BudgetFilters] = {}
+        self._tab_filter_bars: dict[str, BudgetFilterBar] = {}
+        self._filters_expanded: dict[str, bool] = {}
         self._view_ctx: dict | None = None
         self._state_names: list[str] = []
         self._relation_index: dict = {}
@@ -568,6 +574,7 @@ class BudgetDashboardFrame(QMainWindow):
         self._tab_data.clear()
         self._tab_tables.clear()
         self._tab_searches.clear()
+        self._tab_filter_bars.clear()
         self._state_names = states
 
         for state_name in states:
@@ -580,8 +587,21 @@ class BudgetDashboardFrame(QMainWindow):
             )
 
             search_widget, search_ctrl = self._create_search_box(tab_widget, state_name)
-            tab_layout.addWidget(search_widget)
             self._tab_searches[state_name] = search_ctrl
+            if self._explorer_mode:
+                tab_layout.addWidget(search_widget)
+            else:
+                bar = BudgetFilterBar(tab_widget, leading=search_widget)
+                bar.set_filters(self._tab_filters.get(state_name, BudgetFilters()))
+                bar.set_expanded(self._filters_expanded.get(state_name, False))
+                bar.filters_changed.connect(
+                    lambda f, sn=state_name: self._on_filters_changed(sn, f)
+                )
+                bar.expanded_changed.connect(
+                    lambda on, sn=state_name: self._filters_expanded.__setitem__(sn, on)
+                )
+                tab_layout.addWidget(bar)
+                self._tab_filter_bars[state_name] = bar
 
             if self._explorer_mode:
                 explorer_data = (
@@ -818,11 +838,11 @@ class BudgetDashboardFrame(QMainWindow):
             if not self._explorer_mode:
                 self._apply_extra_columns_visibility(table)
 
-    def _show_no_results_row(self, table, query):
-        """Si la búsqueda no da resultados, muestra un aviso en vez de dejar la tabla en blanco."""
+    def _show_no_results_row(self, table, message):
+        """Si no hay filas que mostrar, muestra un aviso en vez de dejar la tabla en blanco."""
         table.setRowCount(1)
         table.setSpan(0, 0, 1, table.columnCount())
-        item = QTableWidgetItem(f"Sin resultados para «{query.strip()}» · Borra el texto de búsqueda para ver todo")
+        item = QTableWidgetItem(message)
         item.setFlags(Qt.ItemFlag.ItemIsEnabled)
         item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         table.setItem(0, 0, item)
@@ -833,6 +853,7 @@ class BudgetDashboardFrame(QMainWindow):
         self._tab_data.clear()
         self._tab_tables.clear()
         self._tab_searches.clear()
+        self._tab_filter_bars.clear()
         self._state_names = []
 
         empty_widget = QWidget()
@@ -895,6 +916,22 @@ class BudgetDashboardFrame(QMainWindow):
             return rows
         return [r for r in rows if q in r.get("nombre", "").lower()]
 
+    def _visible_rows(self, state_name):
+        """Filas que muestra la pestaña: búsqueda de texto + filtros (en ese orden)."""
+        rows = self._tab_data.get(state_name, [])
+        search_ctrl = self._tab_searches.get(state_name)
+        query = search_ctrl.text() if search_ctrl else ""
+        if self._explorer_mode:
+            return self._filter_explorer_rows(rows, query)
+        filtered = self._filter_rows(rows, query)
+        return apply_filters(filtered, self._tab_filters.get(state_name, BudgetFilters()))
+
+    def _on_filters_changed(self, state_name, filters):
+        self._tab_filters[state_name] = filters
+        selected = self._selected_rutas(state_name)
+        self._populate_table(state_name)
+        self._reselect_rutas(state_name, selected)
+
     # ------------------------------------------------------------------
     # Poblar tabla (modo presupuestos)
     # ------------------------------------------------------------------
@@ -914,10 +951,21 @@ class BudgetDashboardFrame(QMainWindow):
         rows = self._tab_data.get(state_name, [])
         search_ctrl = self._tab_searches.get(state_name)
         query = search_ctrl.text() if search_ctrl else ""
-        filtered = self._filter_rows(rows, query)
+        filters = self._tab_filters.get(state_name, BudgetFilters())
+        filtered = self._visible_rows(state_name)
 
-        if not filtered and rows and query.strip():
-            self._show_no_results_row(table, query)
+        bar = self._tab_filter_bars.get(state_name)
+        if bar is not None:
+            bar.set_options(distinct_values(rows, "cliente"),
+                            distinct_values(rows, "administracion_nombre"))
+            bar.set_summary(*summarize(filtered))
+
+        if not filtered and rows and (query.strip() or not filters.is_empty()):
+            if not filters.is_empty():
+                message = "Ningún presupuesto cumple los filtros · Pulsa «Limpiar filtros»"
+            else:
+                message = f"Sin resultados para «{query.strip()}» · Borra el texto de búsqueda para ver todo"
+            self._show_no_results_row(table, message)
             table.setSortingEnabled(True)
             self._update_buttons()
             return
@@ -1100,7 +1148,9 @@ class BudgetDashboardFrame(QMainWindow):
         filtered = self._filter_explorer_rows(rows, query)
 
         if not filtered and rows and query.strip():
-            self._show_no_results_row(table, query)
+            self._show_no_results_row(
+                table, f"Sin resultados para «{query.strip()}» · Borra el texto de búsqueda para ver todo"
+            )
             table.setSortingEnabled(True)
             self._update_buttons()
             return
@@ -1362,14 +1412,7 @@ class BudgetDashboardFrame(QMainWindow):
             return None
         data_idx = first_item.data(_DATA_REF_ROLE)
 
-        rows = self._tab_data.get(state_name, [])
-        search_ctrl = self._tab_searches.get(state_name)
-        query = search_ctrl.text() if search_ctrl else ""
-
-        if self._explorer_mode:
-            filtered = self._filter_explorer_rows(rows, query)
-        else:
-            filtered = self._filter_rows(rows, query)
+        filtered = self._visible_rows(state_name)
 
         if data_idx is None or data_idx >= len(filtered):
             return None
