@@ -1318,26 +1318,27 @@ class BudgetDashboardFrame(QMainWindow):
             )
             return
 
-        confirm = QMessageBox.question(
-            self, "Mover proyectos",
-            f"¿Mover {len(valid_moves)} proyecto(s) de\n  {from_state}\na\n  {to_state}?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        from src.core.repositories.obra_planificacion_repository import (
+            get_planes, record_state_change,
         )
-        if confirm != QMessageBox.StandardButton.Yes:
-            return
 
-        from src.core.repositories.obra_planificacion_repository import record_state_change
-
-        moved = 0
-        failed = 0
         duplicates = getattr(self, "_planning_duplicates", set())
+        numeros = [n for _s, _d, n in valid_moves if n and n not in duplicates]
+        try:
+            existing = get_planes(numeros)
+        except Exception:
+            logger.exception("No se pudo leer la planificación antes de mover")
+            existing = {}
+        snapshots = {n: existing.get(n) for n in numeros}
+
+        moved, failed = [], []
         for src_folder, dest_folder, numero in valid_moves:
             try:
                 shutil.move(src_folder, dest_folder)
-                moved += 1
-            except Exception:
-                failed += 1
+            except Exception as exc:
+                failed.append((os.path.basename(src_folder), str(exc)))
                 continue
+            moved.append((src_folder, dest_folder, numero))
             # Planificación: al pasar a EJECUTANDO/TERMINADO queda la fecha real
             # (exacta, porque el movimiento lo hace la app ahora mismo).
             if numero and numero not in duplicates:
@@ -1345,10 +1346,46 @@ class BudgetDashboardFrame(QMainWindow):
                 if err:
                     logger.warning("No se pudo registrar la fecha de %s: %s", numero, err)
 
-        QMessageBox.information(
-            self, "Mover proyectos",
-            f"Movidos: {moved}\nCon error: {failed}"
-        )
+        if failed:
+            QMessageBox.warning(
+                self, "Mover proyectos",
+                f"No se pudieron mover {len(failed)} proyecto(s):\n"
+                + "\n".join(f"· {n}: {m}" for n, m in failed[:10]),
+            )
+        if moved:
+            noun = "proyecto movido" if len(moved) == 1 else "proyectos movidos"
+            self._notify(
+                f"{len(moved)} {noun} a {to_state}",
+                [("Deshacer", lambda: self._undo_move(moved, snapshots))],
+            )
+        self._load_data()
+
+    def _undo_move(self, moves, snapshots):
+        """Devuelve las carpetas a su origen y la planificación a como estaba."""
+        from src.core.repositories.obra_planificacion_repository import restore_plan_snapshot
+
+        failed = []
+        for src_folder, dest_folder, numero in reversed(moves):
+            if os.path.exists(src_folder) or not os.path.isdir(dest_folder):
+                failed.append((os.path.basename(src_folder), "la carpeta ya no está donde se movió"))
+                continue
+            try:
+                shutil.move(dest_folder, src_folder)
+            except Exception as exc:
+                failed.append((os.path.basename(src_folder), str(exc)))
+                continue
+            if numero in snapshots:
+                err = restore_plan_snapshot(numero, snapshots[numero])
+                if err:
+                    logger.warning("No se pudo restaurar la planificación de %s: %s", numero, err)
+        if failed:
+            QMessageBox.warning(
+                self, "Deshacer",
+                "No se pudieron devolver algunas carpetas:\n"
+                + "\n".join(f"· {n}: {m}" for n, m in failed[:10]),
+            )
+        else:
+            self._notify("Movimiento deshecho")
         self._load_data()
 
     # ------------------------------------------------------------------
