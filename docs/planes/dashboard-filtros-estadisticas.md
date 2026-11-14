@@ -1,6 +1,6 @@
 # Plan: Mejoras en el Dashboard — Filtros y Estadísticas por Administración/Comunidad
 
-> **Estado (2026-11-11):** A medias: los datos (comunidad_id, administracion_id en la caché) existen; el panel de filtros, las estadísticas y la exportación CSV no.
+> **Estado (2026-11-14):** Fases 1-2 (filtros) sustituidas por `docs/superpowers/specs/2026-11-14-dashboard-filtros-ux-design.md` (filtros por cliente/administración por nombre, no por id: la BD real no tiene administraciones ni comunidades). Fase 3 (estadísticas) y fase 4 pendientes.
 
 ## 1. Contexto de la aplicación
 
