@@ -210,8 +210,6 @@ class BudgetDashboardFrame(QMainWindow):
         self._excel_watchers: dict[str, threading.Event] = {}
         # Números de proyecto repetidos en el último escaneo completo (no se planifican).
         self._planning_duplicates: set[str] = set()
-        # Excels en los que el usuario ya dijo "No" a finalizar al guardar.
-        self._excel_no_finalize: set[str] = set()
 
         self._build_ui()
         self._center()
@@ -1841,7 +1839,7 @@ class BudgetDashboardFrame(QMainWindow):
         """Vigila el Excel abierto mientras el dashboard siga vivo.
 
         No se detiene en el primer guardado ni a los pocos minutos: al detectar
-        un cambio pregunta si finalizar (decisión E1), refresca el snapshot y
+        un cambio refresca la fila, ofrece «Finalizar» en un aviso pasajero y
         vuelve a vigilar, para que ediciones posteriores tampoco queden
         presentadas como datos actuales. El vigilante sigue registrado durante
         todo el ciclo, así que cerrar el dashboard lo detiene siempre.
@@ -1876,40 +1874,15 @@ class BudgetDashboardFrame(QMainWindow):
                 self._forget_excel_watch(ruta_excel, stop)
                 return
             # La nueva línea base es el guardado detectado, no el momento en que
-            # se vuelva a vigilar: un guardado hecho mientras el diálogo está
-            # abierto se detecta en la siguiente vuelta.
+            # se vuelva a vigilar: un guardado hecho mientras se refresca la
+            # fila se detecta en la siguiente vuelta.
             new_baseline = payload.get("mtime", baseline)
-            # Decisión E1: al guardar ya no se finaliza sin preguntar. Si el
-            # usuario dice "No", los siguientes guardados de este Excel solo
-            # refrescan la tabla, sin volver a preguntar.
-            if ruta_excel in self._excel_no_finalize:
-                finalizar = False
-            else:
-                try:
-                    resp = QMessageBox.question(
-                        self,
-                        "Presupuesto modificado",
-                        f"Se han guardado cambios en:\n{os.path.basename(ruta_excel)}\n\n"
-                        "¿Finalizar el presupuesto con los datos actuales del Excel?\n"
-                        "(Si eliges No, solo se actualiza la tabla.)",
-                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                        QMessageBox.StandardButton.No,
-                    )
-                except RuntimeError:  # el dashboard ya se cerró
-                    return
-                if stop.is_set():  # se cerró el dashboard con el diálogo abierto
-                    return
-                finalizar = resp == QMessageBox.StandardButton.Yes
-                if not finalizar:
-                    self._excel_no_finalize.add(ruta_excel)
-
+            # Al guardar no se finaliza ni se pregunta: se refresca la fila y se
+            # ofrece «Finalizar» en un aviso que no interrumpe.
             def _apply():
                 from src.core.services import BudgetService
 
-                svc = BudgetService()
-                if finalizar:
-                    return svc.finalize_budget(ruta_excel, estado=estado)
-                return svc.refresh_budget_cache_entry(ruta_excel, estado=estado)
+                return BudgetService().refresh_budget_cache_entry(ruta_excel, estado=estado)
 
             def _applied(ok_apply, result):
                 if stop.is_set():
@@ -1917,11 +1890,10 @@ class BudgetDashboardFrame(QMainWindow):
                 try:
                     if ok_apply and result:
                         self._refresh_rows([ruta_excel])
-                    elif finalizar:
-                        QMessageBox.warning(
-                            self, "Finalizar presupuesto",
-                            "No se pudo finalizar el presupuesto con los datos del Excel.",
-                        )
+                    self._notify(
+                        f"Se guardó {os.path.basename(ruta_excel)} · ¿finalizar?",
+                        [("Finalizar", lambda: self._finalize_ruta(ruta_excel, estado))],
+                    )
                 except RuntimeError:
                     return
                 if not stop.is_set():
