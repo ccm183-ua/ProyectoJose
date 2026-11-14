@@ -37,7 +37,7 @@ una fila bajo el buscador:
 | Administración | Igual, con los `administracion_nombre` de las filas. Desactivado (con ayuda «No hay administraciones en estos presupuestos») si no hay ninguno. |
 | Fecha desde / hasta | Dos campos de fecha opcionales (casilla para activarlos). Límites inclusivos. |
 | Importe mín. / máx. | Dos campos numéricos opcionales, en euros, sobre `total` (con IVA). Límites inclusivos. |
-| Limpiar filtros | Quita todos los filtros de la pestaña. |
+| Limpiar filtros | Quita todos los filtros de la pestaña. Está en la fila de etiquetas, visible siempre que haya algún filtro activo (aunque el panel esté plegado). |
 
 - Plegada, la fila deja ver los filtros activos como etiquetas («Fincas Sol ×»,
   «desde 01/01/26 ×», «≥ 5.000 € ×»); la × quita solo ese filtro.
@@ -133,7 +133,7 @@ sustituye al anterior. No roba el foco. API:
 | Mover proyectos | Pregunta + ventana de resultado | Sin pregunta. Toast «N proyecto(s) movidos a X · [Deshacer]». Con fallos: ventana con la lista de fallos (y el toast para los movidos). |
 | Deshacer mover | — | Devuelve cada carpeta movida a su origen (si el origen no existe ya) y restaura la planificación de la obra a la instantánea tomada antes de mover. Toast con el resultado; ventana solo si algo falla. Recarga como hoy. |
 | Guardar un Excel abierto (vigilante) | Pregunta «¿Finalizar?» | Refresca la fila sin preguntar y muestra toast «Se guardó X · [Finalizar]». Se elimina `_excel_no_finalize`. |
-| Abrir Excel ilegible | Pregunta «¿Abrir igualmente?» | Abre sin preguntar; la fila queda con ⚠ y el motivo (diagnóstico existente). |
+| Abrir Excel ilegible | Pregunta «¿Abrir igualmente?» | Abre sin preguntar y muestra toast «No se pudo leer bien X: <motivo>. Se ha abierto igualmente.» (diagnóstico existente; con varios, el número y la indicación de usar «Releer del Excel»). |
 | Releer del Excel | Ventana de resumen | Sin fallos: toast «Releídos N». Con fallos: la ventana actual con motivos. |
 | Exportar PDF | Pregunta «¿Abrirlo?» | Toast «PDF generado · [Abrir] [Carpeta]». |
 | Regenerar campos (uno) | Advertencia + diálogo de relación | Sin advertencia: el diálogo de relación ya muestra los datos y tiene Cancelar. Éxito → toast. |
