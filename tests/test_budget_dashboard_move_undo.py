@@ -108,3 +108,22 @@ def test_restore_plan_snapshot_none_deletes(mover):
     upsert_plan("1-26", notas="x")
     assert restore_plan_snapshot("1-26", None) is None
     assert get_planes(["1-26"]) == {}
+
+
+# ── Revisión 2026-11-15 ──────────────────────────────────────────────────
+
+def test_undo_keeps_planning_if_it_could_not_be_read_before_moving(mover, monkeypatch):
+    import src.core.repositories.obra_planificacion_repository as repo
+
+    bd, dash, obra, root, boxes, toasts, reloads = mover
+    repo.upsert_plan("114-26", inicio_previsto=date(2026, 9, 1), notas="andamio")
+    real_get = repo.get_planes
+    monkeypatch.setattr(repo, "get_planes", lambda *_a: (_ for _ in ()).throw(RuntimeError("bd ocupada")))
+    bd.BudgetDashboardFrame._move_project(dash, [obra("EJECUTAR", "114-26")], "EJECUTAR", "EJECUTANDO")
+    monkeypatch.setattr(repo, "get_planes", real_get)
+
+    toasts[-1][1]["Deshacer"]()
+
+    plan = repo.get_planes(["114-26"])["114-26"]
+    assert plan["inicio_previsto"] == date(2026, 9, 1) and plan["notas"] == "andamio"
+    assert (root / "EJECUTAR" / "114-26 OBRA").is_dir()

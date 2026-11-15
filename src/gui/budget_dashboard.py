@@ -1349,10 +1349,12 @@ class BudgetDashboardFrame(QMainWindow):
         numeros = [n for _s, _d, n in valid_moves if n and n not in duplicates]
         try:
             existing = get_planes(numeros)
+            snapshots = {n: existing.get(n) for n in numeros}
         except Exception:
+            # Sin la copia previa, Deshacer no puede restaurar la planificación:
+            # se deja como esté (restaurar «sin fila» la borraría).
             logger.exception("No se pudo leer la planificación antes de mover")
-            existing = {}
-        snapshots = {n: existing.get(n) for n in numeros}
+            snapshots = {}
 
         moved, failed = [], []
         for src_folder, dest_folder, numero in valid_moves:
