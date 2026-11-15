@@ -236,6 +236,7 @@ class HistoricalBudgetAnalyzer:
             "total_archivos": len(excel_paths),
             "procesados": 0,
             "omitidos": 0,
+            "duplicados": 0,
             "errores": 0,
             "warnings": 0,
             "warnings_detail": [],
@@ -263,6 +264,12 @@ class HistoricalBudgetAnalyzer:
                 summary["procesados"] += 1
             elif status == "skipped":
                 summary["omitidos"] += 1
+            elif status == "duplicate":
+                # Copia de un Excel ya analizado en otra carpeta: se omite. No es
+                # un error ni debe contar otra vez con el estado del original.
+                summary["omitidos"] += 1
+                summary["duplicados"] += 1
+                continue
             else:
                 summary["errores"] += 1
             analysis_status = result.get("analysis_status")
