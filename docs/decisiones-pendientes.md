@@ -84,6 +84,8 @@ defecto en las confirmaciones de borrado. Quedan:
 | Media | `budget_dashboard` (regeneración de cabeceras por lotes) | Síncrona en el hilo de la UI; ignora el resultado de `finalize_budget` y puede vaciar cliente/calle si la relación no los tiene. |
 | Media | `historical_memory_dashboard` (descripciones con IA) | Hilos sin `_run_busy`: otras operaciones de escritura pueden ejecutarse a la vez; el resultado puede llegar con el diálogo cerrado. |
 | Baja | `historical_memory_dashboard._reload` | El diagnóstico de integridad y los KPI siguen en el hilo de la UI tras cada operación (H10 a medias). |
+| Media | `xml_budget_importer.match_partidas_with_evidence` | (Revisión 2026-11-15.) Calcula la mediana del precio mezclando evidencia exacta y comparable (otros materiales) y la etiqueta `historical_exact` si hay al menos una exacta; `_build_priced_partidas` sí agrupa por material/sistema. Toca la lógica de precios: plan antes de cambiarlo. |
+| Baja | `historical_suggestion_service` (orden por recencia) | (Revisión 2026-11-15.) Ordena por fecha comparando texto de `COALESCE(fecha_presupuesto, fecha_analisis)`, que mezcla números de serie de Excel, `dd/mm/yyyy` e ISO: el desempate por «más reciente» y `latest_source_date` pueden ser erróneos. Toca la lógica de sugerencias: plan antes de cambiarlo. |
 
 El commit `8dfd117` ("wip: validacion completa pendiente antes de integrar")
 está vacío.
