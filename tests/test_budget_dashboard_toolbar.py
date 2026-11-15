@@ -105,7 +105,7 @@ def test_edit_menu_has_regenerate_and_finalize(dash):
     assert labels == [
         "Regenerar campos", "Finalizar",
         "Regenerar todas las partidas (IA)", "Añadir más partidas (IA)",
-        "Añadir partidas desde la biblioteca", "Exportar PDF",
+        "Añadir partidas desde la biblioteca", "Exportar PDF", "Imprimir",
     ]
 
 
