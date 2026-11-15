@@ -17,6 +17,10 @@ from src.core.ai_clients import GeminiAIClient, normalize_ai_error
 
 logger = logging.getLogger(__name__)
 
+# Respuesta esperada al generar partidas: 10-15 partidas con descripción
+# superan con holgura el límite por defecto del cliente (1200).
+PARTIDAS_MAX_OUTPUT_TOKENS = 8192
+
 
 # Modelos en orden de preferencia (cada uno tiene cuota independiente)
 MODELS = [
@@ -114,7 +118,7 @@ class AIService:
         cuota independiente). La llamada real al SDK vive en `GeminiAIClient`
         (src/core/ai_clients.py); este método solo delega.
         """
-        return self._client.generate_text(prompt)
+        return self._client.generate_text(prompt, max_tokens=PARTIDAS_MAX_OUTPUT_TOKENS)
 
     def parse_response(self, response_text: str) -> List[Dict]:
         """

@@ -466,3 +466,140 @@ class TestRewritePartidas:
         assert em.insert_partidas_via_xml(budget_file, _mk_partidas(8, "A"))
         assert em.insert_partidas_via_xml(budget_file, _mk_partidas(2, "B"))
         openpyxl.load_workbook(budget_file)
+
+
+# ---------------------------------------------------------------------------
+# Revisión 2026-11-15: añadir no reescribe lo existente; subtotal retocado;
+# cantidades en formato español.
+# ---------------------------------------------------------------------------
+
+def _edit_sheet(file_path, fn):
+    """Reescribe la hoja como lo haría Excel tras una edición a mano."""
+    with zipfile.ZipFile(file_path) as z:
+        items = {n: z.read(n) for n in z.namelist()}
+    items[SHEET_12220] = fn(items[SHEET_12220].decode("utf-8")).encode("utf-8")
+    with zipfile.ZipFile(file_path, "w", zipfile.ZIP_DEFLATED) as z:
+        for n, data in items.items():
+            z.writestr(n, data)
+
+
+def _row_xml(sheet, row):
+    m = re.search(r'<row r="' + str(row) + r'"[^>]*?(?:/>|>.*?</row>)', sheet, re.DOTALL)
+    return m.group(0) if m else None
+
+
+@pytest.mark.usefixtures("no_page_config")
+class TestAppendKeepsExisting:
+    def _budget_edited_by_hand(self, budget_file):
+        em = ExcelManager()
+        assert em.insert_partidas_via_xml(budget_file, _mk_partidas(3, "PRIMERA", precio=100.0))
+
+        def _hand(sheet):
+            # Partida alzada: precio vacío y 500 € tecleados en I; capítulo 2.
+            sheet = re.sub(r'<c r="H19" s="35"><v>[^<]*</v></c>', '<c r="H19" s="35"/>', sheet)
+            sheet = re.sub(r'<c r="I19" s="35"><f>[^<]*</f><v>[^<]*</v></c>',
+                           '<c r="I19" s="35"><v>500</v></c>', sheet)
+            for row, num in ((17, "2.1"), (19, "2.2"), (21, "2.3")):
+                sheet = re.sub(r'(<c r="A' + str(row) + r'"[^>]*><is><t>)[^<]*(</t>)', r"\g<1>" + num + r"\2", sheet)
+            return sheet.replace("<f>SUM(I17:I22)</f><v>300.0</v>", "<f>SUM(I17:I22)</f><v>700</v>")
+
+        _edit_sheet(budget_file, _hand)
+        return _read_sheet2(budget_file)
+
+    def test_append_keeps_manual_amount_rows_and_numbering(self, budget_file):
+        before = self._budget_edited_by_hand(budget_file)
+        assert ExcelManager().append_partidas_via_xml(budget_file, _mk_partidas(1, "NUEVA", precio=100.0))
+        after = _read_sheet2(budget_file)
+
+        for row in range(17, 23):
+            assert _row_xml(after, row) == _row_xml(before, row), f"La fila {row} ha cambiado"
+        assert '<c r="I19" s="35"><v>500</v></c>' in after
+        assert re.search(r'<c r="A23"[^>]*><is><t>2\.4</t>', after)
+        assert re.findall(r"<f>SUM\(I17:I\d+\)</f><v>[^<]*</v>", after) == ["<f>SUM(I17:I24)</f><v>800.0</v>"]
+        ft = _footer_rows(budget_file)
+        f = _formula_cells(after)
+        assert float(f[f"I{ft['total_iva']}"][1]) == pytest.approx(880.0)
+        assert after.count('<mergeCell ref="C23:F23"/>') == 1
+
+    def test_append_twice_keeps_counting(self, budget_file):
+        em = ExcelManager()
+        assert em.insert_partidas_via_xml(budget_file, _mk_partidas(2, "A"))
+        assert em.append_partidas_via_xml(budget_file, _mk_partidas(1, "B"))
+        assert em.append_partidas_via_xml(budget_file, _mk_partidas(2, "C"))
+        sheet = _read_sheet2(budget_file)
+        nums = re.findall(r'<c r="A\d+"[^>]*t="inlineStr"><is><t>(\d+\.\d+)</t>', sheet)
+        assert nums == ["1.1", "1.2", "1.3", "1.4", "1.5"]
+        rows = _row_numbers(sheet)
+        assert rows == sorted(set(rows))
+        import openpyxl
+        openpyxl.load_workbook(budget_file)
+
+    def test_without_subtotal_nothing_is_written(self, budget_file):
+        em = ExcelManager()
+        assert em.insert_partidas_via_xml(budget_file, _mk_partidas(3, "A"))
+
+        def _sin_subtotal(sheet):
+            sheet = sheet.replace("<f>SUM(I17:I22)</f>", "<f>I17+I19+I21</f>")
+            return re.sub(r'(<c r="C23"[^>]*><is><t>)[^<]*(</t>)', r"\g<1>Suma\2", sheet)
+
+        _edit_sheet(budget_file, _sin_subtotal)
+        with open(budget_file, "rb") as fh:
+            original = fh.read()
+        assert em.append_partidas_via_xml(budget_file, _mk_partidas(1, "B")) is False
+        assert em.insert_partidas_via_xml(budget_file, _mk_partidas(1, "B")) is False
+        with open(budget_file, "rb") as fh:
+            assert fh.read() == original
+
+    def test_regenerate_with_hand_edited_subtotal_leaves_no_leftovers(self, budget_file):
+        """Subtotal con fórmula retocada a mano: se localiza por su etiqueta y no
+        se supone la fila 27 (las partidas viejas quedaban duplicadas)."""
+        em = ExcelManager()
+        assert em.insert_partidas_via_xml(budget_file, _mk_partidas(10, "VIEJA"))
+        _edit_sheet(budget_file, lambda sh: sh.replace("<f>SUM(I17:I36)</f>", "<f>I17+I19+I21</f>"))
+
+        assert em.insert_partidas_via_xml(budget_file, _mk_partidas(2, "NUEVA"))
+        sheet = _read_sheet2(budget_file)
+        assert "VIEJA" not in sheet
+        assert sheet.count("NUEVA partida") == 2
+        rows = _row_numbers(sheet)
+        assert rows == sorted(set(rows))
+        assert re.findall(r"<f>SUM\(I17:I\d+\)</f>", sheet) == ["<f>SUM(I17:I20)</f>"]
+
+
+@pytest.mark.usefixtures("no_page_config")
+class TestSpanishNumbers:
+    def test_quantities_and_prices_in_spanish_format(self, budget_file):
+        partidas = [
+            {"concepto": "Pintura", "cantidad": "2,5", "unidad": "m2", "precio_unitario": "1.250,00"},
+            {"concepto": "Sin cantidad", "cantidad": "", "unidad": "ud", "precio_unitario": 40},
+        ]
+        assert ExcelManager().insert_partidas_via_xml(budget_file, partidas)
+        sheet = _read_sheet2(budget_file)
+        assert '<c r="G17" s="34"><v>2.5</v></c>' in sheet
+        assert '<c r="H17" s="35"><v>1250.0</v></c>' in sheet
+        assert '<c r="G19" s="34"><v>1.0</v></c>' in sheet  # vacía: 1, igual que en el total
+        # El subtotal guardado (y el total en letras) cuadra con las filas: 3125 + 40.
+        assert "<f>SUM(I17:I20)</f><v>3165.0</v>" in sheet
+
+
+@pytest.mark.usefixtures("no_page_config")
+@pytest.mark.parametrize("n", [1, 2, 3, 8])
+def test_regenerar_cabecera_cambia_el_cliente_del_pie(budget_file, n):
+    """Con una sola partida el pie sube y «LA PROPIEDAD» queda en la fila 48."""
+    from src.core.xlsx_cell_utils import read_shared_strings_from_dict, resolve_cell_text
+
+    em = ExcelManager()
+    assert em.insert_partidas_via_xml(budget_file, _mk_partidas(n, "A"))
+    assert PartidasWriter().update_header_fields(budget_file, {"cliente": "C.P. NUEVO CLIENTE"})
+
+    with zipfile.ZipFile(budget_file) as z:
+        sheet = z.read(SHEET_12220).decode("utf-8")
+        ss = read_shared_strings_from_dict({k: z.read(k) for k in z.namelist()})
+    textos = [
+        resolve_cell_text(m.group(0), ss)
+        for m in re.finditer(r'<c r="A(\d+)"[^>]*?(?:/>|>.*?</c>)', sheet, re.DOTALL)
+        if int(m.group(1)) > 20
+    ]
+    textos = [t for t in textos if t.strip()]
+    assert textos[-1] == "C.P. NUEVO CLIENTE"
+    assert "LA PROPIEDAD" not in textos

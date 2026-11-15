@@ -6,6 +6,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+from src.core.historical_analysis_status import AnalysisStatus
 from src.core.historical_budget_analyzer import HistoricalBudgetAnalyzer
 from src.core import database
 from src.core.repositories import (
@@ -645,6 +646,30 @@ class TestHashDeduplicationAndPendingApproval:
             total_partidas = conn.execute("SELECT COUNT(*) FROM historical_partida").fetchone()[0]
         assert total_budgets == 1
         assert total_partidas == 2  # no se duplicaron las partidas del segundo intento
+
+    def test_analyze_files_counts_copies_as_skipped_not_errors(self, tmp_path, monkeypatch):
+        """Un Excel copiado en dos carpetas no es un error ni cuenta dos veces como VALID."""
+        monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "dedupe_run.db"))
+        with database.get_connection() as _conn:
+            pass
+        original = tmp_path / "001-26 original.xlsx"
+        original.write_bytes(b"contenido identico del excel")
+        copia = tmp_path / "PRESUPUESTOS" / "001-26 copia.xlsx"
+        copia.parent.mkdir(parents=True, exist_ok=True)
+        copia.write_bytes(b"contenido identico del excel")
+
+        analyzer = HistoricalBudgetAnalyzer()
+        self._mock_valid_probe_and_reader(analyzer, monkeypatch)
+        monkeypatch.setattr(analyzer, "rebuild_patterns_and_publish", lambda: {})
+
+        summary = analyzer.analyze_files([str(original), str(copia)], force_reanalyze=True)
+
+        assert summary["errores"] == 0
+        assert summary["procesados"] == 1
+        assert summary["omitidos"] == 1
+        assert summary["duplicados"] == 1
+        assert summary["status_counts"][AnalysisStatus.VALID] + summary["status_counts"][
+            AnalysisStatus.VALID_WITH_WARNINGS] == 1
 
     def test_different_content_same_module_is_not_flagged_as_duplicate(self, tmp_path, monkeypatch):
         monkeypatch.setenv("CUBIAPP_DB_PATH", str(tmp_path / "no_dedupe.db"))

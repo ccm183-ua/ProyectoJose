@@ -297,3 +297,29 @@ def test_crear_backup_purga_y_conserva_los_protegidos(tmp_path, monkeypatch):
     no_protegidos = [p for p in restantes if "before_migration" not in p.name
                      and "before_clear_historical" not in p.name]
     assert len(no_protegidos) == 3
+
+
+# ── Revisión 2026-11-15: la elección de la base de datos no cambia sola ──
+
+def test_legacy_fallback_is_kept_after_clearing_history(tmp_path, monkeypatch):
+    """Vaciar la memoria histórica no debe hacer que la app pase a una base de
+    datos nueva y vacía (comunidades, administraciones y caché «desaparecían»)."""
+    _isolated_config(monkeypatch, tmp_path)
+    stable_path = tmp_path / "missing_stable.db"
+    legacy_path = tmp_path / "legacy_history.db"
+    monkeypatch.setattr(database, "get_stable_default_db_path", lambda: stable_path)
+    monkeypatch.setattr(database, "get_legacy_db_path", lambda: legacy_path)
+    monkeypatch.setenv("CUBIAPP_DB_PATH", str(legacy_path))
+    with database.get_connection() as _conn:
+        pass
+    _create_budget(tmp_path, "legacy_fallback.xlsx")
+    monkeypatch.delenv("CUBIAPP_DB_PATH", raising=False)
+
+    assert database.get_db_path() == legacy_path
+    with database.get_connection() as conn:
+        conn.execute("DELETE FROM historical_budget")
+        conn.commit()
+
+    assert database.get_db_path() == legacy_path
+    assert Settings().get_database_path() == str(legacy_path)
+

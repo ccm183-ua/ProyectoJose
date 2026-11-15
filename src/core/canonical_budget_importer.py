@@ -8,6 +8,7 @@ del presupuesto legacy solo sirve para comparar y generar una advertencia de
 reconciliacion si difiere (tolerancia 0,01 EUR) — nunca se acepta tal cual.
 """
 
+import json
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
@@ -108,6 +109,25 @@ def _normalize_lines(partidas: List[Dict]) -> tuple:
     return normalized, warnings
 
 
+def _line_key(line: Dict, idx: int):
+    orden = line.get("orden")
+    return (
+        int(orden) if orden is not None else idx + 1,
+        (line.get("numero") or None),
+        (line.get("concepto") or "").strip(),
+        (line.get("unidad") or None),
+        round(float(line.get("cantidad") or 0), 4),
+        round(float(line.get("precio") or 0), 4),
+    )
+
+
+def _same_lines(stored: List[Dict], lines: List[Dict]) -> bool:
+    """Las líneas de la versión activa coinciden con las que se van a importar."""
+    if len(stored) != len(lines):
+        return False
+    return [_line_key(l, i) for i, l in enumerate(stored)] == [_line_key(l, i) for i, l in enumerate(lines)]
+
+
 def import_from_cache_snapshot(presupuesto: Dict, partidas: List[Dict]) -> ImportResult:
     """Crea (o reimporta como nueva version de) un budget canonico a partir
     de una fila `presupuesto` + sus `presupuesto_partida` ya existentes."""
@@ -141,8 +161,22 @@ def import_from_cache_snapshot(presupuesto: Dict, partidas: List[Dict]) -> Impor
 
     existing = get_budget_by_legacy_id(presupuesto_legacy_id) if presupuesto_legacy_id else None
 
+    warnings_json = json.dumps(warnings, ensure_ascii=False) if warnings else None
+
     if existing:
-        version_id, err = start_new_version(existing["id"], lines, origen="import")
+        active = get_active_version(existing["id"])
+        if active and _same_lines(get_lines(active["id"]), lines):
+            # Finalizar otra vez sin cambios: no se crea otra versión (ni sus
+            # evidencias); solo se aprueba si ahora está finalizado.
+            if estado_inicial == "approved" and active["estado"] != "approved":
+                approve_active_version(existing["id"], aprobado_por="migracion_automatica")
+            return ImportResult(
+                success=True, budget_id=existing["id"], budget_version_id=active["id"],
+                warnings=warnings,
+            )
+        version_id, err = start_new_version(
+            existing["id"], lines, origen="import", reconciliation_warnings_json=warnings_json,
+        )
         if err:
             return ImportResult(success=False, error=err)
         budget_id = existing["id"]
@@ -155,6 +189,7 @@ def import_from_cache_snapshot(presupuesto: Dict, partidas: List[Dict]) -> Impor
             numero_proyecto=presupuesto.get("numero_proyecto", ""),
             presupuesto_legacy_id=presupuesto_legacy_id,
             estado_inicial=estado_inicial,
+            reconciliation_warnings_json=warnings_json,
         )
         if err:
             return ImportResult(success=False, error=err)

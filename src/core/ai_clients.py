@@ -109,6 +109,19 @@ GEMINI_RETRY_DELAY_SECONDS = 10
 GEMINI_TIMEOUT_MS = 60_000
 
 
+GEMINI_THINKING_HEADROOM_TOKENS = 4096
+
+
+def _gemini_output_limit(model: str, max_tokens: int) -> int:
+    """Gemini 2.5 «razona» antes de responder y esos tokens cuentan en
+    max_output_tokens: con el límite justo la respuesta llegaba cortada o
+    vacía (incluida la prueba de conexión, con 32). Se añade margen para el
+    razonamiento; max_tokens sigue siendo lo que se espera de respuesta."""
+    if str(model or "").startswith("gemini-2.5"):
+        return max_tokens + GEMINI_THINKING_HEADROOM_TOKENS
+    return max_tokens
+
+
 class GeminiAIClient(AIProviderClient):
     provider_name = "gemini"
 
@@ -176,7 +189,7 @@ class GeminiAIClient(AIProviderClient):
 
         config = types.GenerateContentConfig(
             temperature=temperature,
-            max_output_tokens=max_tokens,
+            max_output_tokens=_gemini_output_limit(self._configured_model, max_tokens),
         )
 
         model_names = [self._configured_model] + [
