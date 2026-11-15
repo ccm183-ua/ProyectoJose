@@ -83,7 +83,25 @@ def test_dialogo_varias_obras_solo_fechas_previstas(qapp):
     dlg = ObraPlanningDialog(None, titulo="3 obras", plan={}, margen_general=7, varias=True)
     dlg._inicio_previsto.set_value(date(2026, 9, 1))
     dlg._on_save()
-    assert dlg.get_changes() == {"inicio_previsto": date(2026, 9, 1), "fin_previsto": None}
+    # Solo lo marcado: el fin previsto propio de cada obra no se toca.
+    assert dlg.get_changes() == {"inicio_previsto": date(2026, 9, 1)}
+
+
+def test_dialogo_varias_obras_quitar_fechas_las_quita_todas(qapp):
+    from src.gui.obra_planning_dialog import ObraPlanningDialog
+
+    dlg = ObraPlanningDialog(None, titulo="3 obras", plan={}, margen_general=7, varias=True)
+    dlg._on_clear_dates()
+    assert dlg.get_changes() == {"inicio_previsto": None, "fin_previsto": None}
+
+
+def test_dialogo_varias_obras_sin_marcar_nada_no_guarda(qapp, avisos):
+    from src.gui.obra_planning_dialog import ObraPlanningDialog
+
+    dlg = ObraPlanningDialog(None, titulo="3 obras", plan={}, margen_general=7, varias=True)
+    dlg._on_save()
+    assert dlg.get_changes() is None
+    assert avisos == ["warning"]
 
 
 # ── P6: "Mover a…" registra las fechas reales ───────────────────────────

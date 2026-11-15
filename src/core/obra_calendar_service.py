@@ -7,6 +7,7 @@ detectar obras movidas fuera de la app hay que actualizar el dashboard.
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Dict, Iterable, List
@@ -35,6 +36,10 @@ def load_calendar_data(hoy: date) -> CalendarData:
     for cached in cache_repo.get_all_presupuestos_cache():
         estado = (cached.get("estado") or "").strip().upper()
         if not estado:
+            continue
+        if cached.get("es_finalizado") and not os.path.exists(cached.get("ruta_excel") or ""):
+            # Los finalizados no se purgan de la caché: si la carpeta se movió,
+            # queda la fila vieja y la obra parecería repetida.
             continue
         row = dict(cached)
         row.setdefault("numero", row.get("numero_proyecto", ""))

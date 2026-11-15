@@ -122,8 +122,17 @@ class ObraPlanningDialog(QDialog):
             lay.addWidget(x)
         return w
 
-    def _collect(self) -> Dict:
-        changes: Dict = {
+    def _collect(self, clearing: bool = False) -> Dict:
+        if self._varias and not clearing:
+            # Con varias obras solo se aplica lo marcado: una fecha sin marcar
+            # no debe borrar la que ya tenga cada obra.
+            changes: Dict = {}
+            for campo, widget in (("inicio_previsto", self._inicio_previsto),
+                                  ("fin_previsto", self._fin_previsto)):
+                if widget.is_set():
+                    changes[campo] = widget.value()
+            return changes
+        changes = {
             "inicio_previsto": self._inicio_previsto.value(),
             "fin_previsto": self._fin_previsto.value(),
         }
@@ -144,7 +153,13 @@ class ObraPlanningDialog(QDialog):
 
     def _on_save(self):
         changes = self._collect()
-        if self._incoherent(changes["inicio_previsto"], changes["fin_previsto"]) or self._incoherent(
+        if self._varias and not changes:
+            QMessageBox.warning(
+                self, "Planificación",
+                "Marca la fecha que quieres poner a todas, o pulsa «Quitar fechas».",
+            )
+            return
+        if self._incoherent(changes.get("inicio_previsto"), changes.get("fin_previsto")) or self._incoherent(
             changes.get("inicio_real"), changes.get("fin_real")
         ):
             QMessageBox.warning(self, "Planificación", "La fecha de fin no puede ser anterior a la de inicio.")
@@ -158,7 +173,7 @@ class ObraPlanningDialog(QDialog):
         if not self._varias:
             self._inicio_real.set_value(None)
             self._fin_real.set_value(None)
-        self._changes = self._collect()
+        self._changes = self._collect(clearing=True)
         self.accept()
 
     def get_changes(self) -> Optional[Dict]:

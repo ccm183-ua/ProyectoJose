@@ -103,3 +103,21 @@ def test_summary(bar):
     b, _ = bar
     b.set_summary(12, 84300.0)
     assert b.summary() == "12 presupuestos · 84.300 €"
+
+
+@pytest.mark.parametrize("texto, esperado", [
+    ("1.500", 1500.0),        # punto de miles, sin decimales
+    ("15.000", 15000.0),
+    ("1.250.000", 1250000.0),
+    ("1.250,50", 1250.5),
+    ("1250,5", 1250.5),
+    ("1.5", 1.5),             # no es un grupo de miles: decimal
+    ("12.50", 12.5),
+    ("5000 €", 5000.0),
+    ("", None),
+    ("abc", None),
+])
+def test_importe_en_formato_espanol(texto, esperado):
+    from src.gui.widgets.budget_filter_bar import _parse_amount
+
+    assert _parse_amount(texto) == esperado

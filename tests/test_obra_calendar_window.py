@@ -409,3 +409,22 @@ def test_ayuda_en_castellano(entorno):
     dialogo = _HelpDialog()  # referencia viva: si no, se destruye antes de leer los botones
     textos = [b.text() for b in dialogo.findChildren(QPushButton)]
     assert textos == ["Cerrar"]
+
+
+def test_recarga_pedida_mientras_carga_no_se_pierde(entorno, monkeypatch):
+    import src.gui.obra_calendar_window as cw
+    from src.core.obra_calendar_service import CalendarData
+
+    abrir, _ = entorno
+    win = abrir({"EJECUTAR": []})
+    cargas = []
+    monkeypatch.setattr(cw, "run_in_background", lambda work, cb: cargas.append(cb))
+
+    win.reload()
+    win.reload()  # p. ej. el dashboard acaba su recarga mientras el calendario carga
+    assert len(cargas) == 1
+
+    cargas[0](True, CalendarData(filas_por_estado={"EJECUTAR": []}))
+    assert len(cargas) == 2  # se vuelve a cargar con los datos nuevos
+    cargas[1](True, CalendarData(filas_por_estado={"EJECUTAR": []}))
+    assert len(cargas) == 2

@@ -7,6 +7,7 @@ Fila 3 (plegable): cliente, administración, fechas e importes.
 
 from __future__ import annotations
 
+import re
 from datetime import date
 from typing import List, Optional
 
@@ -24,11 +25,19 @@ def _norm(text: str) -> str:
     return " ".join((text or "").split()).casefold()
 
 
+_THOUSANDS_RE = re.compile(r"^\d{1,3}(?:\.\d{3})+$")
+
+
 def _parse_amount(text: str) -> Optional[float]:
+    """Importe escrito a la española: «1.500» = 1500, «1.250,50» = 1250,5.
+
+    Sin coma, el punto solo se toma como separador de miles si forma grupos de
+    tres cifras («1.500», «15.000»); si no («1.5», «12.50»), es decimal.
+    """
     raw = (text or "").strip().replace("€", "").replace(" ", "")
     if not raw:
         return None
-    if "," in raw:
+    if "," in raw or _THOUSANDS_RE.match(raw):
         raw = raw.replace(".", "").replace(",", ".")
     try:
         return float(raw)
