@@ -122,3 +122,25 @@ def test_senales_compartidas(qapp):
         ev.planning_changed.disconnect(_cambio)
         ev.obras_reloaded.disconnect(_recarga)
     assert vistos == [("cambio", ["114-26"], "yo"), ("recarga", "dash")]
+
+
+def test_finalizado_movido_no_cuenta_como_repetido(bd_temporal, monkeypatch, tmp_path):
+    """La caché conserva la fila vieja de un finalizado que se movió de carpeta."""
+    from src.core.obra_calendar_service import load_calendar_data
+
+    nueva = tmp_path / "EJECUTANDO" / "114-26 OBRA"
+    nueva.mkdir(parents=True)
+    (nueva / "p.xlsx").write_bytes(b"x")
+    vieja = dict(_cache("EJECUTAR", "114-26 OBRA", "114-26"),
+                 ruta_carpeta=str(tmp_path / "EJECUTAR" / "114-26 OBRA"),
+                 ruta_excel=str(tmp_path / "EJECUTAR" / "114-26 OBRA" / "p.xlsx"), es_finalizado=True)
+    actual = dict(_cache("EJECUTANDO", "114-26 OBRA", "114-26"),
+                  ruta_carpeta=str(nueva), ruta_excel=str(nueva / "p.xlsx"), es_finalizado=True)
+    _con_cache(monkeypatch, [vieja, actual])
+
+    data = load_calendar_data(HOY)
+
+    assert data.filas_por_estado["EJECUTAR"] == []
+    fila = data.filas_por_estado["EJECUTANDO"][0]
+    assert fila["planificacion_duplicado"] is False
+    assert data.repetidas == 0
