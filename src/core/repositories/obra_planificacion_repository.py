@@ -175,3 +175,25 @@ def reconcile_scan(numeros_por_estado: Dict[str, List[str]], hoy: date) -> Optio
         except sqlite3.Error as e:
             conn.rollback()
             return e.args[0] if e.args else "Error de base de datos."
+
+
+def restore_plan_snapshot(numero: str, snapshot: Optional[Dict]) -> Optional[str]:
+    """Deja el plan de `numero` exactamente como en `snapshot` (para deshacer).
+
+    `snapshot` es un plan tal como lo devuelve `get_planes`, o `None` si la obra
+    no tenía fila: entonces se borra. Devuelve un mensaje de error o None.
+    """
+    numero = (numero or "").strip()
+    if not numero:
+        return "Falta el número de proyecto."
+    with database.get_connection() as conn:
+        try:
+            if snapshot is None:
+                conn.execute("DELETE FROM obra_planificacion WHERE numero_proyecto = ?", (numero,))
+            else:
+                _upsert(conn, numero, {f: snapshot.get(f) for f in sorted(_EDITABLE)})
+            conn.commit()
+            return None
+        except sqlite3.Error as e:
+            conn.rollback()
+            return e.args[0] if e.args else "Error de base de datos."

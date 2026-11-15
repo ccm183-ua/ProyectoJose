@@ -115,16 +115,17 @@ de cambio se basa en `mtime` del fichero (`os.stat().st_mtime`) comparado contra
    mtime distinto → relee y actualiza. Si `es_finalizado=1`, el escaneo automático **ignora
    el contenido del Excel por completo**, solo actualiza el campo `estado` (carpeta).
 2. **Vigilancia tras abrir el Excel desde la app** (`budget_dashboard._watch_excel_changes_and_refresh`):
-   hilo en background que compara mtime cada 2s durante ~6 minutos tras abrir un Excel
-   desde dentro de cubiApp; si detecta cambio, llama a `finalize_budget()` y sobrescribe
-   la caché. Es la única vía "automática" para detectar una edición manual — y solo
-   funciona si el Excel se abrió desde la app y no pasaron más de ~6 minutos.
-3. **Refresco manual** ("Escanear presupuestos"): relee incondicionalmente, ignorando mtime.
+   hilo en background que compara mtime mientras el dashboard siga abierto tras abrir un
+   Excel desde dentro de cubiApp; si detecta un guardado, refresca la caché y la fila
+   (`refresh_budget_cache_entry`) sin preguntar y ofrece «Finalizar» en un aviso pasajero
+   (también en Editar → Finalizar). Nunca finaliza solo. Es la única vía "automática" para
+   detectar una edición manual — y solo funciona si el Excel se abrió desde la app.
+3. **Refresco manual** ("Releer del Excel"): relee incondicionalmente, ignorando mtime.
 4. **Memoria histórica**: mismo patrón de mtime, sin ningún disparador automático.
 
 **Gap real**: si el usuario edita un Excel ya finalizado fuera de la app (o la app no está
 corriendo durante la edición), la discrepancia no se detecta salvo que el usuario pulse
-"Escanear presupuestos" o vuelva a abrir ese Excel desde dentro de la app. No hay checksum
+"Releer del Excel" o vuelva a abrir ese Excel desde dentro de la app. No hay checksum
 de contenido ni aviso en la UI de "Excel modificado externamente, ¿recargar?".
 
 ## Ver también

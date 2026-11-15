@@ -62,11 +62,15 @@ def spies(monkeypatch, frame):
         def read_budget(self, *a, **k):
             raise AssertionError("no debe releer el Excel")
 
+        def diagnose_read_failure(self, ruta, numero=""):
+            return "motivo"
+
     monkeypatch.setattr(services, "BudgetService", _FakeService)
     monkeypatch.setattr(BudgetDashboardFrame, "_open_file", staticmethod(lambda p: calls["opened"].append(p) or True))
     monkeypatch.setattr(dash, "_watch_excel_changes_and_refresh", lambda ruta_excel, estado: calls["watch"].append(ruta_excel))
     monkeypatch.setattr(dash, "_refresh_rows", lambda rutas, on_done=None: calls["rows"].append(list(rutas)))
     monkeypatch.setattr(dash, "_load_data", lambda: pytest.fail("no debe recargar todo"))
+    monkeypatch.setattr(dash, "_notify", lambda text, actions=None: calls.setdefault("toasts", []).append(text))
     return calls, _FakeService
 
 
@@ -82,17 +86,14 @@ def test_open_excel_reads_once_and_refreshes_row(frame, spies):
     assert calls["rows"] == [[ruta]]
 
 
-def test_unreadable_excel_asks_and_respects_no(monkeypatch, frame, spies):
+def test_unreadable_excel_opens_and_notifies(monkeypatch, frame, spies):
     dash, ruta = frame
     calls, fake = spies
     fake.readable = False
-    asked = []
-    monkeypatch.setattr(
-        QMessageBox, "question",
-        staticmethod(lambda *a, **k: asked.append(1) or QMessageBox.StandardButton.No),
-    )
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **k: pytest.fail("no debe preguntar")))
 
     dash._on_open_excel()
 
-    assert asked == [1]
-    assert calls["opened"] == []
+    assert calls["opened"] == [ruta]
+    assert calls["rows"] == [[ruta]]
+    assert calls["toasts"] == ["No se pudo leer bien 1-26.xlsx: motivo. Se ha abierto igualmente."]

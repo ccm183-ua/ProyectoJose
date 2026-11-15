@@ -100,12 +100,13 @@ def mover(qapp, tmp_path, monkeypatch, avisos):
     root = tmp_path / "PRESUPUESTOS"
     for estado in ("EJECUTAR", "EJECUTANDO", "TERMINADO"):
         (root / estado).mkdir(parents=True)
-    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes))
+    monkeypatch.setattr(QMessageBox, "warning", staticmethod(lambda *a, **k: None))
 
     dash = bd.BudgetDashboardFrame.__new__(bd.BudgetDashboardFrame)
     dash._root_path = str(root)
     dash._planning_duplicates = set()
     dash._load_data = lambda: None
+    dash._notify = lambda *a, **k: None
 
     def _obra(estado, numero):
         carpeta = root / estado / f"{numero} OBRA"

@@ -122,6 +122,7 @@ def test_scan_selected_refreshes_rows_instead_of_full_reload(monkeypatch, dashbo
 
     monkeypatch.setattr(services, "BudgetService", _FakeService)
     monkeypatch.setattr(QMessageBox, "information", staticmethod(lambda *a, **k: 0))
+    monkeypatch.setattr(frame, "_notify", lambda *a, **k: None)
     monkeypatch.setattr(frame, "_load_data", lambda: pytest.fail("no debe recargar todo"))
     refreshed = []
     monkeypatch.setattr(frame, "_refresh_rows", lambda r, on_done=None: refreshed.append(sorted(r)))
