@@ -31,7 +31,11 @@ Si añades un documento nuevo, apúntalo aquí.
 
 | Documento | Estado |
 |---|---|
-| [`planes/dashboard-filtros-estadisticas.md`](planes/dashboard-filtros-estadisticas.md) | A medias: hay datos, falta toda la interfaz. |
+| [`superpowers/plans/2026-11-15-calendario-obras.md`](superpowers/plans/2026-11-15-calendario-obras.md) | Pieza C de la batería de obras (calendario y resumen del mes), rama `calendario-obras`. Implementada; falta la prueba manual. Diseño: [`superpowers/specs/2026-11-15-calendario-obras-design.md`](superpowers/specs/2026-11-15-calendario-obras-design.md). |
+| [`superpowers/plans/2026-11-14-dashboard-filtros-ux.md`](superpowers/plans/2026-11-14-dashboard-filtros-ux.md) | Tanda 1 del pulido del circuito anterior a las partidas: filtros y limpieza de UX de «Presupuestos existentes». Implementada; falta la prueba manual. Tanda 2: «Crear presupuesto» y «Gestionar BD». Diseño: [`superpowers/specs/2026-11-14-dashboard-filtros-ux-design.md`](superpowers/specs/2026-11-14-dashboard-filtros-ux-design.md). |
+| [`superpowers/plans/2026-11-13-planificacion-obras.md`](superpowers/plans/2026-11-13-planificacion-obras.md) | Pieza A de la batería de obras (fechas previstas y reales en EJECUTAR/EJECUTANDO/TERMINADO). Implementada (P1-P8); falta la prueba manual. Sigue B (avisos y correo); C (calendario) en `calendario-obras`. Diseño: [`superpowers/specs/2026-11-13-planificacion-obras-design.md`](superpowers/specs/2026-11-13-planificacion-obras-design.md). |
+| [`superpowers/plans/2026-11-12-biblioteca-partidas.md`](superpowers/plans/2026-11-12-biblioteca-partidas.md) | Mejora 1 de 4 de la batería de redacción (biblioteca de partidas). Implementada (H1-H9); falta la prueba manual en la app. Diseño: [`superpowers/specs/2026-11-12-biblioteca-partidas-design.md`](superpowers/specs/2026-11-12-biblioteca-partidas-design.md). Validación: `scripts/library_benchmark.py`. |
+| [`planes/dashboard-filtros-estadisticas.md`](planes/dashboard-filtros-estadisticas.md) | Filtros hechos (ver 2026-11-14); faltan estadísticas. |
 | [`planes/sugerir-comunidad.md`](planes/sugerir-comunidad.md) | A medias (mínimo): solo el prefill de dirección. |
 | [`superpowers/plans/2026-07-22-historico-estructurado-y-cruce-fiable.md`](superpowers/plans/2026-07-22-historico-estructurado-y-cruce-fiable.md) | 54/63 pasos. |
 | [`superpowers/plans/2026-07-22-fixes-historico-evidenciado.md`](superpowers/plans/2026-07-22-fixes-historico-evidenciado.md) | 30/35 pasos; faltan E2E y aceptación manual. |

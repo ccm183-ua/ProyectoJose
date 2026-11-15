@@ -341,6 +341,31 @@ def _seed_execution_modules(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+_OBRA_PLANIFICACION_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS obra_planificacion (
+    numero_proyecto        TEXT PRIMARY KEY,
+    inicio_previsto        TEXT,
+    fin_previsto           TEXT,
+    inicio_real            TEXT,
+    inicio_real_aproximado INTEGER NOT NULL DEFAULT 0 CHECK (inicio_real_aproximado IN (0,1)),
+    fin_real               TEXT,
+    fin_real_aproximado    INTEGER NOT NULL DEFAULT 0 CHECK (fin_real_aproximado IN (0,1)),
+    margen_aviso_dias      INTEGER,
+    avisado_en             TEXT,
+    notas                  TEXT,
+    estado_conocido        TEXT,
+    actualizado_en         TEXT
+);
+"""
+
+
+def _migrate_obra_planificacion(conn: sqlite3.Connection) -> None:
+    """v6: fechas de planificación de obras, fuera del Excel y por nº de
+    proyecto (estable al mover la carpeta de estado). Idempotente."""
+    conn.executescript(_OBRA_PLANIFICACION_SCHEMA_SQL)
+    conn.commit()
+
+
 def _ensure_presupuesto_v2_indexes(conn: sqlite3.Connection) -> None:
     """Crea índices v2 de presupuesto de forma segura en BDs antiguas."""
     conn.execute(
@@ -355,7 +380,7 @@ def _ensure_presupuesto_v2_indexes(conn: sqlite3.Connection) -> None:
 # Version explicita del esquema. Se incrementa al añadir una migracion nueva
 # a _MIGRATIONS; una BDD nueva se crea ya en esta version (las CREATE TABLE
 # de _SCHEMA_SQL/_HISTORICAL_SCHEMA_SQL incluyen todas las columnas).
-CURRENT_SCHEMA_VERSION = 5
+CURRENT_SCHEMA_VERSION = 6
 
 # Migraciones ordenadas e idempotentes (cada una comprueba su propio estado
 # antes de tocar nada). Se ejecutan en este orden porque el seed de módulos
@@ -371,6 +396,7 @@ _MIGRATIONS = [
     _migrate_pattern_evidence_columns,
     _migrate_historical_budget_sha256_unique_index,
     _migrate_presupuesto_verificacion,
+    _migrate_obra_planificacion,
 ]
 
 
@@ -414,6 +440,7 @@ def init_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(_CANONICAL_SCHEMA_SQL)
     conn.executescript(_AUDIT_SCHEMA_SQL)
     conn.executescript(_PRICE_REFERENCE_SCHEMA_SQL)
+    conn.executescript(_OBRA_PLANIFICACION_SCHEMA_SQL)
     conn.commit()
 
     global _MIGRATION_IN_PROGRESS

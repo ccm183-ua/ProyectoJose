@@ -81,24 +81,21 @@ def test_buscador_memoria_historica_no_recarga_en_cada_tecla(qapp, popups, monke
     assert calls == [1]
 
 
-@pytest.mark.parametrize("respuesta,esperado", [("No", "refresh"), ("Yes", "finalize")])
-def test_guardar_excel_pregunta_antes_de_finalizar(qapp, monkeypatch, respuesta, esperado):
-    """Decisión E1: al guardar el Excel abierto desde el dashboard ya no se
-    finaliza sin preguntar; con "No" solo se refresca la caché y los guardados
-    siguientes de ese Excel ya no vuelven a preguntar."""
+def test_guardar_excel_refresca_sin_preguntar_y_ofrece_finalizar(qapp, monkeypatch):
+    """Al guardar el Excel abierto desde el dashboard se refresca la fila sin
+    ventanas y se ofrece «Finalizar» en un aviso pasajero."""
     import src.gui.budget_dashboard as bd
     from src.core import services
 
-    llamadas = []
+    llamadas, avisos, finalizados = [], [], []
 
     class _FakeService:
         def finalize_budget(self, ruta, estado=""):
-            llamadas.append("finalize"); return True
+            raise AssertionError("guardar no debe finalizar")
 
         def refresh_budget_cache_entry(self, ruta, estado=""):
             llamadas.append("refresh"); return True
 
-    # Dos guardados seguidos y, a la tercera espera, se cierra el dashboard.
     eventos = iter([True, True])
 
     def _fake_wait(ruta, stop, baseline):
@@ -112,25 +109,22 @@ def test_guardar_excel_pregunta_antes_de_finalizar(qapp, monkeypatch, respuesta,
     monkeypatch.setattr(bd, "_wait_for_excel_change", _fake_wait)
     monkeypatch.setattr(bd, "run_in_background", lambda work, cb: cb(True, work()))
     monkeypatch.setattr(services, "BudgetService", _FakeService)
-    preguntas = []
-    monkeypatch.setattr(
-        QMessageBox, "question",
-        staticmethod(lambda *a, **k: preguntas.append(1) or getattr(QMessageBox.StandardButton, respuesta)),
-    )
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **k: pytest.fail("no debe preguntar")))
 
     dash = bd.BudgetDashboardFrame.__new__(bd.BudgetDashboardFrame)
     dash._excel_watchers = {}
-    dash._excel_no_finalize = set()
     dash._load_data = lambda: llamadas.append("full-reload")
     dash._refresh_rows = lambda rutas, on_done=None: llamadas.append("reload")
+    dash._notify = lambda text, actions=None: avisos.append((text, actions))
+    dash._finalize_ruta = lambda ruta, estado: finalizados.append((ruta, estado))
     bd.BudgetDashboardFrame._watch_excel_changes_and_refresh(dash, "C:/obra/presupuesto.xlsx", "PRESUPUESTADO")
 
-    if respuesta == "No":
-        assert preguntas == [1]  # el segundo guardado ya no pregunta
-        assert llamadas == ["refresh", "reload", "refresh", "reload"]
-    else:
-        assert preguntas == [1, 1]
-        assert llamadas == ["finalize", "reload", "finalize", "reload"]
+    assert llamadas == ["refresh", "reload", "refresh", "reload"]
+    assert [t for t, _a in avisos] == ["Se guardó presupuesto.xlsx · ¿finalizar?"] * 2
+    label, action = avisos[0][1][0]
+    assert label == "Finalizar"
+    action()
+    assert finalizados == [("C:/obra/presupuesto.xlsx", "PRESUPUESTADO")]
 
 
 @pytest.mark.parametrize("overwrote,respuesta,descarta", [
@@ -161,19 +155,17 @@ def test_borrador_que_sobrescribio_un_excel_no_se_puede_descartar(qapp, monkeypa
     assert bool(descartes) is descarta
 
 
-def test_vigilancia_excel_se_para_si_se_cierra_durante_la_finalizacion(qapp, monkeypatch):
-    """Cerrar el dashboard mientras se aplica la finalización debe detener la
-    vigilancia, y la siguiente vuelta usa como referencia el mtime del guardado
-    detectado (no el de después del diálogo)."""
+def test_vigilancia_excel_se_para_si_se_cierra_durante_el_refresco(qapp, monkeypatch):
+    """Cerrar el dashboard mientras se refresca el guardado detiene la vigilancia."""
     import src.gui.budget_dashboard as bd
     from src.core import services
 
     ruta = "C:/obra/presupuesto.xlsx"
     dash = bd.BudgetDashboardFrame.__new__(bd.BudgetDashboardFrame)
     dash._excel_watchers = {}
-    dash._excel_no_finalize = set()
     dash._load_data = lambda: None
     dash._refresh_rows = lambda rutas, on_done=None: None
+    dash._notify = lambda *a, **k: None
     bases = []
     mtimes = iter([100.0, 250.0])
 
@@ -182,7 +174,7 @@ def test_vigilancia_excel_se_para_si_se_cierra_durante_la_finalizacion(qapp, mon
         return len(bases) == 1  # solo el primer guardado
 
     class _FakeService:
-        def finalize_budget(self, r, estado=""):
+        def refresh_budget_cache_entry(self, r, estado=""):
             dash._excel_watchers[ruta].set()  # el usuario cierra el dashboard aquí
             return True
 
@@ -190,7 +182,6 @@ def test_vigilancia_excel_se_para_si_se_cierra_durante_la_finalizacion(qapp, mon
     monkeypatch.setattr(bd, "_wait_for_excel_change", _fake_wait)
     monkeypatch.setattr(bd, "run_in_background", lambda work, cb: cb(True, work()))
     monkeypatch.setattr(services, "BudgetService", _FakeService)
-    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes))
 
     bd.BudgetDashboardFrame._watch_excel_changes_and_refresh(dash, ruta, "PRESUPUESTADO")
 
@@ -203,9 +194,9 @@ def test_vigilancia_excel_rearma_con_el_mtime_del_guardado_detectado(qapp, monke
 
     dash = bd.BudgetDashboardFrame.__new__(bd.BudgetDashboardFrame)
     dash._excel_watchers = {}
-    dash._excel_no_finalize = set()
     dash._load_data = lambda: None
     dash._refresh_rows = lambda rutas, on_done=None: None
+    dash._notify = lambda *a, **k: None
     bases = []
     mtimes = iter([100.0, 250.0])
 
@@ -224,7 +215,6 @@ def test_vigilancia_excel_rearma_con_el_mtime_del_guardado_detectado(qapp, monke
     monkeypatch.setattr(bd, "_wait_for_excel_change", _fake_wait)
     monkeypatch.setattr(bd, "run_in_background", lambda work, cb: cb(True, work()))
     monkeypatch.setattr(services, "BudgetService", _FakeService)
-    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.StandardButton.No))
 
     bd.BudgetDashboardFrame._watch_excel_changes_and_refresh(dash, "C:/obra/p.xlsx", "PRESUPUESTADO")
 

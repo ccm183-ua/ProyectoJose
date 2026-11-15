@@ -56,6 +56,7 @@ class MainFrame(QMainWindow):
         self._db_frame = None
         self._dashboard_frame = None
         self._historical_memory_dashboard = None
+        self._obra_calendar = None
         self._build_ui()
         self._center()
         self._schedule_startup_historical_refresh()
@@ -162,6 +163,12 @@ class MainFrame(QMainWindow):
         btn_open.clicked.connect(self._open_dashboard)
         btn_layout.addWidget(btn_open, alignment=Qt.AlignmentFlag.AlignHCenter)
 
+        btn_calendar = QPushButton("Calendario de obras")
+        btn_calendar.setFixedSize(320, 46)
+        btn_calendar.setFont(theme.font_base())
+        btn_calendar.clicked.connect(self._open_obra_calendar)
+        btn_layout.addWidget(btn_calendar, alignment=Qt.AlignmentFlag.AlignHCenter)
+
         btn_db = QPushButton("Gestionar base de datos")
         btn_db.setFixedSize(320, 46)
         btn_db.setFont(theme.font_base())
@@ -207,8 +214,12 @@ class MainFrame(QMainWindow):
         act_templates.triggered.connect(self._open_template_manager)
         act_paths = m_config.addAction("Rutas por defecto...")
         act_paths.triggered.connect(self._open_default_paths)
+        act_obras = m_config.addAction("Avisos de obras...")
+        act_obras.triggered.connect(self._configure_obra_margin)
 
         m_tools = menubar.addMenu("&Herramientas")
+        act_calendar = m_tools.addAction("Calendario de obras...")
+        act_calendar.triggered.connect(self._open_obra_calendar)
         act_hist = m_tools.addAction("Analizar presupuestos terminados...")
         act_hist.triggered.connect(self._open_historical_analysis)
         act_memory = m_tools.addAction("Panel de memoria historica...")
@@ -266,6 +277,25 @@ class MainFrame(QMainWindow):
             self._dashboard_frame.raise_()
         except Exception as ex:
             QMessageBox.critical(self, "Error", f"Error al abrir el dashboard: {ex}")
+
+    def _open_obra_calendar(self):
+        try:
+            from src.gui import obra_calendar_window
+
+            if self._obra_calendar is not None:
+                try:
+                    if self._obra_calendar.isVisible():
+                        self._obra_calendar.raise_()
+                        self._obra_calendar.activateWindow()
+                        return
+                except RuntimeError:
+                    self._obra_calendar = None
+            self._obra_calendar = obra_calendar_window.ObraCalendarWindow(self)
+            self._obra_calendar.destroyed.connect(lambda: setattr(self, "_obra_calendar", None))
+            self._obra_calendar.show()
+            self._obra_calendar.raise_()
+        except Exception as ex:
+            QMessageBox.critical(self, "Error", f"Error al abrir el calendario de obras: {ex}")
 
     def _open_historical_memory_dashboard(self):
         try:
@@ -418,7 +448,7 @@ class MainFrame(QMainWindow):
 
         # Flujo unificado: descripción libre (voz o texto) → orquestador → revisión combinada.
         # El flujo clásico (_offer_partidas) se mantiene como fallback automático.
-        outcome = self._offer_partidas_unified(result.excel_path, project_data)
+        outcome = self._offer_partidas_for_new_budget(result.excel_path, project_data)
         if outcome == OUTCOME_APPLIED:
             finalized = self._budget_svc.finalize_budget(
                 result.excel_path,
@@ -525,6 +555,23 @@ class MainFrame(QMainWindow):
     def _obtain_project_data(self):
         from src.gui.dialogs import obtain_project_data
         return obtain_project_data(self)
+
+    def _configure_obra_margin(self):
+        """Margen general de aviso antes del inicio previsto de una obra (EJECUTAR)."""
+        from PySide6.QtWidgets import QInputDialog
+
+        from src.core.settings import Settings
+
+        settings = Settings()
+        actual = settings.get_obra_margen_aviso_dias()
+        dias, ok = QInputDialog.getInt(
+            self, "Avisos de obras",
+            "Avisar cuántos días antes del inicio previsto de cada obra:\n"
+            "(se puede cambiar en una obra concreta desde «Planificación…»)",
+            actual, 0, 365,
+        )
+        if ok:
+            settings.save_obra_margen_aviso_dias(dias)
 
     def _open_default_paths(self):
         from src.gui.dialogs import DefaultPathsDialog
@@ -720,6 +767,52 @@ class MainFrame(QMainWindow):
             return OUTCOME_CANCELLED
 
         selected = partidas_dlg.get_selected_partidas()
+        return self._insert_final_partidas_once(excel_path, selected, project_data)
+
+    def _choose_partidas_source(self) -> str:
+        """Pregunta cómo añadir las partidas: biblioteca, IA o dejar vacío."""
+        box = QMessageBox(self)
+        box.setWindowTitle("Partidas del presupuesto")
+        box.setText("¿Cómo quieres añadir las partidas?")
+        # Textos cortos: con los largos no se leían por falta de espacio.
+        btn_lib = box.addButton("Biblioteca", QMessageBox.ButtonRole.AcceptRole)
+        btn_ai = box.addButton("IA", QMessageBox.ButtonRole.ActionRole)
+        box.addButton("Vacío", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(btn_lib)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is btn_lib:
+            return "library"
+        if clicked is btn_ai:
+            return "ai"
+        return "empty"
+
+    def _offer_partidas_for_new_budget(self, excel_path, project_data) -> str:
+        """Al crear: biblioteca, IA (flujo unificado) o dejar el presupuesto vacío."""
+        source = self._choose_partidas_source()
+        if source == "library":
+            return self._offer_partidas_from_library(excel_path, project_data)
+        if source == "ai":
+            return self._offer_partidas_unified(excel_path, project_data)
+        # Igual que "Saltar" en el flujo de IA: _handle_unfinished_budget ofrece
+        # conservar o descartar el borrador.
+        return OUTCOME_CANCELLED
+
+    def _offer_partidas_from_library(self, excel_path, project_data) -> str:
+        """Partidas elegidas en la biblioteca → revisión → escritura."""
+        # Por módulo (no `from ... import Clase`) para que los tests puedan sustituirlas.
+        from src.gui import combined_partidas_review_dialog as review_mod
+        from src.gui import partida_library_dialog as library_mod
+
+        dlg = library_mod.PartidaLibraryDialog(self)
+        if dlg.exec() != 1 or not dlg.get_candidates():
+            return OUTCOME_CANCELLED
+        review = review_mod.CombinedPartidasReviewDialog(self, library_partidas=dlg.get_candidates())
+        if review.exec() != 1:
+            return OUTCOME_CANCELLED
+        selected = review.get_selected_partidas()
+        if not selected:
+            return OUTCOME_EMPTY
         return self._insert_final_partidas_once(excel_path, selected, project_data)
 
     def _offer_partidas_unified(self, excel_path, project_data) -> str:

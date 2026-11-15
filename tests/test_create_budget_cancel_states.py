@@ -140,6 +140,9 @@ def _frame(monkeypatch, tmp_path, budget_svc=None, question_answer=None, chosen=
     frame._buscar_comunidad_para_presupuesto = lambda *args, **kwargs: None
     frame._open_dashboard = lambda *args, **kwargs: None
     frame._schedule_historical_feedback = _Spy()
+    # Estos tests prueban los estados del flujo de IA al crear: se elige "IA"
+    # en la pregunta de origen de las partidas (biblioteca / IA / vacío).
+    frame._choose_partidas_source = lambda: "ai"
     return frame
 
 

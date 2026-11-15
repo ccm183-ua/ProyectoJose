@@ -202,6 +202,9 @@ def _build_gui_frame(monkeypatch, tmp_path, chosen, question_answer=None):
     frame._obtain_project_data = lambda: (dict(_project_data()), "Original")
     frame._buscar_comunidad_para_presupuesto = lambda *args, **kwargs: None
     frame._offer_partidas_unified = lambda *args, **kwargs: None
+    # Estos tests prueban el destino de guardado, no la elección de origen de
+    # las partidas: se fija "IA", el flujo que existía cuando se escribieron.
+    frame._choose_partidas_source = lambda: "ai"
     frame._open_dashboard = lambda *args, **kwargs: None
     frame._schedule_historical_feedback = lambda *args, **kwargs: None
     return frame
