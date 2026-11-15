@@ -454,7 +454,7 @@ class BudgetDashboardFrame(QMainWindow):
                     logger.exception("No se pudo cargar la planificación de obras")
             return rel_index, states, data, duplicates
 
-        def _on_done(ok, payload):
+        def _apply(ok, payload):
             self._set_toolbar_enabled(True)
             if not ok:
                 self._view_ctx = None
@@ -477,7 +477,36 @@ class BudgetDashboardFrame(QMainWindow):
                 # La recarga completa puede haber movido obras de fase: el calendario se recarga.
                 planning_events.notify_obras_reloaded(source=self)
 
+        def _on_done(ok, payload):
+            try:
+                _apply(ok, payload)
+            finally:
+                self._finish_full_load()
+
+        # Mientras haya una recarga completa en marcha, lo que dependa de que
+        # termine (Deshacer un movimiento) espera: ver _when_full_load_idle.
+        self._full_loads_running = getattr(self, "_full_loads_running", 0) + 1
         run_in_background(_scan, _on_done)
+
+    def _finish_full_load(self):
+        self._full_loads_running = max(0, getattr(self, "_full_loads_running", 0) - 1)
+        if self._full_loads_running:
+            return
+        pendientes, self._after_full_load = getattr(self, "_after_full_load", []), []
+        for accion in pendientes:
+            accion()
+
+    def _when_full_load_idle(self, accion):
+        """Ejecuta *accion* ya, o cuando acabe la recarga completa en marcha.
+
+        La recarga reconcilia la planificación con lo que vio en disco al
+        escanear; si Deshacer restaura la planificación antes de que termine,
+        esa reconciliación la pisaría con datos del escaneo anterior.
+        """
+        if getattr(self, "_full_loads_running", 0):
+            self._after_full_load = getattr(self, "_after_full_load", []) + [accion]
+        else:
+            accion()
 
     def _refresh_rows(self, rutas, on_done=None):
         """Vuelve a resolver solo las filas de *rutas* y repinta sus pestañas.
@@ -1387,6 +1416,9 @@ class BudgetDashboardFrame(QMainWindow):
 
     def _undo_move(self, moves, snapshots):
         """Devuelve las carpetas a su origen y la planificación a como estaba."""
+        if getattr(self, "_full_loads_running", 0):
+            self._when_full_load_idle(lambda: self._undo_move(moves, snapshots))
+            return
         from src.core.repositories.obra_planificacion_repository import restore_plan_snapshot
 
         failed = []
