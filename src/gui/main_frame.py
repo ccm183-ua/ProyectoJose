@@ -56,6 +56,7 @@ class MainFrame(QMainWindow):
         self._db_frame = None
         self._dashboard_frame = None
         self._historical_memory_dashboard = None
+        self._obra_calendar = None
         self._build_ui()
         self._center()
         self._schedule_startup_historical_refresh()
@@ -162,6 +163,12 @@ class MainFrame(QMainWindow):
         btn_open.clicked.connect(self._open_dashboard)
         btn_layout.addWidget(btn_open, alignment=Qt.AlignmentFlag.AlignHCenter)
 
+        btn_calendar = QPushButton("Calendario de obras")
+        btn_calendar.setFixedSize(320, 46)
+        btn_calendar.setFont(theme.font_base())
+        btn_calendar.clicked.connect(self._open_obra_calendar)
+        btn_layout.addWidget(btn_calendar, alignment=Qt.AlignmentFlag.AlignHCenter)
+
         btn_db = QPushButton("Gestionar base de datos")
         btn_db.setFixedSize(320, 46)
         btn_db.setFont(theme.font_base())
@@ -211,6 +218,8 @@ class MainFrame(QMainWindow):
         act_obras.triggered.connect(self._configure_obra_margin)
 
         m_tools = menubar.addMenu("&Herramientas")
+        act_calendar = m_tools.addAction("Calendario de obras...")
+        act_calendar.triggered.connect(self._open_obra_calendar)
         act_hist = m_tools.addAction("Analizar presupuestos terminados...")
         act_hist.triggered.connect(self._open_historical_analysis)
         act_memory = m_tools.addAction("Panel de memoria historica...")
@@ -268,6 +277,25 @@ class MainFrame(QMainWindow):
             self._dashboard_frame.raise_()
         except Exception as ex:
             QMessageBox.critical(self, "Error", f"Error al abrir el dashboard: {ex}")
+
+    def _open_obra_calendar(self):
+        try:
+            from src.gui import obra_calendar_window
+
+            if self._obra_calendar is not None:
+                try:
+                    if self._obra_calendar.isVisible():
+                        self._obra_calendar.raise_()
+                        self._obra_calendar.activateWindow()
+                        return
+                except RuntimeError:
+                    self._obra_calendar = None
+            self._obra_calendar = obra_calendar_window.ObraCalendarWindow(self)
+            self._obra_calendar.destroyed.connect(lambda: setattr(self, "_obra_calendar", None))
+            self._obra_calendar.show()
+            self._obra_calendar.raise_()
+        except Exception as ex:
+            QMessageBox.critical(self, "Error", f"Error al abrir el calendario de obras: {ex}")
 
     def _open_historical_memory_dashboard(self):
         try:

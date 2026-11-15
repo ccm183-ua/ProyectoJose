@@ -41,6 +41,7 @@ from src.gui.widgets.budget_filter_bar import BudgetFilterBar
 from src.gui.widgets.toast import show_toast
 from src.utils.budget_utils import RE_PROJECT_NUM, normalize_date
 from src.utils.helpers import run_in_background
+from src.gui import planning_events
 
 logger = logging.getLogger(__name__)
 
@@ -213,12 +214,17 @@ class BudgetDashboardFrame(QMainWindow):
 
         self._build_ui()
         self._center()
+        planning_events.planning_events().planning_changed.connect(self._on_external_planning_changed)
         self._load_data()
 
     def closeEvent(self, event):
         for stop in list(self._excel_watchers.values()):
             stop.set()
         self._excel_watchers.clear()
+        try:
+            planning_events.planning_events().planning_changed.disconnect(self._on_external_planning_changed)
+        except (RuntimeError, TypeError):
+            pass
         super().closeEvent(event)
 
     def _center(self):
@@ -467,6 +473,9 @@ class BudgetDashboardFrame(QMainWindow):
             self._rebuild_tabs(
                 states, root_path, prefetched if explorer == self._explorer_mode else None
             )
+            if not explorer and explorer == self._explorer_mode:
+                # La recarga completa puede haber movido obras de fase: el calendario se recarga.
+                planning_events.notify_obras_reloaded(source=self)
 
         run_in_background(_scan, _on_done)
 
@@ -756,6 +765,20 @@ class BudgetDashboardFrame(QMainWindow):
             return self._settings.get_obra_margen_aviso_dias()
         except Exception:
             return 7
+
+    def _on_external_planning_changed(self, numeros, source):
+        """Otra ventana (el calendario) guardó fechas: se repintan solo esas filas."""
+        if source is self or self._explorer_mode:
+            return
+        wanted = set(numeros or ())
+        rutas = [
+            r.get("ruta_excel")
+            for rows in self._tab_data.values()
+            for r in rows
+            if r.get("ruta_excel") and planning_key(r) in wanted
+        ]
+        if rutas:
+            self._refresh_rows(rutas)
 
     @staticmethod
     def _place_planning_columns(table, state_name):
@@ -1589,6 +1612,7 @@ class BudgetDashboardFrame(QMainWindow):
         ]
         if errores:
             QMessageBox.critical(self, "Planificación", f"No se pudo guardar:\n{errores[0]}")
+        planning_events.notify_planning_changed([planning_key(s) for s in selected], source=self)
         rutas = [s.get("ruta_excel") for s in selected if s.get("ruta_excel")]
         if rutas:
             self._refresh_rows(rutas)

@@ -98,5 +98,6 @@ está vacío.
    el pie de totales y las cabeceras de página con Excel.
 3. Regenerar desde la plantilla los presupuestos 166-26 y 168-26 (generados con
    el pie roto).
-4. Abrir un Excel desde el dashboard, guardarlo y comprobar que pregunta antes
-   de finalizar.
+4. Abrir un Excel desde el dashboard, guardarlo y comprobar que la fila se
+   actualiza y sale un aviso con «Finalizar» (desde 2026-11-14 ya no pregunta;
+   ver `docs/superpowers/specs/2026-11-14-dashboard-filtros-ux-design.md`).

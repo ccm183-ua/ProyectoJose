@@ -3,6 +3,9 @@
 > Pieza A de la batería "obras" acordada el 2026-11-13 (opción 1): D imprimir
 > directo (hecha) → **A planificación** → B avisos y correo → C calendario y
 > métricas. B y C usarán los datos de A.
+>
+> Estado (2026-11-15): C hecha en la rama `calendario-obras`
+> (`docs/superpowers/specs/2026-11-15-calendario-obras-design.md`); B sin empezar.
 
 ## Problema
 
