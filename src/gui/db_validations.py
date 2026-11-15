@@ -4,7 +4,7 @@ Funciones de validación para formularios de la base de datos.
 
 import re
 
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtWidgets import QMessageBox, QWidget
 
 _RE_EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]{2,}$")
 _RE_PHONE_CHARS = re.compile(r"^[\d\s+\-().]+$")
@@ -40,10 +40,32 @@ def validate_cif(value: str) -> str | None:
     return None
 
 
-def run_validations(dialog, checks: list[tuple[str, str | None]]) -> bool:
-    """Ejecuta una lista de (campo, error_o_none). Muestra el primer error y retorna False, o True si todo OK."""
-    for field_name, err in checks:
+def _set_error(widget: QWidget, error: str | None):
+    """Marca o limpia el control como inválido (borde rojo + tooltip)."""
+    widget.setProperty("error", bool(error))
+    widget.setToolTip(error or "")
+    style = widget.style()
+    style.unpolish(widget)
+    style.polish(widget)
+
+
+def run_validations(dialog, checks: list[tuple[QWidget, str, str | None]]) -> bool:
+    """Valida todos los checks (control, etiqueta, error_o_none) de una vez.
+
+    Marca cada control inválido con la propiedad ``error`` y su tooltip, muestra
+    un único resumen con todos los errores y enfoca el primero. Devuelve False si
+    hay algún error y True si todo es válido.
+    """
+    invalid: list[tuple[QWidget, str, str]] = []
+    for widget, label, err in checks:
+        _set_error(widget, err)
         if err:
-            QMessageBox.warning(dialog, "Validación", f"{field_name}: {err}")
-            return False
-    return True
+            invalid.append((widget, label, err))
+    if not invalid:
+        return True
+    body = "Corrige estos campos antes de guardar:\n" + "\n".join(
+        f"• {label}: {err}" for _, label, err in invalid
+    )
+    QMessageBox.warning(dialog, "Validación", body)
+    invalid[0][0].setFocus()
+    return False

@@ -176,6 +176,22 @@ def eliminar_historial(id_: int) -> Optional[str]:
             return f"Error de base de datos: {e.args[0] if e.args else 'desconocido'}."
 
 
+def eliminar_historial_por_ruta(ruta_excel: str) -> Optional[str]:
+    """Elimina del historial la entrada de un Excel por su ruta. No borra el archivo.
+
+    Returns:
+        None si ok, mensaje de error si falla.
+    """
+    with database.get_connection() as conn:
+        try:
+            conn.execute("DELETE FROM historial_presupuesto WHERE ruta_excel=?", (ruta_excel,))
+            conn.commit()
+            return None
+        except sqlite3.OperationalError as e:
+            conn.rollback()
+            return f"Error de base de datos: {e.args[0] if e.args else 'desconocido'}."
+
+
 def buscar_historial(texto: str) -> List[Dict]:
     """Busca presupuestos en el historial por nombre, cliente o localidad.
 

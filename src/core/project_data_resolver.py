@@ -12,7 +12,7 @@ Si el mtime cambió o no hay cache, se re-lee y se actualiza la DB.
 
 from typing import Dict, List, Optional
 
-from src.core.budget_cache import cleanup_orphaned_cache, sync_presupuestos
+from src.core.budget_cache import sync_presupuestos
 from src.core.excel_relation_reader import ExcelRelationReader
 from src.core.settings import Settings
 
@@ -37,38 +37,6 @@ def resolve_projects(
         Lista de dicts con campos unificados listos para la UI.
     """
     return sync_presupuestos(scanned, relation_index, state_name)
-
-
-def resolve_projects_all_states(
-    states_scanned: Dict[str, List[Dict]],
-    relation_index: Optional[Dict[str, Dict]] = None,
-) -> Dict[str, List[Dict]]:
-    """Resuelve proyectos para múltiples estados y limpia la cache huérfana.
-
-    Args:
-        states_scanned: Dict ``{estado: lista_de_proyectos_escaneados}``.
-        relation_index: Índice del Excel de relación.
-
-    Returns:
-        Dict ``{estado: lista_de_proyectos_resueltos}``.
-    """
-    result: Dict[str, List[Dict]] = {}
-    all_rutas: List[str] = []
-
-    for state_name, scanned in states_scanned.items():
-        resolved = sync_presupuestos(scanned, relation_index, state_name)
-        result[state_name] = resolved
-        # Recopilar rutas vigentes para limpieza
-        for proj in scanned:
-            ruta = proj.get("ruta_excel", "")
-            if ruta:
-                all_rutas.append(ruta)
-
-    # Limpiar presupuestos huérfanos de la cache
-    if all_rutas:
-        cleanup_orphaned_cache(all_rutas)
-
-    return result
 
 
 def build_relation_index(relation_file: Optional[str] = None) -> Dict[str, Dict]:

@@ -1,18 +1,25 @@
 """
 Servicio de IA para generación de partidas presupuestarias.
 
-Utiliza Google Gemini 2.5 Flash para generar partidas a partir de un prompt.
-Incluye parseo robusto de respuestas, reintentos automáticos, fallback de
-modelos y manejo de errores amigable.
+Parseo del esquema "partidas" (esquema esperado por el generador de
+presupuestos) sobre la respuesta de Gemini. La llamada real al proveedor se
+delega en `GeminiAIClient` (src/core/ai_clients.py) — este módulo no importa
+el SDK de Gemini directamente, solo añade el fallback entre varios modelos
+(cada uno con cuota independiente) y el parseo específico de partidas.
 """
 
 import json
 import logging
 import re
-import time
 from typing import Dict, List, Optional, Tuple
 
+from src.core.ai_clients import GeminiAIClient, normalize_ai_error
+
 logger = logging.getLogger(__name__)
+
+# Respuesta esperada al generar partidas: 10-15 partidas con descripción
+# superan con holgura el límite por defecto del cliente (1200).
+PARTIDAS_MAX_OUTPUT_TOKENS = 8192
 
 
 # Modelos en orden de preferencia (cada uno tiene cuota independiente)
@@ -22,15 +29,11 @@ MODELS = [
     "gemini-2.0-flash",
 ]
 
-# Reintentos por modelo antes de pasar al siguiente
-MAX_RETRIES_PER_MODEL = 1
-RETRY_DELAY = 10  # segundos
-
 
 class AIService:
     """Cliente de IA para generación de partidas presupuestarias."""
 
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
         """
         Inicializa el servicio de IA.
 
@@ -39,7 +42,14 @@ class AIService:
                      el servicio no estará disponible.
         """
         self._api_key = api_key if api_key and api_key.strip() else None
-        self._model = None
+        self._configured_model = model.strip() if model and model.strip() else None
+        self._client = GeminiAIClient(
+            self._api_key, self._configured_model, fallback_models=MODELS,
+        )
+
+    @property
+    def _model(self) -> Optional[str]:
+        return self._client.model_name if self._api_key else None
 
     def is_available(self) -> bool:
         """
@@ -75,97 +85,40 @@ class AIService:
         except ImportError as e:
             return [], str(e)
         except Exception as e:
-            return [], self._friendly_error(e)
+            return [], normalize_ai_error(e)
 
-    def _call_api(self, prompt: str):
+    def generate_text(self, prompt: str) -> Tuple[str, Optional[str], str]:
         """
-        Realiza la llamada a la API de Gemini con fallback entre modelos.
+        Genera texto libre usando la IA.
 
-        Intenta cada modelo de la lista MODELS en orden. Si un modelo
-        falla con 429 (cuota agotada), reintenta una vez y si sigue
-        fallando, pasa al siguiente modelo. Así maximizamos la
-        disponibilidad aprovechando las cuotas independientes de cada modelo.
-
-        Args:
-            prompt: Prompt completo a enviar.
+        Se usa para flujos auxiliares que necesitan validar su propio JSON
+        de salida sin reutilizar el parser de partidas.
 
         Returns:
-            Respuesta de la API.
+            Tupla (texto, mensaje_error, modelo). Si hay error, texto estara
+            vacio y mensaje_error tendra informacion legible.
         """
-        # Importar aquí para no requerir la dependencia si no se usa
+        if not self.is_available():
+            return "", "No hay API key configurada. Configure su clave en Configuracion > IA.", ""
+
         try:
-            from google import genai
-        except ImportError:
-            raise ImportError(
-                "La librería 'google-genai' no está instalada. "
-                "Ejecute: pip install google-genai"
-            )
+            response = self._call_api(prompt)
+            response_text = response.text if hasattr(response, "text") else str(response)
+            return response_text, None, self._model or ""
+        except TimeoutError:
+            return "", "Tiempo de espera agotado al contactar con la IA. Intentelo de nuevo.", ""
+        except ImportError as e:
+            return "", str(e), ""
+        except Exception as e:
+            return "", normalize_ai_error(e), ""
 
-        if self._model is None:
-            client = genai.Client(api_key=self._api_key)
-            self._client = client
-
-        last_error = None
-        for model_name in MODELS:
-            for attempt in range(MAX_RETRIES_PER_MODEL + 1):
-                try:
-                    response = self._client.models.generate_content(
-                        model=model_name,
-                        contents=prompt,
-                    )
-                    return response
-                except Exception as e:
-                    last_error = e
-                    error_str = str(e)
-                    is_rate_limit = "429" in error_str or "RESOURCE_EXHAUSTED" in error_str
-                    if is_rate_limit and attempt < MAX_RETRIES_PER_MODEL:
-                        time.sleep(RETRY_DELAY)
-                        continue
-                    elif is_rate_limit:
-                        # Cuota agotada para este modelo, probar el siguiente
-                        break
-                    else:
-                        # Error no relacionado con cuota, propagar
-                        raise
-
-        # Todos los modelos fallaron
-        raise last_error
-
-    @staticmethod
-    def _friendly_error(exc: Exception) -> str:
+    def _call_api(self, prompt: str) -> str:
         """
-        Traduce excepciones de la API de Gemini a mensajes legibles en español.
-
-        Args:
-            exc: Excepción capturada.
-
-        Returns:
-            Mensaje de error amigable para mostrar al usuario.
+        Llama al proveedor Gemini con fallback entre modelos (cada uno con
+        cuota independiente). La llamada real al SDK vive en `GeminiAIClient`
+        (src/core/ai_clients.py); este método solo delega.
         """
-        error_str = str(exc)
-
-        if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
-            return (
-                "Cuota temporal agotada en la API de Gemini. "
-                "Se reintentó automáticamente pero sigue ocupada. "
-                "Espere un minuto e inténtelo de nuevo."
-            )
-
-        if "403" in error_str or "PERMISSION_DENIED" in error_str:
-            return (
-                "API key sin permisos. Verifique su clave en Configuración > IA."
-            )
-
-        if "API_KEY_INVALID" in error_str or "400" in error_str and "API key" in error_str:
-            return (
-                "La API key no es válida. Configúrela de nuevo en Configuración > IA."
-            )
-
-        if "DEADLINE_EXCEEDED" in error_str or "timeout" in error_str.lower():
-            return "Tiempo de espera agotado al contactar con la IA. Inténtelo de nuevo."
-
-        # Error genérico: truncar para no mostrar JSON crudo completo
-        return f"Error al contactar con la IA: {error_str[:200]}"
+        return self._client.generate_text(prompt, max_tokens=PARTIDAS_MAX_OUTPUT_TOKENS)
 
     def parse_response(self, response_text: str) -> List[Dict]:
         """
@@ -272,6 +225,8 @@ class AIService:
         if value is None:
             return default
         try:
-            return float(value)
+            from src.core.budget_math import parse_decimal_es
+
+            return parse_decimal_es(value)
         except (ValueError, TypeError):
             return default

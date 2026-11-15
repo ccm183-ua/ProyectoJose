@@ -21,6 +21,8 @@ Principios:
 
 import logging
 import os
+import re
+import threading
 from datetime import datetime
 from typing import Dict, List, Optional
 
@@ -30,7 +32,9 @@ from src.core.db_repository import (
     buscar_administracion_por_nombre,
     buscar_comunidad_por_nombre,
     get_presupuesto_por_ruta,
+    get_presupuestos_por_rutas,
     limpiar_presupuestos_huerfanos,
+    marcar_verificacion_presupuesto,
     upsert_presupuesto,
 )
 from src.utils.budget_utils import (
@@ -43,6 +47,77 @@ from src.utils.budget_utils import (
 logger = logging.getLogger(__name__)
 
 
+# Súbela cuando el lector aprenda a extraer algo nuevo (p. ej. otro formato de
+# totales): invalida las verificaciones guardadas y cada Excel se relee una vez.
+READER_REVISION = "1"
+
+
+def _verification_key(mtime_iso: str) -> str:
+    """Clave con la que se recuerda la comprobación de hoja de un Excel."""
+    return f"{READER_REVISION}|{mtime_iso}"
+
+
+def _verificable(numero: str, has_match: Optional[bool], lectura_ok: bool = True) -> bool:
+    """Si el resultado de esta lectura se puede dar por definitivo para este mtime.
+
+    ``has_match is None`` con número significa que el Excel no se pudo abrir
+    (bloqueado mientras Excel guarda, OneDrive sincronizando...): no se marca
+    como verificado para que la siguiente recarga lo vuelva a intentar.
+    """
+    return lectura_ok and (has_match is not None or not numero)
+
+
+def _mark_verified(ruta_excel: str, mtime_iso: str, has_match: Optional[bool]) -> None:
+    try:
+        marcar_verificacion_presupuesto(ruta_excel, _verification_key(mtime_iso), has_match)
+    except Exception:
+        logger.debug("No se pudo marcar la verificación de %s", ruta_excel)
+
+
+_NUMERIC_TEXT_RE = re.compile(r"^\s*\d+(?:[.,]\d+)?\s*$")
+
+
+def _is_suspicious_text_value(value: str) -> bool:
+    """Detecta valores no textuales usados por error en campos de texto.
+
+    Ejemplos típicos del fallo: ``0.6``, ``0.9`` en cliente/dirección.
+    """
+    text = (value or "").strip()
+    if not text:
+        return False
+    return bool(_NUMERIC_TEXT_RE.match(text))
+
+
+def _apply_no_matching_sheet_policy(datos: Dict, numero: str) -> None:
+    """Aplica política estricta cuando ninguna hoja coincide con el número esperado.
+
+    Regla funcional: no guardar datos de contenido del presupuesto
+    (cabecera/totales/relación), solo identidad del proyecto y aviso.
+    """
+    datos["cliente"] = ""
+    datos["administracion_nombre"] = ""
+    datos["direccion"] = ""
+    datos["localizacion"] = ""
+    datos["localidad"] = ""
+    datos["tipo_obra"] = ""
+    datos["fecha"] = ""
+    datos["total"] = None
+    datos["subtotal"] = None
+    datos["iva"] = None
+    datos["cif_admin"] = ""
+    datos["email_admin"] = ""
+    datos["telefono_admin"] = ""
+    datos["codigo_postal"] = ""
+    datos["comunidad_id"] = None
+    datos["administracion_id"] = None
+    datos["comunidad_nombre"] = ""
+    datos["datos_completos"] = False
+    datos["motivo_incompleto"] = (
+        "Aviso: ninguna hoja del Excel coincide con el número "
+        f"de proyecto esperado ({numero}). Puede ser una plantilla provisional."
+    )
+
+
 def _get_file_mtime_iso(filepath: str) -> Optional[str]:
     """Devuelve el mtime del fichero como string ISO, o None si no existe."""
     try:
@@ -50,6 +125,47 @@ def _get_file_mtime_iso(filepath: str) -> Optional[str]:
         return datetime.fromtimestamp(stat.st_mtime).isoformat()
     except (OSError, ValueError):
         return None
+
+
+def _wait_for_excel_change(
+    ruta_excel: str,
+    stop_event: threading.Event,
+    baseline: float,
+    poll_seconds: float = 2.0,
+) -> bool:
+    """Espera a que cambie el mtime del Excel o a que se pida parar.
+
+    Sin límite de tiempo: vigila mientras el dashboard siga abierto, para no
+    dejar de observar tras el primer guardado ni pasados unos minutos.
+    Devuelve True si cambió y False si se pidió parar.
+    """
+    current = baseline
+    while not stop_event.is_set():
+        if stop_event.wait(poll_seconds):
+            return False
+        try:
+            mtime_now = os.path.getmtime(ruta_excel)
+        except OSError:
+            continue
+        if mtime_now != current:
+            return True
+    return False
+
+
+def _infer_localidad_from_direccion(direccion: str) -> str:
+    """Extrae una localidad aproximada desde una dirección textual."""
+    text = (direccion or "").strip()
+    if not text:
+        return ""
+    parts = [p.strip() for p in text.split(",") if p.strip()]
+    if not parts:
+        return ""
+    last = parts[-1]
+    # Limpiar CP al inicio: "03004 Alicante" -> "Alicante"
+    tokens = last.split()
+    if tokens and tokens[0].isdigit() and len(tokens[0]) in (4, 5):
+        last = " ".join(tokens[1:]).strip()
+    return last
 
 
 def _is_template_data(excel_numero: str, expected_numero: str) -> bool:
@@ -103,6 +219,10 @@ def sync_presupuestos(
     """
     reader = BudgetReader()
     result: List[Dict] = []
+    # Una sola consulta para toda la pestaña en vez de una conexión por proyecto.
+    cache_by_ruta = get_presupuestos_por_rutas(
+        [p.get("ruta_excel", "") for p in scanned_projects]
+    )
 
     for proj in scanned_projects:
         numero = proj.get("numero_proyecto", "")
@@ -125,9 +245,78 @@ def sync_presupuestos(
             continue
 
         # Buscar en cache
-        cached = get_presupuesto_por_ruta(ruta_excel)
+        cached = cache_by_ruta.get(ruta_excel.strip())
+
+        # Si el presupuesto ya está finalizado en DB, el escaneo no debe
+        # sobreescribir su contenido aunque el Excel haya cambiado. Pero
+        # tampoco puede presentarlo como actual: si el mtime difiere, se
+        # marca como snapshot desactualizado para que la UI lo distinga.
+        if cached and cached.get("es_finalizado"):
+            if cached.get("estado") != state_name and state_name:
+                cached["estado"] = state_name
+                try:
+                    actualizar_estado_presupuesto(ruta_excel, state_name)
+                except Exception:
+                    logger.debug("No se pudo actualizar estado finalizado para %s", ruta_excel)
+            _fill_entry_from_cache(entry, cached)
+            cached_mtime = (cached.get("fecha_modificacion_excel") or "").strip()
+            if cached_mtime and cached_mtime != mtime_actual:
+                entry["snapshot_desactualizado"] = True
+                entry["aviso_actualizacion"] = (
+                    "El Excel cambió después de finalizar. Se muestra el snapshot "
+                    "finalizado, no la versión actual: actualiza o reabre el "
+                    "presupuesto para revisarla."
+                )
+            result.append(entry)
+            continue
 
         if cached and cached.get("fecha_modificacion_excel") == mtime_actual:
+            if cached.get("clave_verificacion") == _verification_key(mtime_actual):
+                # Ya se comprobó la hoja (y se aplicó la política) con este mtime
+                # y esta revisión del lector: no hace falta volver a abrir el Excel.
+                if cached.get("estado") != state_name and state_name:
+                    cached["estado"] = state_name
+                    try:
+                        actualizar_estado_presupuesto(ruta_excel, state_name)
+                    except Exception:
+                        logger.debug("No se pudo actualizar estado en cache para %s", ruta_excel)
+                _fill_entry_from_cache(entry, cached)
+                result.append(entry)
+                continue
+
+            # Aunque el mtime no cambie, validar la regla de coincidencia de hoja
+            # para evitar seguir mostrando datos antiguos/incorrectos en cache.
+            has_match = reader.has_matching_project_sheet(ruta_excel, numero) if numero else None
+            refresh_due_to_policy = False
+            if has_match is False:
+                refresh_due_to_policy = True
+            elif has_match is True:
+                motivo = (cached.get("motivo_incompleto") or "").lower()
+                if "ninguna hoja del excel coincide" in motivo:
+                    refresh_due_to_policy = True
+                elif (cached.get("total") in (None, 0, 0.0)) and not cached.get("es_finalizado"):
+                    # Intentar recomputar por si el lector ahora sí puede extraer
+                    # los importes (p.ej. formatos K/L/M soportados recientemente).
+                    refresh_due_to_policy = True
+
+            if refresh_due_to_policy:
+                datos_cache = _build_cache_data(
+                    proj, reader, relation_index, ruta_excel, mtime_actual, state_name,
+                    has_match=has_match,
+                )
+                lectura_ok = datos_cache.pop("_lectura_ok", False)
+                try:
+                    upsert_presupuesto(datos_cache)
+                except Exception:
+                    logger.exception("Error al refrescar cache por política: %s", ruta_excel)
+                else:
+                    if _verificable(numero, has_match, lectura_ok):
+                        _mark_verified(ruta_excel, mtime_actual, has_match)
+                persisted = get_presupuesto_por_ruta(ruta_excel)
+                _fill_entry_from_cache(entry, persisted or datos_cache)
+                result.append(entry)
+                continue
+
             # Cache válida: mtime coincide
             # Solo actualizar estado si cambió de carpeta
             if cached.get("estado") != state_name and state_name:
@@ -137,26 +326,35 @@ def sync_presupuestos(
                 except Exception:
                     logger.debug("No se pudo actualizar estado en cache para %s", ruta_excel)
 
+            if _verificable(numero, has_match):
+                _mark_verified(ruta_excel, mtime_actual, has_match)
             _fill_entry_from_cache(entry, cached)
             result.append(entry)
             continue
 
         # Cache no válida o inexistente: necesitamos leer datos
+        has_match = reader.has_matching_project_sheet(ruta_excel, numero) if numero else None
         datos_cache = _build_cache_data(
-            proj, reader, relation_index, ruta_excel, mtime_actual, state_name
+            proj, reader, relation_index, ruta_excel, mtime_actual, state_name,
+            has_match=has_match,
         )
 
         # Intentar vincular FK a comunidad/administración
         _try_link_fks(datos_cache)
 
         # Guardar en cache
+        lectura_ok = datos_cache.pop("_lectura_ok", False)
         try:
             upsert_presupuesto(datos_cache)
         except Exception:
             logger.exception("Error al guardar en cache: %s", ruta_excel)
+        else:
+            if _verificable(numero, has_match, lectura_ok):
+                _mark_verified(ruta_excel, mtime_actual, has_match)
 
         # Rellenar la entrada para la UI
-        _fill_entry_from_cache(entry, datos_cache)
+        persisted = get_presupuesto_por_ruta(ruta_excel)
+        _fill_entry_from_cache(entry, persisted or datos_cache)
         result.append(entry)
 
     return result
@@ -188,26 +386,44 @@ def _empty_entry(proj: Dict, state_name: str = "") -> Dict:
         "nombre_proyecto": proj.get("nombre_carpeta", ""),
         "numero": proj.get("numero_proyecto", ""),
         "cliente": "",
+        "administracion_nombre": "",
+        "direccion": "",
         "localidad": "",
         "tipo_obra": "",
         "fecha": "",
+        "subtotal": None,
+        "iva": None,
         "total": None,
         "ruta_excel": proj.get("ruta_excel", ""),
         "ruta_carpeta": proj.get("ruta_carpeta", ""),
         "estado": state_name,
         "datos_completos": False,
+        "es_finalizado": False,
+        "snapshot_desactualizado": False,
+        "aviso_actualizacion": "",
+        "fuente_datos": "scan",
+        "calidad_datos": 0,
+        "motivo_incompleto": "",
     }
 
 
 def _fill_entry_from_cache(entry: Dict, cached: Dict) -> None:
     """Rellena la entrada de la UI a partir de un dict de datos (cache DB o recién construido)."""
     entry["cliente"] = cached.get("cliente", "")
+    entry["administracion_nombre"] = cached.get("administracion_nombre", "")
+    entry["direccion"] = cached.get("direccion", "")
     entry["localidad"] = cached.get("localidad", "")
     entry["tipo_obra"] = cached.get("tipo_obra", "")
     entry["fecha"] = cached.get("fecha", "")
+    entry["subtotal"] = cached.get("subtotal")
+    entry["iva"] = cached.get("iva")
     entry["total"] = cached.get("total")
     entry["datos_completos"] = bool(cached.get("datos_completos", False))
     entry["estado"] = cached.get("estado", entry.get("estado", ""))
+    entry["es_finalizado"] = bool(cached.get("es_finalizado", False))
+    entry["fuente_datos"] = cached.get("fuente_datos", "scan")
+    entry["calidad_datos"] = int(cached.get("calidad_datos") or 0)
+    entry["motivo_incompleto"] = cached.get("motivo_incompleto", "")
 
 
 def _lookup_relation(
@@ -240,6 +456,7 @@ def _build_cache_data(
     ruta_excel: str,
     mtime_iso: str,
     state_name: str,
+    has_match: Optional[bool] = None,
 ) -> Dict:
     """Construye el dict de datos para guardar en cache.
 
@@ -259,7 +476,17 @@ def _build_cache_data(
         "estado": state_name,
         "fecha_modificacion_excel": mtime_iso,
         "datos_completos": False,
+        "fuente_datos": "scan",
+        "es_finalizado": False,
     }
+
+    # Regla estricta: si ninguna hoja coincide con el número esperado,
+    # NO guardar datos de contenido del presupuesto.
+    # *has_match* lo calcula el llamador para no leer el Excel dos veces.
+    if has_match is False:
+        _apply_no_matching_sheet_policy(datos, numero)
+        datos["_lectura_ok"] = True  # resultado definitivo: ninguna hoja coincide
+        return datos
 
     # ── Fuente 1: Relación de presupuestos (metadatos) ──────────────
     # Cliente, localidad, tipo de obra y fecha se obtienen SIEMPRE de la
@@ -271,24 +498,51 @@ def _build_cache_data(
         datos["tipo_obra"] = rel.get("tipo", "")
         datos["fecha"] = normalize_date(rel.get("fecha", ""))
 
-    # ── Fuente 2: Total desde texto "Asciende..." del Excel ─────────
-    # El total no tiene una celda fija; se obtiene parseando la frase
-    # "Asciende el presupuesto ... cantidad de X EUROS ..." que siempre
-    # ocupa una fila completa en el presupuesto.
+    # ── Fuente 2: Cabecera y totales desde el Excel ─────────
     try:
-        total = reader.read_total_from_text(ruta_excel, expected_numero=numero)
-        if total is not None:
-            datos["total"] = total
+        budget_data = reader.read(ruta_excel, expected_numero=numero)
+        # Marca interna (el llamador la quita antes de guardar): sin lectura no
+        # se da el Excel por verificado y la siguiente recarga lo reintenta.
+        datos["_lectura_ok"] = bool(budget_data)
+        if budget_data:
+            cab = budget_data.get("cabecera", {}) or {}
+            direccion = (cab.get("direccion") or "").strip()
+            direccion_valida = direccion and not _is_suspicious_text_value(direccion)
+            if direccion_valida:
+                datos["direccion"] = direccion
+                datos["localizacion"] = direccion
+            if not datos.get("localidad") and direccion_valida:
+                datos["localidad"] = _infer_localidad_from_direccion(direccion)
+            if not datos.get("tipo_obra"):
+                tipo_obra_excel = strip_obra_prefix(cab.get("obra", ""))
+                if not _is_suspicious_text_value(tipo_obra_excel):
+                    datos["tipo_obra"] = tipo_obra_excel
+            if not datos.get("cliente"):
+                cliente_excel = (cab.get("cliente") or "").strip()
+                if not _is_suspicious_text_value(cliente_excel):
+                    datos["cliente"] = cliente_excel
+            if not datos.get("fecha"):
+                datos["fecha"] = normalize_date((cab.get("fecha") or "").strip())
+
+            total = budget_data.get("total")
+            if total is not None:
+                datos["total"] = total
+            if budget_data.get("subtotal") is not None:
+                datos["subtotal"] = budget_data.get("subtotal")
+            if budget_data.get("iva") is not None:
+                datos["iva"] = budget_data.get("iva")
+
+        if datos.get("total") is not None:
             datos["datos_completos"] = True
             logger.debug(
-                "Total leído de texto 'Asciende': %.2f para %s", total, ruta_excel
+                "Cabecera/totales leídos de Excel para %s", ruta_excel
             )
         else:
             logger.warning(
-                "No se encontró frase 'Asciende...' en: %s", ruta_excel
+                "No se pudo leer total desde Excel en: %s", ruta_excel
             )
     except Exception:
-        logger.exception("Error al leer total por texto: %s", ruta_excel)
+        logger.exception("Error al leer cabecera/totales: %s", ruta_excel)
 
     # Si tenemos metadatos de la relación pero no total del Excel,
     # marcar como datos_completos=True si al menos tenemos cliente
@@ -316,9 +570,12 @@ def _try_link_fks(datos: Dict) -> None:
         comunidad = buscar_comunidad_por_nombre(cliente)
         if comunidad:
             datos["comunidad_id"] = comunidad["id"]
+            datos["comunidad_nombre"] = comunidad.get("nombre", "")
+            datos["metodo_resolucion_comunidad"] = "por_nombre_cliente"
             admin_id = comunidad.get("administracion_id")
             if admin_id:
                 datos["administracion_id"] = admin_id
+                datos["metodo_resolucion_admin"] = "por_comunidad"
             return
 
         # Si no encontró comunidad, intentar buscar administración directamente
@@ -326,5 +583,7 @@ def _try_link_fks(datos: Dict) -> None:
         admin = buscar_administracion_por_nombre(cliente)
         if admin:
             datos["administracion_id"] = admin["id"]
+            datos["administracion_nombre"] = admin.get("nombre", "")
+            datos["metodo_resolucion_admin"] = "por_nombre_cliente"
     except Exception:
         logger.debug("Error al vincular FKs para cliente '%s'", cliente)

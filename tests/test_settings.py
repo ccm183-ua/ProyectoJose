@@ -13,7 +13,7 @@ import os
 import tempfile
 import pytest
 
-from src.core.settings import Settings
+from src.core.settings import AI_PROVIDER_DEEPSEEK, AI_PROVIDER_GEMINI, Settings, hash_password, verify_password
 
 
 @pytest.fixture
@@ -158,3 +158,173 @@ class TestDefaultPaths:
         s.save_api_key("mi-clave")
         s.set_default_path(Settings.PATH_SAVE_BUDGETS, "/ruta")
         assert s.get_api_key() == "mi-clave"
+
+
+class TestHistoricalFolders:
+    """H19: el análisis multicarpetas conserva el conjunto completo de fuentes."""
+
+    def test_roundtrip_stores_all_folders_in_order(self, temp_dir):
+        s = Settings(config_dir=temp_dir)
+        s.set_historical_folders(["/obras/a", "/obras/b", "/obras/c"])
+        assert s.get_historical_folders() == ["/obras/a", "/obras/b", "/obras/c"]
+
+    def test_deduplicates_and_drops_empty(self, temp_dir):
+        s = Settings(config_dir=temp_dir)
+        s.set_historical_folders(["/a", "/a", "  ", "/b"])
+        assert s.get_historical_folders() == ["/a", "/b"]
+
+    def test_falls_back_to_legacy_single_folder(self, temp_dir):
+        s = Settings(config_dir=temp_dir)
+        s.set_default_path(Settings.PATH_HISTORICAL_FOLDER, "/obras/legacy")
+        assert s.get_historical_folders() == ["/obras/legacy"]
+
+    def test_clearing_leaves_no_folders(self, temp_dir):
+        s = Settings(config_dir=temp_dir)
+        s.set_historical_folders(["/a"])
+        s.set_historical_folders([])
+        assert s.get_historical_folders() == []
+
+
+class TestAIProviderSettings:
+    def test_provider_defaults_to_gemini(self, temp_dir):
+        s = Settings(config_dir=temp_dir)
+        assert s.get_ai_provider() == AI_PROVIDER_GEMINI
+
+    def test_save_and_load_provider_and_models(self, monkeypatch, temp_dir):
+        monkeypatch.delenv("CUBIAPP_GEMINI_KEY", raising=False)
+        monkeypatch.delenv("CUBIAPP_DEEPSEEK_KEY", raising=False)
+        s = Settings(config_dir=temp_dir)
+        s.save_ai_provider(AI_PROVIDER_DEEPSEEK)
+        s.save_gemini_model("gemini-test")
+        s.save_deepseek_model("deepseek-test")
+        s.save_gemini_api_key("AI-test-key-not-real")
+        s.save_deepseek_api_key("sk-test-key-not-real")
+
+        loaded = Settings(config_dir=temp_dir)
+        assert loaded.get_ai_provider() == AI_PROVIDER_DEEPSEEK
+        assert loaded.get_gemini_model() == "gemini-test"
+        assert loaded.get_deepseek_model() == "deepseek-test"
+        assert loaded.get_gemini_api_key() == "AI-test-key-not-real"
+        assert loaded.get_deepseek_api_key() == "sk-test-key-not-real"
+
+    def test_env_vars_take_precedence_and_report_source(self, monkeypatch, temp_dir):
+        monkeypatch.setenv("CUBIAPP_GEMINI_KEY", "AI-env-key-not-real")
+        monkeypatch.setenv("CUBIAPP_DEEPSEEK_KEY", "sk-env-key-not-real")
+        s = Settings(config_dir=temp_dir)
+        s.save_gemini_api_key("AI-local-key-not-real")
+        s.save_deepseek_api_key("sk-local-key-not-real")
+
+        assert s.get_gemini_api_key() == "AI-env-key-not-real"
+        assert s.get_deepseek_api_key() == "sk-env-key-not-real"
+        assert s.get_local_gemini_api_key() == "AI-local-key-not-real"
+        assert s.get_local_deepseek_api_key() == "sk-local-key-not-real"
+        assert s.get_gemini_api_key_source() == "env"
+        assert s.get_deepseek_api_key_source() == "env"
+
+    def test_local_key_source_when_no_env(self, monkeypatch, temp_dir):
+        monkeypatch.delenv("CUBIAPP_GEMINI_KEY", raising=False)
+        monkeypatch.delenv("CUBIAPP_DEEPSEEK_KEY", raising=False)
+        s = Settings(config_dir=temp_dir)
+        assert s.get_gemini_api_key_source() == "missing"
+        assert s.get_deepseek_api_key_source() == "missing"
+        s.save_gemini_api_key("AI-local-key-not-real")
+        s.save_deepseek_api_key("sk-local-key-not-real")
+        assert s.get_gemini_api_key_source() == "local"
+        assert s.get_deepseek_api_key_source() == "local"
+
+
+class TestPasswordHash:
+    """Tests para el hash de contraseña del backend privado (H4)."""
+
+    def test_verify_password_accepts_correct_password(self):
+        stored = hash_password("una-contrasena-segura")
+        assert verify_password("una-contrasena-segura", stored) is True
+
+    def test_verify_password_rejects_wrong_password(self):
+        stored = hash_password("una-contrasena-segura")
+        assert verify_password("otra-cosa", stored) is False
+
+    def test_hash_password_is_salted(self):
+        assert hash_password("misma-contrasena") != hash_password("misma-contrasena")
+
+    def test_verify_password_rejects_malformed_hash(self):
+        assert verify_password("cualquier-cosa", "no-es-un-hash-valido") is False
+
+    def test_settings_persists_password_hash(self, temp_dir):
+        s = Settings(config_dir=temp_dir)
+        assert s.get_password_hash() is None
+        s.save_password_hash(hash_password("una-contrasena-segura"))
+
+        reloaded = Settings(config_dir=temp_dir)
+        assert verify_password("una-contrasena-segura", reloaded.get_password_hash()) is True
+
+
+class TestConfigNoSeBorraAlFallarLaLectura:
+    """Regresión: un fallo de lectura no puede acabar sobrescribiendo todo el JSON."""
+
+    def test_error_de_lectura_aborta_la_escritura(self, monkeypatch, temp_dir):
+        monkeypatch.delenv("CUBIAPP_GEMINI_KEY", raising=False)
+        settings = Settings(config_dir=temp_dir)
+        settings.save_api_key("clave-original")
+        settings.save_ai_provider(AI_PROVIDER_DEEPSEEK)
+        path = os.path.join(temp_dir, "cubiapp_config.json")
+        with open(path, encoding="utf-8") as f:
+            antes = f.read()
+
+        import builtins
+        real_open = builtins.open
+
+        def flaky_open(file, mode="r", *a, **kw):
+            if os.path.abspath(str(file)) == os.path.abspath(path) and "r" in mode:
+                raise PermissionError("bloqueado por OneDrive/antivirus")
+            return real_open(file, mode, *a, **kw)
+
+        monkeypatch.setattr(builtins, "open", flaky_open)
+        with pytest.raises(OSError):
+            settings.save_ai_provider(AI_PROVIDER_GEMINI)
+        monkeypatch.setattr(builtins, "open", real_open)
+
+        with open(path, encoding="utf-8") as f:
+            assert f.read() == antes
+
+    def test_json_corrupto_se_conserva_en_copia_antes_de_reescribir(self, monkeypatch, temp_dir):
+        monkeypatch.delenv("CUBIAPP_GEMINI_KEY", raising=False)
+        path = os.path.join(temp_dir, "cubiapp_config.json")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write('{"gemini_api_key": "clave", "ai_provider": ')  # truncado
+
+        Settings(config_dir=temp_dir).save_ai_provider(AI_PROVIDER_DEEPSEEK)
+
+        copias = [n for n in os.listdir(temp_dir) if n.startswith("cubiapp_config.json.corrupt-")]
+        assert len(copias) == 1
+        with open(os.path.join(temp_dir, copias[0]), encoding="utf-8") as f:
+            assert '"gemini_api_key": "clave"' in f.read()
+
+
+@pytest.mark.parametrize("legacy", ["deepseek-chat", "deepseek-reasoner", "DeepSeek-Chat"])
+def test_alias_retirados_de_deepseek_se_migran_a_v4_flash(temp_dir, legacy):
+    """DeepSeek retiró estos alias el 2026-07-24: una config antigua no puede
+    seguir enviándolos a la API."""
+    settings = Settings(config_dir=temp_dir)
+    settings.save_deepseek_model(legacy)
+    assert Settings(config_dir=temp_dir).get_deepseek_model() == "deepseek-v4-flash"
+
+
+def test_modelo_deepseek_vigente_no_se_toca(temp_dir):
+    settings = Settings(config_dir=temp_dir)
+    settings.save_deepseek_model("deepseek-v4-pro")
+    assert Settings(config_dir=temp_dir).get_deepseek_model() == "deepseek-v4-pro"
+
+
+def test_margen_aviso_obras_por_defecto_y_guardado(temp_dir):
+    settings = Settings(config_dir=temp_dir)
+    assert settings.get_obra_margen_aviso_dias() == 7
+    settings.save_obra_margen_aviso_dias(15)
+    assert Settings(config_dir=temp_dir).get_obra_margen_aviso_dias() == 15
+
+
+@pytest.mark.parametrize("valor,esperado", [(-3, 0), (400, 365), ("10", 10), ("abc", 7)])
+def test_margen_aviso_obras_se_acota(temp_dir, valor, esperado):
+    settings = Settings(config_dir=temp_dir)
+    settings._save_config_value("obra_margen_aviso_dias", valor)
+    assert settings.get_obra_margen_aviso_dias() == esperado

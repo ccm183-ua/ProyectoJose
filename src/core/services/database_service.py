@@ -80,21 +80,17 @@ class DatabaseService:
         return db_repository.get_administracion_por_id(id_)
 
     @staticmethod
-    def crear_comunidad(
-        nombre: str,
-        administracion_id: int,
-        cif: str = "",
-        direccion: str = "",
-        email: str = "",
-        telefono: str = "",
-    ) -> Tuple[Optional[int], Optional[str]]:
-        return db_repository.create_comunidad(
-            nombre, administracion_id,
-            cif=cif, direccion=direccion, email=email, telefono=telefono,
+    def get_presupuestos_para_tabla(
+        estado: str = "",
+        solo_finalizados: bool = False,
+        calidad_min: int = 0,
+    ) -> List[Dict]:
+        return db_repository.get_presupuestos_para_tabla(
+            estado=estado,
+            solo_finalizados=solo_finalizados,
+            calidad_min=calidad_min,
         )
 
     @staticmethod
-    def crear_administracion(
-        nombre: str, email: str = "", telefono: str = "", direccion: str = "",
-    ) -> Tuple[Optional[int], Optional[str]]:
-        return db_repository.create_administracion(nombre, email, telefono, direccion)
+    def get_presupuesto_detalle_por_ruta(ruta_excel: str) -> Optional[Dict]:
+        return db_repository.get_presupuesto_detalle_por_ruta(ruta_excel)

@@ -5,17 +5,57 @@ Maneja la API key de Gemini, rutas por defecto y otros ajustes de configuración
 Prioridad API key: variable de entorno > archivo local.
 """
 
+import hashlib
+import hmac
 import json
+import logging
 import os
+import secrets
+import shutil
 import tempfile
-from typing import Dict, Optional
+from typing import Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 
-# Variable de entorno para la API key
+# Variables de entorno para API keys. Se mantienen fuera de Git.
 ENV_VAR_NAME = "CUBIAPP_GEMINI_KEY"
+DEEPSEEK_ENV_VAR_NAME = "CUBIAPP_DEEPSEEK_KEY"
+
+AI_PROVIDER_GEMINI = "GEMINI"
+AI_PROVIDER_DEEPSEEK = "DEEPSEEK"
+DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-flash"
+LEGACY_DEEPSEEK_MODEL_ALIASES = {
+    "deepseek-chat": "deepseek-v4-flash",
+    "deepseek-reasoner": "deepseek-v4-flash",
+}
 
 # Nombre del archivo de configuración local
 CONFIG_FILENAME = "cubiapp_config.json"
+
+# H4: identidad única autorizada para el backend privado.
+AUTHORIZED_EMAIL = os.environ.get("CUBIAPP_AUTH_EMAIL", "cayetanocanovas13@gmail.com")
+
+_PBKDF2_ALGO = "sha256"
+_PBKDF2_ITERATIONS = 600_000
+
+
+def hash_password(password: str) -> str:
+    """Deriva un hash `algo$iteraciones$salt_hex$hash_hex` (stdlib, sin dependencias)."""
+    salt = secrets.token_bytes(16)
+    derived = hashlib.pbkdf2_hmac(_PBKDF2_ALGO, password.encode("utf-8"), salt, _PBKDF2_ITERATIONS)
+    return f"{_PBKDF2_ALGO}${_PBKDF2_ITERATIONS}${salt.hex()}${derived.hex()}"
+
+
+def verify_password(password: str, stored: str) -> bool:
+    """Comprueba *password* contra un hash generado por :func:`hash_password`."""
+    try:
+        algo, iterations_str, salt_hex, hash_hex = stored.split("$")
+        derived = hashlib.pbkdf2_hmac(algo, password.encode("utf-8"), bytes.fromhex(salt_hex), int(iterations_str))
+        return hmac.compare_digest(derived.hex(), hash_hex)
+    except (ValueError, AttributeError):
+        return False
 
 
 class Settings:
@@ -25,12 +65,29 @@ class Settings:
     PATH_SAVE_BUDGETS = "ruta_guardar_presupuestos"
     PATH_OPEN_BUDGETS = "ruta_abrir_presupuestos"
     PATH_RELATION_FILE = "ruta_relacion_presupuestos"
+    PATH_DATABASE = "ruta_base_datos"
+    PATH_HISTORICAL_FOLDER = "ruta_analisis_historico"
+    PATH_HISTORICAL_FOLDERS = "rutas_analisis_historico"
+    PATH_CONTEXT_PACK = "ruta_paquete_contexto_ia"
 
-    _ALL_PATH_KEYS = (PATH_SAVE_BUDGETS, PATH_OPEN_BUDGETS, PATH_RELATION_FILE)
+    _ALL_PATH_KEYS = (
+        PATH_SAVE_BUDGETS,
+        PATH_OPEN_BUDGETS,
+        PATH_RELATION_FILE,
+        PATH_DATABASE,
+        PATH_HISTORICAL_FOLDER,
+        PATH_CONTEXT_PACK,
+    )
+
+    def get_database_path(self) -> Optional[str]:
+        return self.get_default_path(self.PATH_DATABASE)
+
+    def set_database_path(self, path: str) -> None:
+        self.set_default_path(self.PATH_DATABASE, path)
 
     def __init__(self, config_dir: Optional[str] = None):
         if config_dir is None:
-            config_dir = os.path.join(
+            config_dir = os.environ.get("CUBIAPP_CONFIG_DIR") or os.path.join(
                 os.path.expanduser("~"), ".cubiapp"
             )
         self._config_dir = config_dir
@@ -46,24 +103,115 @@ class Settings:
         1. Variable de entorno CUBIAPP_GEMINI_KEY
         2. Archivo de configuración local
         """
-        env_key = os.environ.get(ENV_VAR_NAME)
-        if env_key and env_key.strip():
-            return env_key.strip()
-
-        config = self._load_config()
-        file_key = config.get("gemini_api_key")
-        if file_key and file_key.strip():
-            return file_key.strip()
-
-        return None
+        return self.get_gemini_api_key()
 
     def save_api_key(self, api_key: str):
-        config = self._load_config()
-        config["gemini_api_key"] = api_key
-        self._save_config(config)
+        self.save_gemini_api_key(api_key)
 
     def has_api_key(self) -> bool:
         return self.get_api_key() is not None
+
+    # ── Configuración IA ─────────────────────────────────────────────────────
+
+    def get_ai_provider(self) -> str:
+        config = self._load_config()
+        provider = str(config.get("ai_provider") or AI_PROVIDER_GEMINI).strip().upper()
+        if provider not in (AI_PROVIDER_GEMINI, AI_PROVIDER_DEEPSEEK):
+            return AI_PROVIDER_GEMINI
+        return provider
+
+    def save_ai_provider(self, provider: str) -> None:
+        provider_clean = str(provider or "").strip().upper()
+        if provider_clean not in (AI_PROVIDER_GEMINI, AI_PROVIDER_DEEPSEEK):
+            provider_clean = AI_PROVIDER_GEMINI
+        config = self._load_config_for_update()
+        config["ai_provider"] = provider_clean
+        self._save_config(config)
+
+    def get_gemini_api_key(self) -> Optional[str]:
+        env_key = os.environ.get(ENV_VAR_NAME)
+        if env_key and env_key.strip():
+            return env_key.strip()
+        return self._get_config_secret("gemini_api_key")
+
+    def save_gemini_api_key(self, api_key: str) -> None:
+        self._save_config_value("gemini_api_key", api_key.strip() if api_key else "")
+
+    def get_local_gemini_api_key(self) -> Optional[str]:
+        return self._get_config_secret("gemini_api_key")
+
+    def get_gemini_api_key_source(self) -> str:
+        env_key = os.environ.get(ENV_VAR_NAME)
+        if env_key and env_key.strip():
+            return "env"
+        if self.get_local_gemini_api_key():
+            return "local"
+        return "missing"
+
+    def get_deepseek_api_key(self) -> Optional[str]:
+        env_key = os.environ.get(DEEPSEEK_ENV_VAR_NAME)
+        if env_key and env_key.strip():
+            return env_key.strip()
+        return self._get_config_secret("deepseek_api_key")
+
+    def save_deepseek_api_key(self, api_key: str) -> None:
+        self._save_config_value("deepseek_api_key", api_key.strip() if api_key else "")
+
+    def get_local_deepseek_api_key(self) -> Optional[str]:
+        return self._get_config_secret("deepseek_api_key")
+
+    def get_deepseek_api_key_source(self) -> str:
+        env_key = os.environ.get(DEEPSEEK_ENV_VAR_NAME)
+        if env_key and env_key.strip():
+            return "env"
+        if self.get_local_deepseek_api_key():
+            return "local"
+        return "missing"
+
+    def get_gemini_model(self) -> str:
+        return self._get_config_text("gemini_model", DEFAULT_GEMINI_MODEL)
+
+    def save_gemini_model(self, model: str) -> None:
+        self._save_config_value("gemini_model", (model or "").strip() or DEFAULT_GEMINI_MODEL)
+
+    # ── Planificación de obras ──────────────────────────────────────────
+
+    def get_obra_margen_aviso_dias(self) -> int:
+        """Días antes del inicio previsto en que una obra entra en aviso (0-365, por defecto 7)."""
+        from src.core.obra_planning import DEFAULT_MARGEN_AVISO_DIAS
+
+        raw = self._load_config().get("obra_margen_aviso_dias", DEFAULT_MARGEN_AVISO_DIAS)
+        try:
+            value = int(str(raw).strip())
+        except (TypeError, ValueError):
+            return DEFAULT_MARGEN_AVISO_DIAS
+        return max(0, min(365, value))
+
+    def save_obra_margen_aviso_dias(self, dias: int) -> None:
+        self._save_config_value("obra_margen_aviso_dias", max(0, min(365, int(dias))))
+
+    def get_deepseek_model(self) -> str:
+        model = self._get_config_text("deepseek_model", DEFAULT_DEEPSEEK_MODEL)
+        # DeepSeek retiró "deepseek-chat" y "deepseek-reasoner" el 2026-07-24;
+        # su documentación los hace corresponder con deepseek-v4-flash. Una
+        # configuración guardada antes de esa fecha fallaba en cada llamada.
+        return LEGACY_DEEPSEEK_MODEL_ALIASES.get(model.lower(), model)
+
+    def save_deepseek_model(self, model: str) -> None:
+        self._save_config_value("deepseek_model", (model or "").strip() or DEFAULT_DEEPSEEK_MODEL)
+
+    # ── Contraseña del backend privado (H4) ─────────────────────────
+
+    def get_password_hash(self) -> Optional[str]:
+        return self._get_config_secret("auth_password_hash")
+
+    def save_password_hash(self, password_hash: str) -> None:
+        self._save_config_value("auth_password_hash", password_hash)
+
+    def has_active_ai_key(self) -> bool:
+        if self.get_ai_provider() == AI_PROVIDER_DEEPSEEK:
+            return self.get_deepseek_api_key() is not None
+        return self.get_gemini_api_key() is not None
 
     # ── Rutas por defecto ────────────────────────────────────────────
 
@@ -81,8 +229,37 @@ class Settings:
         """Guarda (o borra si *path* es vacío) la ruta para *key*."""
         if key not in self._ALL_PATH_KEYS:
             return
-        config = self._load_config()
+        config = self._load_config_for_update()
         config[key] = path.strip() if path else ""
+        self._save_config(config)
+
+    def get_historical_folders(self) -> List[str]:
+        """Conjunto completo de carpetas configuradas para análisis histórico.
+
+        Si aún no existe la lista (configuración anterior a este contrato),
+        cae a la única carpeta guardada en PATH_HISTORICAL_FOLDER.
+        """
+        config = self._load_config()
+        folders = config.get(self.PATH_HISTORICAL_FOLDERS)
+        if isinstance(folders, list):
+            cleaned = [str(folder).strip() for folder in folders if str(folder).strip()]
+            if cleaned:
+                return cleaned
+        legacy = self.get_default_path(self.PATH_HISTORICAL_FOLDER)
+        return [legacy] if legacy else []
+
+    def set_historical_folders(self, folders: List[str]) -> None:
+        """Guarda el conjunto completo de carpetas, sin duplicados y en orden."""
+        seen = set()
+        cleaned: List[str] = []
+        for folder in folders or []:
+            path = str(folder or "").strip()
+            if path and path not in seen:
+                seen.add(path)
+                cleaned.append(path)
+        config = self._load_config()
+        config[self.PATH_HISTORICAL_FOLDERS] = cleaned
+        config[self.PATH_HISTORICAL_FOLDER] = cleaned[-1] if cleaned else ""
         self._save_config(config)
 
     def get_all_default_paths(self) -> Dict[str, Optional[str]]:
@@ -92,13 +269,60 @@ class Settings:
     # ── Persistencia ─────────────────────────────────────────────────
 
     def _load_config(self) -> dict:
+        """Lectura tolerante: ante cualquier error devuelve {} (solo para leer)."""
         if not os.path.exists(self._config_path):
             return {}
         try:
             with open(self._config_path, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except (json.JSONDecodeError, IOError):
+                data = json.load(f)
+            return data if isinstance(data, dict) else {}
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError):
             return {}
+
+    def _load_config_for_update(self) -> dict:
+        """Lectura previa a una escritura: nunca puede acabar borrando datos.
+
+        - Si el fichero no se puede leer (bloqueado por OneDrive, antivirus...),
+          lanza OSError: se aborta la escritura y el fichero queda intacto.
+        - Si el JSON está corrupto, se guarda una copia
+          ``cubiapp_config.json.corrupt-<fecha>`` antes de empezar de cero,
+          para poder recuperar claves y rutas a mano.
+        """
+        if not os.path.exists(self._config_path):
+            return {}
+        with open(self._config_path, 'r', encoding='utf-8', errors='replace') as f:
+            raw = f.read()
+        try:
+            data = json.loads(raw) if raw.strip() else {}
+            if isinstance(data, dict):
+                return data
+        except json.JSONDecodeError:
+            pass
+        from datetime import datetime
+
+        backup = f"{self._config_path}.corrupt-{datetime.now():%Y%m%d-%H%M%S}"
+        shutil.copy2(self._config_path, backup)
+        logger.error("Configuración corrupta; copia guardada en %s", backup)
+        return {}
+
+    def _get_config_secret(self, key: str) -> Optional[str]:
+        config = self._load_config()
+        value = config.get(key)
+        if value and isinstance(value, str) and value.strip():
+            return value.strip()
+        return None
+
+    def _get_config_text(self, key: str, default: str) -> str:
+        config = self._load_config()
+        value = config.get(key)
+        if value and isinstance(value, str) and value.strip():
+            return value.strip()
+        return default
+
+    def _save_config_value(self, key: str, value: str) -> None:
+        config = self._load_config_for_update()
+        config[key] = value
+        self._save_config(config)
 
     def _save_config(self, config: dict):
         os.makedirs(self._config_dir, exist_ok=True)

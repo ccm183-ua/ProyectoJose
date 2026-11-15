@@ -34,11 +34,22 @@ def _create_test_xlsx(path, obra_rows=None):
 
 
 def _make_com_mocks(mock_excel):
-    """Crea los módulos mock de win32com + pythoncom."""
+    """Crea los módulos mock de win32com + pythoncom.
+
+    ``DispatchEx`` devuelve la instancia mock; ``Dispatch`` queda armado
+    para fallar si alguien lo usa: se adjunta al Excel ya abierto del
+    usuario (ver comentario en pdf_exporter.py) y el ``Quit()`` posterior
+    cerraría sus libros sin guardar.
+    """
     import types
     mock_win32com = types.ModuleType("win32com")
     mock_client = types.ModuleType("win32com.client")
-    mock_client.Dispatch = MagicMock(return_value=mock_excel)
+    mock_client.DispatchEx = MagicMock(return_value=mock_excel)
+    mock_client.Dispatch = MagicMock(
+        side_effect=AssertionError(
+            "Dispatch se adjunta al Excel del usuario; usa DispatchEx"
+        )
+    )
     mock_win32com.client = mock_client
     mock_pythoncom = types.ModuleType("pythoncom")
     mock_pythoncom.CoInitialize = MagicMock()
@@ -346,3 +357,106 @@ class TestExport:
             PDFExporter().export(xlsx)
 
         mock_pycom.CoInitialize.assert_called_once()
+
+
+# ------------------------------------------------------------------
+# Propiedad de la instancia Excel (R01)
+# ------------------------------------------------------------------
+
+class TestComInstanceOwnership:
+    """El proceso COM debe crear su propia instancia de Excel, no adjuntarse
+    a la que el usuario ya tenga abierta.
+
+    No se puede mockear el comportamiento de COM (adjuntarse o no a la ROT),
+    así que estos tests protegen el contrato que lo evita: usar ``DispatchEx``
+    y nunca ``Dispatch`` en los dos puntos de activación.
+    """
+
+    def test_export_usa_dispatchex(self, tmp_path):
+        xlsx = _create_test_xlsx(tmp_path / "test.xlsx")
+
+        mock_wb = MagicMock()
+        mock_excel = MagicMock()
+        mock_excel.Workbooks.Open.return_value = mock_wb
+        mock_w32, mock_cl, mock_pycom = _make_com_mocks(mock_excel)
+
+        with patch.object(PDFExporter, "is_available", return_value=True), \
+             patch.dict("sys.modules", {
+                 "win32com": mock_w32,
+                 "win32com.client": mock_cl,
+                 "pythoncom": mock_pycom,
+             }):
+            ok, _ = PDFExporter().export(xlsx)
+
+        assert ok is True
+        mock_cl.DispatchEx.assert_called_once_with("Excel.Application")
+        mock_cl.Dispatch.assert_not_called()
+
+    def test_worker_usa_dispatchex(self):
+        """``insert_headers_at_page_breaks`` corre el worker en subprocess:
+        su activación COM también debe crear instancia propia.
+        """
+        script = PDFExporter._COM_WORKER_SCRIPT
+        assert 'DispatchEx("Excel.Application")' in script
+        assert not re.search(r"\.Dispatch\(", script)
+
+
+# ------------------------------------------------------------------
+# Imprimir directamente (decisión D, 2026-11-13)
+# ------------------------------------------------------------------
+
+class TestPrintWorkbook:
+
+    def _run(self, xlsx, mock_excel, copies=1):
+        mock_w32, mock_cl, mock_pycom = _make_com_mocks(mock_excel)
+        with patch.object(PDFExporter, "is_available", return_value=True), \
+             patch.dict("sys.modules", {
+                 "win32com": mock_w32,
+                 "win32com.client": mock_cl,
+                 "pythoncom": mock_pycom,
+             }):
+            return PDFExporter().print_workbook(xlsx, copies=copies), mock_cl
+
+    def test_imprime_cierra_sin_guardar_y_sale_de_excel(self, tmp_path):
+        xlsx = _create_test_xlsx(tmp_path / "presupuesto.xlsx")
+        mock_wb = MagicMock()
+        mock_excel = MagicMock()
+        mock_excel.Workbooks.Open.return_value = mock_wb
+
+        (ok, msg), mock_cl = self._run(xlsx, mock_excel, copies=2)
+
+        assert ok is True
+        mock_cl.DispatchEx.assert_called_once_with("Excel.Application")
+        mock_wb.PrintOut.assert_called_once_with(Copies=2)
+        mock_wb.Close.assert_called_once_with(SaveChanges=False)
+        mock_excel.Quit.assert_called_once()
+
+    def test_si_falla_la_impresion_cierra_igualmente_excel(self, tmp_path):
+        xlsx = _create_test_xlsx(tmp_path / "presupuesto.xlsx")
+        mock_wb = MagicMock()
+        mock_wb.PrintOut.side_effect = RuntimeError("impresora sin conexión")
+        mock_excel = MagicMock()
+        mock_excel.Workbooks.Open.return_value = mock_wb
+
+        (ok, msg), _ = self._run(xlsx, mock_excel)
+
+        assert ok is False and "impresora sin conexión" in msg
+        mock_wb.Close.assert_called_once_with(SaveChanges=False)
+        mock_excel.Quit.assert_called_once()
+
+    def test_fichero_inexistente(self, tmp_path):
+        ok, msg = PDFExporter().print_workbook(str(tmp_path / "no_existe.xlsx"))
+        assert ok is False and "no existe" in msg
+
+
+@pytest.mark.parametrize("nombre,virtual", [
+    ("Microsoft Print to PDF", True),
+    ("Microsoft XPS Document Writer", True),
+    ("OneNote (Desktop)", True),
+    ("Fax", True),
+    ("", True),                       # sin impresora predeterminada
+    ("HP LaserJet Pro M404", False),
+    ("Brother MFC-L2710DW", False),
+])
+def test_impresoras_virtuales(nombre, virtual):
+    assert PDFExporter.is_virtual_printer(nombre) is virtual

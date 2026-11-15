@@ -1,5 +1,5 @@
 #!/bin/bash
-# cubiApp - App de escritorio (wxPython). macOS y Windows.
+# cubiApp - App de escritorio (PySide6). macOS y Windows.
 
 cd "$(dirname "$0")"
 

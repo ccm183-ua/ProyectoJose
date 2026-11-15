@@ -6,6 +6,7 @@ Incluye sustitución de celdas y conversión de números a letras.
 import logging
 import os
 import re
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 import shutil
 import tempfile
 import zipfile
@@ -92,9 +93,17 @@ def numero_a_letras(n: int) -> str:
     return ' '.join(p for p in partes if p)
 
 
-def euros_en_letras(importe: float) -> str:
+def euros_en_letras(importe: float | int | str) -> str:
     """Devuelve *importe* en formato 'CIENTO VEINTITRÉS EUROS CON CUARENTA Y CINCO CÉNTIMOS'."""
-    centimos_total = round(importe * 100)
+    s = str(importe).strip().replace(" ", "").replace(",", ".")
+    if not s or s.lower() in ("nan", "inf", "-inf"):
+        d = Decimal("0")
+    else:
+        try:
+            d = Decimal(s).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        except InvalidOperation:
+            d = Decimal("0")
+    centimos_total = int(d * 100)
     euros = centimos_total // 100
     centimos = centimos_total % 100
 

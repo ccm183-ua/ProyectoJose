@@ -17,6 +17,32 @@ _PROJECT_NUMBER_RE = re.compile(r"(\d{1,4}-\d{2})")
 
 _MIN_XLSX_SIZE = 4096
 
+# Estados (primer nivel) de la estructura de presupuestos. Fuente única para el
+# lector (presupuestos visibles), el escritor (destino válido) y la GUI (pestañas).
+STATE_FOLDER_NAMES = (
+    "PTE. PRESUPUESTAR",
+    "PRESUPUESTADO",
+    "EJECUTAR",
+    "EJECUTANDO",
+    "TERMINADO",
+    "ANULADOS",
+)
+
+_STATE_FOLDER_NAMES_UPPER = frozenset(name.upper() for name in STATE_FOLDER_NAMES)
+
+
+def is_state_folder(folder_path: str) -> bool:
+    """``True`` si *folder_path* es una carpeta de estado (primer nivel).
+
+    Un Excel guardado directamente aquí no pertenece a ninguna carpeta de
+    proyecto, así que ``scan_projects`` lo descarta y nunca aparece en el
+    dashboard.
+    """
+    if not folder_path:
+        return False
+    name = os.path.basename(os.path.normpath(folder_path)).strip().upper()
+    return name in _STATE_FOLDER_NAMES_UPPER
+
 
 def _extract_project_number(name: str) -> Optional[str]:
     """Extrae el número de proyecto (ej: '122-20') de un nombre de carpeta o archivo."""
@@ -86,30 +112,6 @@ def scan_projects(state_folder: str) -> List[Dict]:
             "ruta_carpeta": project_dir,
         })
 
-    return projects
-
-
-def scan_projects_depth(state_folder: str, depth: int = 1) -> List[Dict]:
-    """Escanea una carpeta de estado hasta *depth* niveles de profundidad.
-
-    Con ``depth=1`` se comporta igual que ``scan_projects`` (solo primer nivel).
-    Con ``depth=2`` también escanea subcarpetas dentro de cada carpeta de
-    proyecto, buscando proyectos en el segundo nivel.
-
-    Args:
-        state_folder: Ruta absoluta a una carpeta de estado.
-        depth: Niveles de profundidad a explorar (>= 1).
-
-    Returns:
-        Lista de dicts con las mismas claves que ``scan_projects``.
-    """
-    state_folder = os.path.normpath(state_folder) if state_folder else ""
-    if not state_folder or not os.path.isdir(state_folder):
-        return []
-
-    depth = max(1, depth)
-    projects: List[Dict] = []
-    _scan_recursive(state_folder, state_folder, depth, 1, projects)
     return projects
 
 

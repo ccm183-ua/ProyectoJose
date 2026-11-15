@@ -107,17 +107,19 @@ class _Invoker:
 def run_in_background(work_fn, callback):
     """Ejecuta *work_fn* en un hilo y entrega el resultado a *callback* en el hilo de UI.
 
-    ``callback`` recibe ``(True, result)`` si *work_fn* tuvo éxito o
-    ``(False, exception)`` si lanzó una excepción.
+    ``callback`` se invoca exactamente una vez, siempre en el hilo de UI, con
+    ``(True, result)`` si *work_fn* tuvo éxito o ``(False, exception)`` si lanzó
+    una excepción. Calcular el resultado dentro del ``try`` y emitir fuera de él
+    evita que una excepción del propio ``callback`` genere una segunda entrega.
     """
     invoker = _Invoker.get()
 
     def _worker():
         try:
-            result = work_fn()
-            invoker._call.emit(lambda: callback(True, result))
+            outcome = (True, work_fn())
         except Exception as exc:
-            invoker._call.emit(lambda: callback(False, exc))
+            outcome = (False, exc)
+        invoker._call.emit(lambda: callback(*outcome))
 
     t = threading.Thread(target=_worker, daemon=True)
     t.start()

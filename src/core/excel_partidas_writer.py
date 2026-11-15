@@ -4,6 +4,7 @@ Incluye actualización de cabeceras y texto "Asciende el presupuesto...".
 """
 
 import logging
+import math
 import os
 import re
 import shutil
@@ -11,6 +12,7 @@ import tempfile
 import zipfile
 from xml.sax.saxutils import escape as xml_escape
 
+from src.core.budget_math import IVA_RATE, calcular_importe_linea, calcular_totales, parse_decimal_es
 from src.core.excel_template_filler import (
     SHEET_12220,
     euros_en_letras,
@@ -20,17 +22,384 @@ from src.core.xlsx_cell_utils import (
     read_shared_strings_from_dict,
     resolve_cell_text,
 )
+from src.core.partida_normalizer import (
+    force_split_long_plain_text,
+    split_title_description,
+    split_title_for_excel_bold,
+)
 
 logger = logging.getLogger(__name__)
 
-# Tipo de IVA aplicable a presupuestos
-IVA_RATE = 0.10
+# --- Altura de fila de partida (descripción en hoja 122-20, merge C:F o solo C) ---
+DESC_DEFAULT_CHARS_PER_LINE_SINGLE_COL = 32
+DESC_DEFAULT_CHARS_PER_LINE_MERGED = 46
+# La suma OOXML de anchos C–F suele subestimar el ancho útil real al ajustar texto;
+# un suelo evita contar demasiadas líneas y filas en blanco enormes.
+MERGED_CHARS_PER_LINE_FLOOR = 38
+MERGED_CHARS_PER_LINE_CAP = 78
+EXCEL_LINE_HEIGHT = 13.2
+EXCEL_ROW_PADDING = 6
+EXCEL_ROW_MIN_SHORT = 34
+EXCEL_ROW_MIN_MEDIUM = 42
+EXCEL_ROW_MIN_LONG = 56
+EXCEL_ROW_MAX_NORMAL = 150
+# Por encima de esto no recortar texto (casos muy densos en descripción).
+EXCEL_ROW_MAX_LONG = 230
+SPACER_ROW_HEIGHT = 8
+TITLE_DESC_VISUAL_GAP_LINES = 0.18
+
+_A1_CELL_REF = re.compile(
+    r"^(?P<ca>\$?)(?P<col>[A-Za-z]{1,3})(?P<ra>\$?)(?P<row>\d+)$",
+)
+
+
+def _shift_single_a1_cell(ref: str, start_from: int, offset: int) -> str:
+    """Desplaza la fila en una referencia A1 si la fila es >= start_from. Conserva $ de columna/fila."""
+    if offset == 0:
+        return ref
+    m = _A1_CELL_REF.match(ref.strip())
+    if not m:
+        return ref
+    row = int(m.group("row"))
+    if row < start_from:
+        return ref
+    new_row = row + offset
+    col = m.group("col").upper()
+    return f"{m.group('ca')}{col}{m.group('ra')}{new_row}"
+
+
+def _shift_operand_range(range_text: str, start_from: int, offset: int) -> str:
+    if ":" in range_text:
+        left, right = range_text.split(":", 1)
+        return _shift_single_a1_cell(left, start_from, offset) + ":" + _shift_single_a1_cell(
+            right, start_from, offset
+        )
+    return _shift_single_a1_cell(range_text, start_from, offset)
+
+
+def _shift_formula_row_refs_in_content(formula: str, start_from: int, offset: int) -> str:
+    """
+    Ajusta filas en referencias A1 dentro de una fórmula (p. ej. SUMA(I46:I47)).
+    El XML a veces guarda la fórmula sin '='; se antepone '=' solo para tokenizar.
+    """
+    if offset == 0 or not formula or not str(formula).strip():
+        return formula
+    raw = str(formula).strip()
+    parse_src = raw if raw.startswith("=") else "=" + raw
+    try:
+        from openpyxl.formula.tokenizer import Tokenizer
+    except ImportError:
+        return raw
+    try:
+        tokens = list(Tokenizer(parse_src).items)
+    except Exception:
+        return raw
+    if len(tokens) == 1 and getattr(tokens[0], "type", "") == "LITERAL":
+        return raw
+    out: list[str] = []
+    for tok in tokens:
+        if getattr(tok, "type", "") == "OPERAND" and getattr(tok, "subtype", "") == "RANGE":
+            out.append(_shift_operand_range(tok.value, start_from, offset))
+        else:
+            out.append(tok.value)
+    return "".join(out)
+
+
+def _shift_formula_row_refs_in_sheet_xml(sheet_xml: str, start_from: int, offset: int) -> str:
+    """Tras _renumber_rows, corrige filas en <f>...</f> para que coincidan con el nuevo índice."""
+
+    def _bump_f(match: re.Match) -> str:
+        attrs, inner = match.group(1), match.group(2)
+        new_inner = _shift_formula_row_refs_in_content(inner, start_from, offset)
+        return f"<f{attrs}>{new_inner}</f>"
+
+    if offset == 0:
+        return sheet_xml
+    return re.sub(r"<f([^>]*)>([^<]*)</f>", _bump_f, sheet_xml)
+
+
+PARTIDAS_FIRST_ROW = 17
+TEMPLATE_SUBTOTAL_ROW = 27
+
+_ROW_ELEMENT_RE = re.compile(r'<row r="(\d+)"[^>]*?(?:/>|>.*?</row>)', re.DOTALL)
+
+
+class PartidasLayoutError(Exception):
+    """El Excel no tiene la estructura esperada para escribir partidas."""
+
+
+_SUBTOTAL_LABEL = "TOTAL PRESUPUESTO PARCIAL"
+_PARTIDA_NUM_RE = re.compile(r"^\s*(\d+)\.(\d+)\s*$")
+
+
+def _find_partidas_subtotal_row(sheet_xml: str, shared_strings=None) -> "int | None":
+    """Fila del subtotal de partidas, o None si no se encuentra.
+
+    Primero por su fórmula ``SUM(I17:...)`` (plantilla y presupuestos escritos
+    por la app); si se editó a mano, por la etiqueta de la columna C («Total
+    presupuesto parcial…»). No se supone la fila 27 de la plantilla: en un
+    presupuesto con más partidas, borrar solo hasta la 27 dejaba las viejas
+    duplicadas tras las nuevas.
+    """
+    rows = [
+        int(m.group(1))
+        for m in re.finditer(
+            r'<c r="I(\d+)"[^>]*><f[^>]*>\s*SUM\(\s*\$?I\$?'
+            + str(PARTIDAS_FIRST_ROW) + r'\s*:',
+            sheet_xml,
+        )
+    ]
+    rows = [r for r in rows if r > PARTIDAS_FIRST_ROW]
+    if rows:
+        return min(rows)
+    for m in re.finditer(r'<c r="C(\d+)"[^>]*?(?:/>|>.*?</c>)', sheet_xml, re.DOTALL):
+        row = int(m.group(1))
+        if row <= PARTIDAS_FIRST_ROW:
+            continue
+        text = resolve_cell_text(m.group(0), shared_strings or []).strip().upper()
+        if text.startswith(_SUBTOTAL_LABEL):
+            return row
+    return None
+
+
+def _cell_xml(sheet_xml: str, ref: str) -> "str | None":
+    m = re.search(r'<c r="' + ref + r'"[^>]*?(?:/>|>.*?</c>)', sheet_xml, re.DOTALL)
+    return m.group(0) if m else None
+
+
+def _next_partida_number(sheet_xml: str, shared_strings, subtotal_row: int) -> "tuple[str, int]":
+    """Capítulo y siguiente número tras la última partida («2.3» → ("2", 4))."""
+    prefix, last = "1", 0
+    for row in range(PARTIDAS_FIRST_ROW, subtotal_row):
+        cell = _cell_xml(sheet_xml, f"A{row}")
+        if not cell:
+            continue
+        m = _PARTIDA_NUM_RE.match(resolve_cell_text(cell, shared_strings or []))
+        if m:
+            prefix, last = m.group(1), int(m.group(2))
+    return prefix, last + 1
+
+
+def _existing_partidas_total(sheet_xml: str, subtotal_row: int) -> float:
+    """Importe de las partidas que ya hay: el valor guardado del subtotal o,
+    si no lo tiene, la suma de los valores guardados de la columna I."""
+    def _cached(ref):
+        cell = _cell_xml(sheet_xml, ref)
+        m = re.search(r"<v>([^<]+)</v>", cell or "")
+        try:
+            return float(m.group(1)) if m else None
+        except ValueError:
+            return None
+
+    subtotal = _cached(f"I{subtotal_row}")
+    if subtotal is not None:
+        return subtotal
+    return sum(v for r in range(PARTIDAS_FIRST_ROW, subtotal_row) if (v := _cached(f"I{r}")) is not None)
+
+
+def _to_number(value, default: float) -> float:
+    """Cantidad o precio en formato español («2,5», «1.250,00»); si no es un
+    número, el valor por defecto."""
+    try:
+        return parse_decimal_es(value)
+    except (ValueError, TypeError):
+        return default
+
+
+def _remove_rows_in_range(sheet_xml: str, first: int, last: int) -> str:
+    """Elimina los elementos <row> con número en [first, last]."""
+    def _drop(match):
+        return "" if first <= int(match.group(1)) <= last else match.group(0)
+
+    return re.sub(
+        r'<row r="(\d+)"[^>]*?(?:/>|>.*?</row>)\n?', _drop, sheet_xml, flags=re.DOTALL
+    )
+
+
+def _remove_merges_starting_in_range(sheet_xml: str, first: int, last: int) -> str:
+    """Elimina las celdas combinadas cuya fila inicial está en [first, last]."""
+    def _drop(match):
+        start_row = int(match.group(1))
+        return "" if first <= start_row <= last else match.group(0)
+
+    return re.sub(r'<mergeCell ref="[A-Z]+(\d+):[A-Z]+\d+"/>', _drop, sheet_xml)
+
+
+def _clear_formula_cell(sheet_xml: str, ref: str) -> str:
+    """Deja vacía (conservando el estilo) una celda que contenga una fórmula."""
+    pattern = r'<c r="' + re.escape(ref) + r'"([^>]*?)>\s*<f[^>]*>[^<]*</f>(?:<v>[^<]*</v>)?\s*</c>'
+
+    def _empty(match):
+        attrs = re.sub(r'\s+t="[^"]*"', "", match.group(1))
+        return f'<c r="{ref}"{attrs}/>'
+
+    return re.sub(pattern, _empty, sheet_xml)
+
+
+def _find_footer_rows(sheet_xml: str, shared_strings, min_row: int) -> dict:
+    """Localiza las filas del pie por la etiqueta de su columna A.
+
+    Devuelve las claves encontradas entre: capitulo ("1.- ACTUACIONES."),
+    total ("Total presupuesto"), iva ("10% I.V.A."), total_iva
+    ("TOTAL PRESUPUESTO, I.V.A. INCLUIDO.") y asciende ("Asciende ...").
+    """
+    found: dict = {}
+    for row_m in _ROW_ELEMENT_RE.finditer(sheet_xml):
+        row_num = int(row_m.group(1))
+        if row_num < min_row:
+            continue
+        cell_m = re.search(
+            r'<c r="A' + str(row_num) + r'"[^>]*?(?:/>|>.*?</c>)',
+            row_m.group(0), re.DOTALL,
+        )
+        if not cell_m:
+            continue
+        text = resolve_cell_text(cell_m.group(0), shared_strings or []).strip().upper()
+        if not text:
+            continue
+        if text.startswith("1.-"):
+            key = "capitulo"
+        elif "I.V.A" in text and "INCLUIDO" in text:
+            key = "total_iva"
+        elif "I.V.A" in text:
+            key = "iva"
+        elif text.startswith("TOTAL PRESUPUESTO"):
+            key = "total"
+        elif text.startswith("ASCIENDE"):
+            key = "asciende"
+        else:
+            continue
+        found.setdefault(key, row_num)
+    return found
+
+
+def _sheet_has_merge_c_to_f(sheet_xml: str) -> bool:
+    """True si la hoja declara alguna combinación C*:F* (descripción ancha)."""
+    return bool(re.search(r'<mergeCell ref="C\d+:F\d+"', sheet_xml, re.IGNORECASE))
+
+
+def _column_width_map_from_sheet(sheet_xml: str) -> dict[int, float]:
+    """
+    Lee anchos OOXML de <cols> por índice de columna (1=A).
+    Si un <col> abarca varias columnas, asigna el mismo width a cada una (comportamiento Excel).
+    """
+    out: dict[int, float] = {}
+    cols_m = re.search(r"<cols[^>]*>(.*?)</cols>", sheet_xml, re.DOTALL | re.IGNORECASE)
+    if not cols_m:
+        return out
+    for tag in re.finditer(r"<col\b([^/>]*)/>", cols_m.group(1), re.IGNORECASE):
+        attrs = tag.group(1)
+
+        def _attr(name: str) -> str | None:
+            mm = re.search(rf'{name}="([^"]*)"', attrs, re.IGNORECASE)
+            return mm.group(1) if mm else None
+
+        w_s = _attr("width")
+        if not w_s:
+            continue
+        try:
+            w = float(w_s)
+        except ValueError:
+            continue
+        mn_s, mx_s = _attr("min"), _attr("max")
+        if not mn_s:
+            continue
+        try:
+            cmin = int(mn_s)
+            cmax = int(mx_s) if mx_s else cmin
+        except ValueError:
+            continue
+        for ci in range(cmin, cmax + 1):
+            out[ci] = w
+    return out
+
+
+def _sum_widths_cf(column_widths: dict[int, float]) -> float:
+    return float(sum(column_widths.get(i, 0.0) for i in (3, 4, 5, 6)))
+
+
+def _description_chars_per_line(sheet_xml: str, default: int | None = None) -> int:
+    """
+    Caracteres efectivos por línea para el área de descripción, según merge C:F y <cols>.
+
+    Si hay merge C:F y suma de anchos C–F > 0, usa esa suma (acotada por seguridad).
+    Si hay merge pero sin anchos, usa DESC_DEFAULT_CHARS_PER_LINE_MERGED.
+    Sin merge: ancho solo columna C si consta; si no, DESC_DEFAULT_CHARS_PER_LINE_SINGLE_COL.
+    """
+    d = default if default is not None else DESC_DEFAULT_CHARS_PER_LINE_SINGLE_COL
+    merged = _sheet_has_merge_c_to_f(sheet_xml)
+    cmap = _column_width_map_from_sheet(sheet_xml)
+    if merged:
+        s = _sum_widths_cf(cmap)
+        if s > 0:
+            est = int(round(s))
+            return max(MERGED_CHARS_PER_LINE_FLOOR, min(MERGED_CHARS_PER_LINE_CAP, est))
+        return DESC_DEFAULT_CHARS_PER_LINE_MERGED
+    w3 = cmap.get(3, 0.0)
+    if w3 > 0:
+        return max(18, min(44, int(w3)))
+    return d
+
+
+def _estimate_wrapped_lines(text: str, chars_per_line: int) -> float:
+    """
+    Líneas visuales estimadas respetando saltos explícitos y reparto por longitud.
+    Párrafo vacío cuenta como 1 línea.
+    """
+    if chars_per_line < 1:
+        chars_per_line = 1
+    raw = str(text or "")
+    if raw == "":
+        return 0.0
+    total = 0.0
+    for paragraph in raw.splitlines():
+        if paragraph == "":
+            total += 1.0
+        else:
+            total += max(1.0, float(math.ceil(len(paragraph) / chars_per_line)))
+    return total
+
+
+def _estimate_row_height_impl(titulo: str, descripcion: str, chars_per_line: int) -> str:
+    """
+    Altura de fila en puntos Excel: prioridad no cortar texto (hasta EXCEL_ROW_MAX_LONG).
+    """
+    tit = str(titulo or "").strip()
+    desc = str(descripcion or "").strip()
+    title_lines = _estimate_wrapped_lines(tit, chars_per_line)
+    desc_lines = _estimate_wrapped_lines(desc, chars_per_line)
+    if not tit and not desc:
+        total_lines = 1.0
+    else:
+        total_lines = title_lines + desc_lines
+        if tit and desc:
+            total_lines += TITLE_DESC_VISUAL_GAP_LINES
+
+    raw_height = total_lines * EXCEL_LINE_HEIGHT + EXCEL_ROW_PADDING
+
+    min_height = EXCEL_ROW_MIN_SHORT
+    if total_lines >= 4:
+        min_height = EXCEL_ROW_MIN_MEDIUM
+    if total_lines >= 7:
+        min_height = EXCEL_ROW_MIN_LONG
+
+    # Prioridad: no recortar texto. Solo acotar filas muy vacías si raw queda por encima del techo "normal".
+    soft_cap = (
+        EXCEL_ROW_MAX_LONG
+        if (total_lines > 10 or raw_height > EXCEL_ROW_MAX_NORMAL)
+        else EXCEL_ROW_MAX_NORMAL
+    )
+    if raw_height <= soft_cap:
+        height = max(min_height, raw_height)
+    else:
+        height = max(min_height, min(EXCEL_ROW_MAX_LONG, raw_height))
+    return str(round(height, 1))
 
 
 class PartidasWriter:
     """Inserta y actualiza partidas en archivos Excel 122-20 vía XML."""
 
-    def insert_partidas_via_xml(self, file_path, partidas):
+    def insert_partidas_via_xml(self, file_path, partidas, append=False):
         """
         Inserta partidas en el Excel usando manipulación XML directa en sheet2.
 
@@ -62,8 +431,14 @@ class PartidasWriter:
                 otros = {n: z_in.read(n) for n in namelist if n != SHEET_12220}
 
             wrap_style = self._create_wrap_style(otros, 47)
+            partida_desc_style = self._create_wrap_style(otros, 32, vertical_top=True)
             sheet_content = self._replace_partidas_in_xml(
-                sheet_content, partidas, asciende_style=wrap_style,
+                sheet_content,
+                partidas,
+                asciende_style=wrap_style,
+                partida_desc_style=partida_desc_style,
+                shared_strings=read_shared_strings_from_dict(otros),
+                append=append,
             )
 
             fd, tmp_path = tempfile.mkstemp(suffix=".xlsx")
@@ -100,95 +475,133 @@ class PartidasWriter:
             return False
 
     @staticmethod
-    def _estimate_row_height(titulo, descripcion, chars_per_line=55, line_height=14.5):
-        """
-        Estima la altura de fila necesaria para el texto de una partida.
+    def _estimate_row_height(titulo, descripcion, chars_per_line: int) -> str:
+        """Delega en `_estimate_row_height_impl`; `chars_per_line` viene del XML de la hoja."""
+        return _estimate_row_height_impl(titulo, descripcion, chars_per_line)
 
-        Calcula el número de líneas que ocupará el texto en la celda combinada
-        C:F (ancho aprox. ~55 caracteres en Calibri 10pt) y devuelve la altura
-        en puntos Excel.
-
-        Args:
-            titulo: Texto del título (1 línea).
-            descripcion: Texto de la descripción (puede ocupar varias líneas).
-            chars_per_line: Caracteres aproximados que caben por línea.
-            line_height: Altura en puntos por línea de texto.
-
-        Returns:
-            Altura de fila como string (en puntos).
+    def _replace_partidas_in_xml(
+        self,
+        sheet_xml,
+        partidas,
+        asciende_style="47",
+        partida_desc_style="32",
+        shared_strings=None,
+        append=False,
+    ):
         """
-        lines = 1
-        if descripcion:
-            desc_len = len(descripcion)
-            desc_lines = max(1, -(-desc_len // chars_per_line))
-            lines += desc_lines
-        height = lines * line_height + 8
-        height = max(30, min(200, height))
-        return str(round(height, 1))
+        Escribe las partidas en el bloque que va de la fila 17 al subtotal.
 
-    def _replace_partidas_in_xml(self, sheet_xml, partidas, asciende_style="47"):
+        - ``append=False`` (crear / regenerar): sustituye todas las filas del
+          bloque, de la 17 al subtotal inclusive.
+        - ``append=True`` (añadir): deja intactas las filas existentes (importes
+          tecleados a mano, capítulos, notas, numeración) y escribe las nuevas
+          justo antes del subtotal, continuando la numeración.
+
+        El subtotal se localiza por su fórmula ``SUM(I17:...)`` o, si se editó a
+        mano, por su etiqueta («Total presupuesto parcial…»). Si no se encuentra,
+        se lanza ``PartidasLayoutError`` en vez de suponer la fila de la
+        plantilla, que dejaría partidas viejas duplicadas tras las nuevas.
         """
-        Reemplaza las filas de partidas de ejemplo (17-26) con las partidas reales.
-        """
-        for row_num in range(17, 27):
-            pattern = r'<row r="' + str(row_num) + r'"[^>]*>.*?</row>'
-            sheet_xml = re.sub(pattern, '', sheet_xml, flags=re.DOTALL)
+        shared_strings = shared_strings or []
+        old_subtotal_row = _find_partidas_subtotal_row(sheet_xml, shared_strings)
+        if old_subtotal_row is None:
+            raise PartidasLayoutError(
+                "No se encontró la fila del subtotal de partidas "
+                "(«Total presupuesto parcial…» con SUM(I17:…))."
+            )
+
+        if append:
+            first_new_row = old_subtotal_row
+            prefix, first_index = _next_partida_number(sheet_xml, shared_strings, old_subtotal_row)
+            previous_total = _existing_partidas_total(sheet_xml, old_subtotal_row)
+            removed_first = old_subtotal_row
+        else:
+            first_new_row = PARTIDAS_FIRST_ROW
+            prefix, first_index = "1", 1
+            previous_total = 0.0
+            removed_first = PARTIDAS_FIRST_ROW
+        sheet_xml = _remove_rows_in_range(sheet_xml, removed_first, old_subtotal_row)
 
         new_rows_xml = []
-        first_data_row = 17
-        current_row = first_data_row
+        current_row = first_new_row
+        ps = str(partida_desc_style)
+        chars_per_line = _description_chars_per_line(sheet_xml)
+        line_totals = []
 
         for idx, partida in enumerate(partidas):
-            num = f"1.{idx + 1}"
+            num = f"{prefix}.{first_index + idx}"
             unidad = xml_escape(str(partida.get('unidad', 'ud')))
-            cantidad = partida.get('cantidad', 1)
-            precio = partida.get('precio_unitario', 0)
-            try:
-                cantidad = float(cantidad)
-            except (ValueError, TypeError):
-                cantidad = 1.0
-            try:
-                precio = float(precio)
-            except (ValueError, TypeError):
-                precio = 0.0
+            # La misma conversión para la fila y para el total en letras: si no,
+            # «2,5» o una cantidad vacía daban importes distintos en cada sitio.
+            cantidad = _to_number(partida.get('cantidad', 1), 1.0)
+            precio = _to_number(partida.get('precio_unitario', 0), 0.0)
 
-            titulo = xml_escape(str(partida.get('titulo', '')))
-            descripcion = xml_escape(str(partida.get('descripcion', '')))
+            titulo_plain = str(partida.get("titulo", "") or "").strip()
+            descripcion_plain = str(partida.get("descripcion", "") or "").strip()
 
-            if titulo and descripcion:
+            if not descripcion_plain and len(titulo_plain) > 120:
+                titulo_plain, descripcion_plain = split_title_description(titulo_plain)
+            if not descripcion_plain and len(titulo_plain) > 120:
+                titulo_plain, descripcion_plain = force_split_long_plain_text(titulo_plain, 85)
+
+            bold_head, tail_title = split_title_for_excel_bold(titulo_plain, 72)
+            if tail_title:
+                titulo_plain = bold_head
+                if descripcion_plain:
+                    descripcion_plain = f"{tail_title}\n{descripcion_plain}".strip()
+                else:
+                    descripcion_plain = tail_title
+
+            titulo_esc = xml_escape(titulo_plain)
+            descripcion_esc = xml_escape(descripcion_plain)
+
+            if titulo_esc and descripcion_esc:
                 celda_c = (
-                    f'<c r="C{current_row}" s="32" t="inlineStr"><is>'
+                    f'<c r="C{current_row}" s="{ps}" t="inlineStr"><is>'
                     f'<r><rPr><b/><sz val="10"/><rFont val="Calibri"/></rPr>'
-                    f'<t>{titulo}</t></r>'
+                    f'<t>{titulo_esc}</t></r>'
                     f'<r><rPr><sz val="10"/><rFont val="Calibri"/></rPr>'
-                    f'<t xml:space="preserve">&#10;{descripcion}</t></r>'
+                    f'<t xml:space="preserve">&#10;{descripcion_esc}</t></r>'
                     f'</is></c>'
                 )
-                row_height = self._estimate_row_height(titulo, descripcion)
-            elif titulo:
+                row_height = self._estimate_row_height(
+                    titulo_plain, descripcion_plain, chars_per_line
+                )
+            elif titulo_esc and len(titulo_plain) > 80 and not descripcion_plain:
                 celda_c = (
-                    f'<c r="C{current_row}" s="32" t="inlineStr"><is>'
-                    f'<r><rPr><b/><sz val="10"/><rFont val="Calibri"/></rPr>'
-                    f'<t>{titulo}</t></r>'
+                    f'<c r="C{current_row}" s="{ps}" t="inlineStr"><is>'
+                    f'<r><rPr><sz val="10"/><rFont val="Calibri"/></rPr>'
+                    f'<t>{titulo_esc}</t></r>'
                     f'</is></c>'
                 )
-                row_height = self._estimate_row_height(titulo, '')
+                row_height = self._estimate_row_height(titulo_plain, "", chars_per_line)
+            elif titulo_esc:
+                celda_c = (
+                    f'<c r="C{current_row}" s="{ps}" t="inlineStr"><is>'
+                    f'<r><rPr><b/><sz val="10"/><rFont val="Calibri"/></rPr>'
+                    f'<t>{titulo_esc}</t></r>'
+                    f'</is></c>'
+                )
+                row_height = self._estimate_row_height(titulo_plain, "", chars_per_line)
             else:
                 concepto = xml_escape(str(partida.get('concepto', '')))
                 celda_c = (
-                    f'<c r="C{current_row}" s="32" t="inlineStr">'
+                    f'<c r="C{current_row}" s="{ps}" t="inlineStr">'
                     f'<is><t>{concepto}</t></is></c>'
                 )
-                row_height = self._estimate_row_height(concepto, '')
+                row_height = self._estimate_row_height(
+                    str(partida.get("concepto", "")), "", chars_per_line
+                )
 
-            total = round(cantidad * precio, 2)
+            total = calcular_importe_linea(cantidad, precio)
+            line_totals.append(total)
             data_row = (
                 f'<row r="{current_row}" spans="1:9" ht="{row_height}" customHeight="1">'
                 f'<c r="A{current_row}" s="31" t="inlineStr"><is><t>{num}</t></is></c>'
                 f'<c r="B{current_row}" s="31" t="inlineStr"><is><t>{unidad}</t></is></c>'
                 f'{celda_c}'
-                f'<c r="D{current_row}" s="32"/>'
-                f'<c r="E{current_row}" s="32"/>'
+                f'<c r="D{current_row}" s="{ps}"/>'
+                f'<c r="E{current_row}" s="{ps}"/>'
                 f'<c r="F{current_row}" s="33"/>'
                 f'<c r="G{current_row}" s="34"><v>{cantidad}</v></c>'
                 f'<c r="H{current_row}" s="35"><v>{precio}</v></c>'
@@ -199,7 +612,7 @@ class PartidasWriter:
             current_row += 1
 
             spacer_row = (
-                f'<row r="{current_row}" spans="1:9" customHeight="1">'
+                f'<row r="{current_row}" spans="1:9" ht="{SPACER_ROW_HEIGHT}" customHeight="1">'
                 f'<c r="A{current_row}" s="31"/>'
                 f'<c r="B{current_row}" s="31"/>'
                 f'<c r="C{current_row}" s="36"/>'
@@ -214,13 +627,11 @@ class PartidasWriter:
             new_rows_xml.append(spacer_row)
             current_row += 1
 
+        first_data_row = PARTIDAS_FIRST_ROW
         last_data_row = current_row - 1
         subtotal_row_num = current_row
         subtotal_label = xml_escape("Total presupuesto parcial nº 1 ACTUACIONES.")
-        grand_total = sum(
-            round(float(p.get('cantidad', 1)) * float(p.get('precio_unitario', 0)), 2)
-            for p in partidas
-        )
+        grand_total = round(previous_total + sum(line_totals), 2)
         subtotal_row = (
             f'<row r="{subtotal_row_num}" spans="1:9" customHeight="1">'
             f'<c r="A{subtotal_row_num}" s="39"/>'
@@ -238,66 +649,90 @@ class PartidasWriter:
         )
         new_rows_xml.append(subtotal_row)
 
-        pattern_27 = r'<row r="27"[^>]*>.*?</row>'
-        sheet_xml = re.sub(pattern_27, '', sheet_xml, flags=re.DOTALL)
-        offset = subtotal_row_num - 27
-
+        # Desplazamiento del resto de la hoja: lo que había tras el subtotal
+        # antiguo pasa a estar tras el subtotal nuevo.
+        offset = subtotal_row_num - old_subtotal_row
         if offset != 0:
-            sheet_xml = self._renumber_rows(sheet_xml, start_from=28, offset=offset)
+            sheet_xml = self._renumber_rows(
+                sheet_xml, start_from=old_subtotal_row + 1, offset=offset
+            )
+        # Las referencias al subtotal antiguo (p. ej. "=I27" en el pie) también
+        # se mueven: start_from incluye la propia fila del subtotal.
+        sheet_xml = _shift_formula_row_refs_in_sheet_xml(
+            sheet_xml, start_from=old_subtotal_row, offset=offset
+        )
 
-        for row_num in range(17, 28):
-            sheet_xml = re.sub(
-                r'<mergeCell ref="[A-Z]+' + str(row_num) + r':[A-Z]+' + str(row_num) + r'"/>',
-                '', sheet_xml
+        sheet_xml = _remove_merges_starting_in_range(
+            sheet_xml, removed_first, old_subtotal_row
+        )
+        if offset != 0:
+            sheet_xml = self._renumber_merges(
+                sheet_xml, start_from=old_subtotal_row + 1, offset=offset
             )
         new_merges = []
-        row = first_data_row
+        row = first_new_row
         for idx in range(len(partidas)):
             new_merges.append(f'<mergeCell ref="C{row}:F{row}"/>')
             row += 2
         new_merges.append(f'<mergeCell ref="C{subtotal_row_num}:G{subtotal_row_num}"/>')
-        if offset != 0:
-            sheet_xml = self._renumber_merges(sheet_xml, start_from=28, offset=offset)
         merge_insert = ''.join(new_merges)
         sheet_xml = sheet_xml.replace('</mergeCells>', merge_insert + '</mergeCells>')
 
-        r43 = 43 + offset
-        r45 = 45 + offset
-        r46 = 46 + offset
-        r47 = 47 + offset
-        r49 = 49 + offset
         total_sin_iva = grand_total
-        iva_amount = round(total_sin_iva * IVA_RATE, 2)
-        total_con_iva = round(total_sin_iva + iva_amount, 2)
+        totales = calcular_totales([total_sin_iva])
+        iva_amount = totales["iva"]
+        total_con_iva = totales["total"]
 
-        sheet_xml = self._update_formula_ref(
-            sheet_xml, r43, 'I', f'I{subtotal_row_num}', total_sin_iva)
-        sheet_xml = self._update_formula_ref(
-            sheet_xml, r45, 'I', f'SUM(I{r43}:I{r43 + 1})', total_sin_iva)
-        sheet_xml = self._update_formula_ref(
-            sheet_xml, r46, 'I', f'I{r45}*0.1', iva_amount)
-        sheet_xml = self._update_formula_ref(
-            sheet_xml, r47, 'I', f'I{r45}+I{r46}', total_con_iva)
-
-        texto_importe = (
-            "Asciende el presupuesto de ejecución material a la expresada "
-            f"cantidad de {euros_en_letras(total_con_iva)} IVA INCLUIDO."
+        footer = _find_footer_rows(sheet_xml, shared_strings, min_row=subtotal_row_num + 1)
+        cap, tot, iva_r, tiva = (
+            footer.get("capitulo"), footer.get("total"),
+            footer.get("iva"), footer.get("total_iva"),
         )
-        sheet_xml = self._replace_cell_text(
-            sheet_xml, f'A{r49}', texto_importe,
-            style=asciende_style, bold=True, font_size=11,
-        )
+        if cap and tot and iva_r and tiva and cap < tot < iva_r < tiva:
+            # Limpia fórmulas sueltas entre capítulo y total (versiones previas
+            # escribían aquí una segunda referencia al subtotal → doble conteo).
+            for r in range(cap + 1, tot):
+                sheet_xml = _clear_formula_cell(sheet_xml, f"I{r}")
+            sheet_xml = self._update_formula_ref(
+                sheet_xml, cap, 'I', f'I{subtotal_row_num}', total_sin_iva)
+            sheet_xml = self._update_formula_ref(
+                sheet_xml, tot, 'I', f'SUM(I{cap}:I{tot - 1})', total_sin_iva)
+            sheet_xml = self._update_formula_ref(
+                sheet_xml, iva_r, 'I', f'I{tot}*10%', iva_amount)
+            sheet_xml = self._update_formula_ref(
+                sheet_xml, tiva, 'I', f'I{tot}+I{iva_r}', total_con_iva)
+        else:
+            logger.warning(
+                "No se localizó el pie de totales (capítulo/total/IVA); "
+                "se conservan sus fórmulas desplazadas: %s", footer,
+            )
 
-        next_original_row = 28 + offset
-        insert_point_pattern = r'(<row r="' + str(next_original_row) + r'")'
-        insert_point = re.search(insert_point_pattern, sheet_xml)
+        asciende_row = footer.get("asciende")
+        if asciende_row:
+            texto_importe = (
+                "Asciende el presupuesto de ejecución material a la expresada "
+                f"cantidad de {euros_en_letras(total_con_iva)} IVA INCLUIDO."
+            )
+            sheet_xml = self._replace_cell_text(
+                sheet_xml, f'A{asciende_row}', texto_importe,
+                style=asciende_style, bold=True, font_size=11,
+            )
+
+        # Las filas nuevas van justo antes de la primera fila posterior al
+        # subtotal (el XML exige filas en orden ascendente).
         all_new_rows = '\n'.join(new_rows_xml)
+        insert_point = None
+        for m in re.finditer(r'<row r="(\d+)"', sheet_xml):
+            if int(m.group(1)) > subtotal_row_num:
+                insert_point = m
+                break
         if insert_point:
             sheet_xml = sheet_xml[:insert_point.start()] + all_new_rows + '\n' + sheet_xml[insert_point.start():]
         else:
             sheet_xml = sheet_xml.replace('</sheetData>', all_new_rows + '\n</sheetData>')
 
-        last_row = 57 + offset
+        all_rows = [int(r) for r in re.findall(r'<row r="(\d+)"', sheet_xml)]
+        last_row = max(all_rows) if all_rows else subtotal_row_num
         sheet_xml = re.sub(
             r'<dimension ref="[^"]+"/>',
             f'<dimension ref="A1:R{last_row}"/>',
@@ -306,27 +741,36 @@ class PartidasWriter:
         return sheet_xml
 
     def _renumber_rows(self, sheet_xml, start_from, offset):
-        """Renumera filas y sus referencias de celda desde start_from aplicando offset."""
+        """Renumera filas >= start_from (y las refs de sus celdas) aplicando offset.
+
+        Se hace en una sola pasada por fila: renombrar con ``str.replace`` fila
+        a fila provocaba renombrados en cascada cuando offset < 0 (la fila 57
+        pasaba a 53, y después la "53" a 49, etc.), dejando filas duplicadas.
+        """
         if offset == 0:
             return sheet_xml
-        rows_found = re.findall(r'<row r="(\d+)"', sheet_xml)
-        rows_to_renumber = sorted(
-            [int(r) for r in rows_found if int(r) >= start_from],
-            reverse=True
-        )
-        for old_row in rows_to_renumber:
+
+        def _bump_row(match):
+            old_row = int(match.group(1))
+            if old_row < start_from:
+                return match.group(0)
             new_row = old_row + offset
-            sheet_xml = sheet_xml.replace(
-                f'<row r="{old_row}"',
-                f'<row r="{new_row}"'
+            row_xml = match.group(0)
+            row_xml = re.sub(
+                r'^<row r="\d+"', f'<row r="{new_row}"', row_xml, count=1
             )
-            for col in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L',
-                        'M', 'N', 'O', 'P', 'Q', 'R']:
-                sheet_xml = sheet_xml.replace(
-                    f'r="{col}{old_row}"',
-                    f'r="{col}{new_row}"'
-                )
-        return sheet_xml
+            return re.sub(
+                r'(<c r="[A-Z]+)' + str(old_row) + r'"',
+                lambda m: f'{m.group(1)}{new_row}"',
+                row_xml,
+            )
+
+        return re.sub(
+            r'<row r="(\d+)"[^>]*?(?:/>|>.*?</row>)',
+            _bump_row,
+            sheet_xml,
+            flags=re.DOTALL,
+        )
 
     def _renumber_merges(self, sheet_xml, start_from, offset):
         """Renumera mergeCell refs que involucran filas >= start_from."""
@@ -484,8 +928,8 @@ class PartidasWriter:
             return False
 
     @staticmethod
-    def _create_wrap_style(otros_dict, base_style_idx=47):
-        """Crea un nuevo estilo en styles.xml con wrapText y horizontal left."""
+    def _create_wrap_style(otros_dict, base_style_idx=47, vertical_top=False):
+        """Crea un nuevo estilo en styles.xml con wrapText y horizontal left (opcional vertical arriba)."""
         styles_key = "xl/styles.xml"
         if styles_key not in otros_dict:
             return str(base_style_idx)
@@ -504,9 +948,15 @@ class PartidasWriter:
         if base_style_idx >= len(xfs):
             return str(base_style_idx)
         base_xf = xfs[base_style_idx].group(0)
-        if 'wrapText="1"' in base_xf and 'horizontal="left"' in base_xf:
+        has_top = 'vertical="top"' in base_xf
+        if (
+            'wrapText="1"' in base_xf
+            and 'horizontal="left"' in base_xf
+            and (not vertical_top or has_top)
+        ):
             return str(base_style_idx)
-        _align = '<alignment horizontal="left" wrapText="1"/>'
+        v_attr = ' vertical="top"' if vertical_top else ""
+        _align = f'<alignment horizontal="left" wrapText="1"{v_attr}/>'
         new_xf = base_xf
         if '<alignment' in new_xf:
             new_xf = re.sub(
@@ -526,6 +976,11 @@ class PartidasWriter:
                 new_xf = re.sub(
                     r'<xf\b', '<xf applyAlignment="1"', new_xf, count=1,
                 )
+        # Reutiliza un estilo idéntico creado en una escritura anterior: si no,
+        # cada regeneración de partidas añadía otro <xf> a styles.xml.
+        for idx, existing in enumerate(xfs):
+            if existing.group(0) == new_xf:
+                return str(idx)
         new_idx = count
         new_content = content + new_xf + '\n'
         new_section = (
@@ -607,7 +1062,14 @@ class PartidasWriter:
         return 0
 
     def _update_bottom_client_cell(self, sheet_xml, cliente, shared_strings):
-        """Busca la última celda en columna A (fila >= 50) con texto y la reemplaza con cliente."""
+        """Sustituye por el cliente la última celda con texto de la columna A
+        tras el subtotal («LA PROPIEDAD» o el cliente anterior).
+
+        Se busca desde el subtotal y no desde una fila fija: con una sola
+        partida el pie sube y esa celda queda en la fila 48.
+        """
+        subtotal_row = _find_partidas_subtotal_row(sheet_xml, shared_strings)
+        min_row = subtotal_row + 1 if subtotal_row else 50
         last_row = None
         for m in re.finditer(
             r'<c r="A(\d+)"[^>]*?(?:/>|>.*?</c>)',
@@ -615,7 +1077,7 @@ class PartidasWriter:
         ):
             row = int(m.group(1))
             cell = m.group(0)
-            if row < 50 or "<f>" in cell:
+            if row < min_row or "<f>" in cell:
                 continue
             text = resolve_cell_text(cell, shared_strings)
             if text.strip():
@@ -630,35 +1092,15 @@ class PartidasWriter:
 
     def append_partidas_via_xml(self, file_path, new_partidas):
         """
-        Añade partidas al final de las existentes en un presupuesto.
+        Añade partidas tras las existentes, antes del subtotal.
+
+        No reescribe las que ya hay: se conservan tal cual los importes
+        tecleados a mano en la columna I, los capítulos, las notas y la
+        numeración (las nuevas continúan desde la última, p. ej. 2.4).
         """
         if not new_partidas:
             return True
-
-        from src.core.budget_reader import BudgetReader
-
-        try:
-            reader = BudgetReader()
-            existing_data = reader.read(file_path)
-            existing_partidas = existing_data["partidas"] if existing_data else []
-
-            combined = []
-            for p in existing_partidas:
-                combined.append({
-                    "titulo": p.get("concepto", "").split("\n")[0] if p.get("concepto") else "",
-                    "descripcion": "\n".join(p.get("concepto", "").split("\n")[1:]) if "\n" in p.get("concepto", "") else "",
-                    "concepto": p.get("concepto", ""),
-                    "cantidad": p.get("cantidad", 1),
-                    "unidad": p.get("unidad", "ud"),
-                    "precio_unitario": p.get("precio", 0),
-                })
-            for p in new_partidas:
-                combined.append(p)
-
-            return self.insert_partidas_via_xml(file_path, combined)
-        except Exception as e:
-            logger.exception("Error al añadir partidas")
-            return False
+        return self.insert_partidas_via_xml(file_path, new_partidas, append=True)
 
     @staticmethod
     def _apply_page_config_after_write(file_path):

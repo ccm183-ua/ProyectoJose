@@ -159,3 +159,29 @@ class TestPromptContent:
             datos_proyecto=sample_datos_proyecto
         )
         assert "JSON" in result or "json" in result
+
+    def test_prompt_includes_historical_context_when_provided(self, builder, sample_datos_proyecto):
+        """El prompt incluye el bloque histórico cuando se pasa contexto."""
+        historical_context = {
+            "detected_modules": [
+                {"name": "sustitucion_bajante", "label": "Sustitución de bajante", "confidence": 0.94}
+            ],
+            "partidas": [
+                {
+                    "concepto": "desmontaje bajante existente",
+                    "unidad": "ml",
+                    "precio_unitario": 18.5,
+                    "historical_frequency": 14,
+                }
+            ],
+        }
+        result = builder.build_prompt(
+            tipo_obra="Reparación de bajante",
+            descripcion="En patio interior",
+            plantilla=None,
+            datos_proyecto=sample_datos_proyecto,
+            historical_context=historical_context,
+        )
+        assert "CONTEXTO HISTÓRICO" in result
+        assert "Sustitución de bajante" in result
+        assert "desmontaje bajante existente" in result

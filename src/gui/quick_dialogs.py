@@ -69,16 +69,12 @@ class QuickContactoDialog(QDialog):
         telefono = self._fields["telefono"].text().strip()
         telefono2 = self._fields["telefono2"].text().strip()
         email = self._fields["email"].text().strip()
-        if not nombre:
-            QMessageBox.information(self, "Aviso", "El nombre es obligatorio.")
-            return
-        if not telefono:
-            QMessageBox.information(self, "Aviso", "El teléfono es obligatorio.")
-            return
+        telefono_error = "El teléfono es obligatorio." if not telefono else validate_phone(telefono)
         if not run_validations(self, [
-            ("Teléfono", validate_phone(telefono)),
-            ("Teléfono 2", validate_phone(telefono2)),
-            ("Email", validate_email(email)),
+            (self._fields["nombre"], "Nombre", None if nombre else "El nombre es obligatorio."),
+            (self._fields["telefono"], "Teléfono", telefono_error),
+            (self._fields["telefono2"], "Teléfono 2", validate_phone(telefono2)),
+            (self._fields["email"], "Email", validate_email(email)),
         ]):
             return
         notas = self._fields["notas"].text().strip()
@@ -161,12 +157,10 @@ class QuickAdminDialog(QDialog):
         email = self._fields["email"].text().strip()
         telefono = self._fields["telefono"].text().strip()
         direccion = self._fields["direccion"].text().strip()
-        if not nombre:
-            QMessageBox.information(self, "Aviso", "El nombre es obligatorio.")
-            return
         if not run_validations(self, [
-            ("Email", validate_email(email)),
-            ("Teléfono", validate_phone(telefono)),
+            (self._fields["nombre"], "Nombre", None if nombre else "El nombre es obligatorio."),
+            (self._fields["email"], "Email", validate_email(email)),
+            (self._fields["telefono"], "Teléfono", validate_phone(telefono)),
         ]):
             return
         if self._edit_id is not None:

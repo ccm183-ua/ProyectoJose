@@ -137,6 +137,26 @@ def buscar_administracion_por_nombre(nombre: str) -> Optional[Dict]:
         }
 
 
+def buscar_administracion_por_email(email: str) -> Optional[Dict]:
+    """Busca una administración por email exacto (case-insensitive)."""
+    email = email.strip().lower()
+    if not email:
+        return None
+    with database.get_connection() as conn:
+        cur = conn.execute(
+            "SELECT id, nombre, email, telefono, direccion "
+            "FROM administracion WHERE LOWER(TRIM(email)) = ?",
+            (email,),
+        )
+        r = cur.fetchone()
+        if not r:
+            return None
+        return {
+            "id": r[0], "nombre": r[1] or "",
+            "email": r[2] or "", "telefono": r[3] or "", "direccion": r[4] or "",
+        }
+
+
 def buscar_administraciones_fuzzy(nombre: str, umbral: float = FUZZY_MATCH_THRESHOLD) -> List[Dict]:
     """Busca administraciones cuyo nombre sea similar al dado (fuzzy matching).
 

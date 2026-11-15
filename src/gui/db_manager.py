@@ -352,7 +352,11 @@ class DBManagerFrame(QMainWindow):
         if id_ is None:
             QMessageBox.information(self, "Eliminar", "Selecciona una fila.")
             return
-        resp = QMessageBox.question(self, "Confirmar", "¿Eliminar esta administración?")
+        resp = QMessageBox.warning(
+            self, "Confirmar eliminación",
+            "¿Eliminar esta administración?\n\nEsta acción no se puede deshacer.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
         if resp != QMessageBox.StandardButton.Yes:
             return
         err = repo.delete_administracion(id_)
@@ -441,7 +445,11 @@ class DBManagerFrame(QMainWindow):
         if id_ is None:
             QMessageBox.information(self, "Eliminar", "Selecciona una fila.")
             return
-        resp = QMessageBox.question(self, "Confirmar", "¿Eliminar esta comunidad?")
+        resp = QMessageBox.warning(
+            self, "Confirmar eliminación",
+            "¿Eliminar esta comunidad?\n\nEsta acción no se puede deshacer.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
         if resp != QMessageBox.StandardButton.Yes:
             return
         err = repo.delete_comunidad(id_)

@@ -7,14 +7,43 @@ import subprocess
 import sys
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
-    QFileDialog, QInputDialog, QMainWindow, QMessageBox,
+    QFileDialog, QMainWindow, QMessageBox,
     QPushButton, QVBoxLayout, QWidget,
 )
 
 from src.core import database as db_module
+from src.core.historical_context import request_historical_suggestions_for_context
+from src.core.historical_suggestions_dedupe import (
+    dedupe_historical_partidas,
+    dedupe_merged_review_partidas,
+)
+from src.core.partida_normalizer import normalize_partida_for_excel
 from src.core.services import BudgetService, DatabaseService
+from src.core.services.budget_partidas_flow import (
+    OUTCOME_APPLIED,
+    OUTCOME_CANCELLED,
+    OUTCOME_EMPTY,
+    OUTCOME_FAILED,
+)
 from src.gui import theme
+from src.gui.historical_suggestions_dialog import (
+    HistoricalSuggestionContextDialog,
+    HistoricalSuggestionDescriptionDialog,
+)
+
+
+def _same_path(a: str, b: str) -> bool:
+    """Compara rutas normalizando separadores y mayúsculas (Windows)."""
+    return os.path.normcase(os.path.normpath(a)) == os.path.normcase(os.path.normpath(b))
+
+
+_MOTIVO_SIN_FINALIZAR = {
+    OUTCOME_CANCELLED: "Has cancelado la elaboración de las partidas.",
+    OUTCOME_FAILED: "No se han podido escribir las partidas en el Excel.",
+    OUTCOME_EMPTY: "No se ha añadido ninguna partida.",
+}
 
 
 class MainFrame(QMainWindow):
@@ -26,8 +55,61 @@ class MainFrame(QMainWindow):
         self._db_svc = DatabaseService()
         self._db_frame = None
         self._dashboard_frame = None
+        self._historical_memory_dashboard = None
+        self._obra_calendar = None
         self._build_ui()
         self._center()
+        self._schedule_startup_historical_refresh()
+
+    def _schedule_startup_historical_refresh(self):
+        """Mantiene la memoria histórica al día al arrancar, en segundo plano.
+
+        - Si hay carpetas de análisis recordadas, hace un escaneo incremental
+          (los Excel sin cambios se omiten por mtime, así que es barato) que
+          además reconstruye los patrones de sugerencia. Se recorren todas las
+          carpetas del conjunto, no solo la última añadida.
+        - Si no hay carpeta configurada, al menos reconstruye los patrones a
+          partir de lo ya ingerido (cubre el caso de datos cacheados sin
+          patrones). Es silencioso y nunca interrumpe el arranque.
+        """
+        import logging
+        import os as _os
+
+        from src.core.settings import Settings
+        from src.utils.helpers import run_in_background
+
+        folders = [
+            folder
+            for folder in Settings().get_historical_folders()
+            if _os.path.isdir(folder)
+        ]
+
+        def _work():
+            from src.core.historical_budget_analyzer import HistoricalBudgetAnalyzer
+
+            analyzer = HistoricalBudgetAnalyzer()
+            if folders:
+                return analyzer.analyze_folders(folders, recursive=True)
+            return analyzer.rebuild_patterns_and_publish()
+
+        def _done(ok, payload):
+            logger = logging.getLogger(__name__)
+            if not ok:
+                logger.debug(
+                    "Refresco histórico de arranque falló: %s", payload
+                )
+                return
+            publication_error = (
+                payload.get("publication_error") if isinstance(payload, dict) else None
+            )
+            if publication_error:
+                logger.warning(
+                    "Refresco histórico de arranque no pudo publicar el "
+                    "paquete de contexto: %s",
+                    publication_error,
+                )
+
+        run_in_background(_work, _done)
 
     def _center(self):
         screen = self.screen()
@@ -81,6 +163,12 @@ class MainFrame(QMainWindow):
         btn_open.clicked.connect(self._open_dashboard)
         btn_layout.addWidget(btn_open, alignment=Qt.AlignmentFlag.AlignHCenter)
 
+        btn_calendar = QPushButton("Calendario de obras")
+        btn_calendar.setFixedSize(320, 46)
+        btn_calendar.setFont(theme.font_base())
+        btn_calendar.clicked.connect(self._open_obra_calendar)
+        btn_layout.addWidget(btn_calendar, alignment=Qt.AlignmentFlag.AlignHCenter)
+
         btn_db = QPushButton("Gestionar base de datos")
         btn_db.setFixedSize(320, 46)
         btn_db.setFont(theme.font_base())
@@ -102,12 +190,15 @@ class MainFrame(QMainWindow):
         menubar = self.menuBar()
 
         m_archivo = menubar.addMenu("&Archivo")
-        act_open = m_archivo.addAction("Abrir presupuesto...\tCtrl+O")
+        act_open = m_archivo.addAction("Abrir presupuesto...")
+        act_open.setShortcut(QKeySequence.StandardKey.Open)
         act_open.triggered.connect(self._open_excel)
-        act_new = m_archivo.addAction("Crear nuevo presupuesto...\tCtrl+N")
+        act_new = m_archivo.addAction("Crear nuevo presupuesto...")
+        act_new.setShortcut(QKeySequence.StandardKey.New)
         act_new.triggered.connect(self._create_budget)
         m_archivo.addSeparator()
-        act_exit = m_archivo.addAction("Salir\tCtrl+Q")
+        act_exit = m_archivo.addAction("Salir")
+        act_exit.setShortcut(QKeySequence("Ctrl+Q"))
         act_exit.triggered.connect(self.close)
 
         m_bd = menubar.addMenu("Base de &datos")
@@ -117,12 +208,26 @@ class MainFrame(QMainWindow):
         act_folder.triggered.connect(self._open_db_folder)
 
         m_config = menubar.addMenu("&Configuración")
-        act_ai = m_config.addAction("Configuración IA (API Key)...")
+        act_ai = m_config.addAction("Configuración IA...")
         act_ai.triggered.connect(self._open_ai_settings)
         act_templates = m_config.addAction("Gestionar plantillas...")
         act_templates.triggered.connect(self._open_template_manager)
         act_paths = m_config.addAction("Rutas por defecto...")
         act_paths.triggered.connect(self._open_default_paths)
+        act_obras = m_config.addAction("Avisos de obras...")
+        act_obras.triggered.connect(self._configure_obra_margin)
+
+        m_tools = menubar.addMenu("&Herramientas")
+        act_calendar = m_tools.addAction("Calendario de obras...")
+        act_calendar.triggered.connect(self._open_obra_calendar)
+        act_hist = m_tools.addAction("Analizar presupuestos terminados...")
+        act_hist.triggered.connect(self._open_historical_analysis)
+        act_memory = m_tools.addAction("Panel de memoria historica...")
+        act_memory.triggered.connect(self._open_historical_memory_dashboard)
+        act_export_context = m_tools.addAction("Exportar paquete de contexto IA...")
+        act_export_context.triggered.connect(self._export_context_pack_manual)
+        act_import_xml = m_tools.addAction("Importar borrador IA (XML)...")
+        act_import_xml.triggered.connect(self._import_ai_xml_budget)
 
         m_ayuda = menubar.addMenu("&Ayuda")
         act_about = m_ayuda.addAction("Acerca de...")
@@ -173,6 +278,48 @@ class MainFrame(QMainWindow):
         except Exception as ex:
             QMessageBox.critical(self, "Error", f"Error al abrir el dashboard: {ex}")
 
+    def _open_obra_calendar(self):
+        try:
+            from src.gui import obra_calendar_window
+
+            if self._obra_calendar is not None:
+                try:
+                    if self._obra_calendar.isVisible():
+                        self._obra_calendar.raise_()
+                        self._obra_calendar.activateWindow()
+                        return
+                except RuntimeError:
+                    self._obra_calendar = None
+            self._obra_calendar = obra_calendar_window.ObraCalendarWindow(self)
+            self._obra_calendar.destroyed.connect(lambda: setattr(self, "_obra_calendar", None))
+            self._obra_calendar.show()
+            self._obra_calendar.raise_()
+        except Exception as ex:
+            QMessageBox.critical(self, "Error", f"Error al abrir el calendario de obras: {ex}")
+
+    def _open_historical_memory_dashboard(self):
+        try:
+            from src.gui.historical_memory_dashboard import HistoricalMemoryDashboard
+
+            if self._historical_memory_dashboard is not None:
+                try:
+                    if self._historical_memory_dashboard.isVisible():
+                        self._historical_memory_dashboard._reload()
+                        self._historical_memory_dashboard.raise_()
+                        self._historical_memory_dashboard.activateWindow()
+                        return
+                except RuntimeError:
+                    self._historical_memory_dashboard = None
+
+            self._historical_memory_dashboard = HistoricalMemoryDashboard(self)
+            self._historical_memory_dashboard.destroyed.connect(
+                lambda: setattr(self, "_historical_memory_dashboard", None)
+            )
+            self._historical_memory_dashboard.show()
+            self._historical_memory_dashboard.raise_()
+        except Exception as ex:
+            QMessageBox.critical(self, "Error", f"Error al abrir la memoria historica: {ex}")
+
     def _open_db_folder(self):
         try:
             path = db_module.get_db_path()
@@ -202,10 +349,11 @@ class MainFrame(QMainWindow):
         if not path:
             return
         try:
-            if self._budget_svc.open_budget(path):
-                QMessageBox.information(self, "Éxito", f"Presupuesto abierto: {os.path.basename(path)}")
-            else:
+            if not self._budget_svc.open_budget(path):
                 QMessageBox.critical(self, "Error", "No se pudo abrir el archivo Excel.")
+                return
+            # Abre el archivo en la aplicación asociada a .xlsx (Excel, WPS...)
+            os.startfile(path)  # type: ignore[attr-defined]
         except Exception as ex:
             QMessageBox.critical(self, "Error", f"Error: {ex}")
 
@@ -217,51 +365,347 @@ class MainFrame(QMainWindow):
         from src.core.settings import Settings
         from src.utils.helpers import sanitize_filename
         save_default_dir = Settings().get_default_path(Settings.PATH_SAVE_BUDGETS) or ""
+        folder_name = sanitize_filename(project_name)
+
+        # QFileDialog solo respeta el directorio de la ruta propuesta si ya existe;
+        # crearlo aquí es lo que hace que la confirmación nativa de sobrescritura
+        # se aplique sobre la ruta que realmente se va a escribir.
+        proposed_dir = save_default_dir
+        created_dir = ""
+        if save_default_dir:
+            candidate = os.path.join(save_default_dir, folder_name)
+            try:
+                if not os.path.isdir(candidate):
+                    created_dir = candidate
+                os.makedirs(candidate, exist_ok=True)
+                proposed_dir = candidate
+            except OSError:
+                created_dir = ""
+
         save_path, _ = QFileDialog.getSaveFileName(
             self, "Guardar Presupuesto",
-            os.path.join(save_default_dir, f"{sanitize_filename(project_name)}.xlsx"),
+            os.path.join(proposed_dir, f"{folder_name}.xlsx"),
             "Excel (*.xlsx);;Todos (*.*)",
         )
-        if not save_path:
-            return
+        try:
+            if not save_path:
+                return
 
-        template_path = self._budget_svc.get_template_path()
-        save_dir = os.path.dirname(save_path)
+            if not os.path.splitext(save_path)[1]:
+                save_path += ".xlsx"
+                # La ruta cambió respecto a la que confirmó el diálogo: hay que
+                # volver a pedir consentimiento sobre la ruta definitiva.
+                if os.path.exists(save_path) and QMessageBox.question(
+                    self, "Sustituir archivo",
+                    f"Ya existe {save_path}. ¿Sustituirlo?",
+                ) != QMessageBox.StandardButton.Yes:
+                    return
 
-        partes_dir = [
-            p for p in [
-                project_data.get("calle", ""),
-                project_data.get("num_calle", ""),
-                project_data.get("codigo_postal", ""),
-                project_data.get("localidad", ""),
-            ] if p
-        ]
-        direccion_proyecto = ", ".join(partes_dir)
+            folder_path = os.path.dirname(save_path)
+            if save_default_dir and _same_path(folder_path, save_default_dir):
+                QMessageBox.critical(
+                    self, "Error",
+                    "Guarda el presupuesto dentro de una carpeta de proyecto, no "
+                    f"directamente en {save_default_dir}.",
+                )
+                return
 
-        comunidad_data = self._buscar_comunidad_para_presupuesto(
-            project_data.get("cliente", ""), direccion=direccion_proyecto,
-        )
-        admin_data = self._db_svc.get_admin_para_comunidad(comunidad_data)
+            overwrite = os.path.exists(save_path)
 
-        result = self._budget_svc.create_budget(
-            project_data, project_name, save_dir, template_path,
-            comunidad_data=comunidad_data, admin_data=admin_data,
-        )
-        if not result.success:
-            QMessageBox.critical(self, "Error", result.error)
-            return
+            template_path = self._budget_svc.get_template_path()
 
-        self._offer_ai_partidas(result.excel_path, project_data)
+            partes_dir = [
+                p for p in [
+                    project_data.get("calle", ""),
+                    project_data.get("num_calle", ""),
+                    project_data.get("codigo_postal", ""),
+                    project_data.get("localidad", ""),
+                ] if p
+            ]
+            direccion_proyecto = ", ".join(partes_dir)
+
+            comunidad_data = self._buscar_comunidad_para_presupuesto(
+                project_data.get("cliente", ""), direccion=direccion_proyecto,
+            )
+            admin_data = self._db_svc.get_admin_para_comunidad(comunidad_data)
+
+            result = self._budget_svc.create_budget(
+                project_data, project_name, save_path, template_path,
+                comunidad_data=comunidad_data, admin_data=admin_data,
+                overwrite=overwrite,
+            )
+            if not result.success:
+                QMessageBox.critical(self, "Error", result.error)
+                return
+        finally:
+            # La carpeta se creó solo para que el diálogo propusiera una ruta real;
+            # si el usuario guardó en otro sitio (o canceló), no debe quedar vacía.
+            if created_dir and not _same_path(os.path.dirname(save_path), created_dir):
+                try:
+                    os.rmdir(created_dir)
+                except OSError:
+                    pass
+
+        # Flujo unificado: descripción libre (voz o texto) → orquestador → revisión combinada.
+        # El flujo clásico (_offer_partidas) se mantiene como fallback automático.
+        outcome = self._offer_partidas_for_new_budget(result.excel_path, project_data)
+        if outcome == OUTCOME_APPLIED:
+            finalized = self._budget_svc.finalize_budget(
+                result.excel_path,
+                project_data=project_data,
+                comunidad_data=comunidad_data,
+                admin_data=admin_data,
+            )
+            if not finalized:
+                QMessageBox.warning(
+                    self,
+                    "Aviso",
+                    "El presupuesto se creó, pero no se pudo guardar su detalle completo en la base de datos.",
+                )
+            else:
+                # Bucle de retroalimentación: el presupuesto recién creado se registra
+                # en el histórico como 'own_final_budget', pendiente de revisión. No
+                # se auto-incluye en el aprendizaje aunque el análisis salga VALID:
+                # una partida completada por IA no debe convertirse en precio real
+                # sin aprobación humana explícita.
+                self._schedule_historical_feedback(result.excel_path)
+        else:
+            self._handle_unfinished_budget(
+                result.excel_path, result.folder_path, outcome, overwrote_existing=overwrite,
+            )
         self._open_dashboard(refresh=True)
+
+    def _handle_unfinished_budget(self, excel_path, folder_path, outcome, overwrote_existing=False):
+        """Ofrece conservar o descartar un presupuesto que no se finaliza.
+
+        Si el borrador sobrescribió un Excel que ya existía, no se ofrece
+        descartarlo: borrarlo eliminaría el fichero (que ya sustituyó al
+        anterior) y la fila de historial de esa ruta, que era la del
+        presupuesto anterior.
+        """
+        motivo = _MOTIVO_SIN_FINALIZAR.get(
+            outcome, "La elaboración de las partidas no llegó a completarse.",
+        )
+        if overwrote_existing:
+            QMessageBox.information(
+                self,
+                "Presupuesto sin terminar",
+                f"{motivo}\n\n"
+                "El presupuesto NO se ha marcado como terminado ni se ha registrado "
+                "en la memoria histórica.\n\n"
+                "Como sustituyó a un archivo que ya existía, se conserva el borrador "
+                f"(no se puede deshacer la sustitución):\n\n{excel_path}",
+            )
+            return
+        keep = QMessageBox.question(
+            self,
+            "Presupuesto sin terminar",
+            (
+                f"{motivo}\n\n"
+                "El presupuesto NO se ha marcado como terminado ni se ha registrado "
+                "en la memoria histórica.\n\n"
+                "¿Quieres conservar el borrador?\n\n"
+                f"{excel_path}\n\n"
+                "Si respondes No, se eliminará el archivo recién creado."
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if keep == QMessageBox.StandardButton.Yes:
+            return
+        if not self._budget_svc.discard_budget(excel_path, folder_path):
+            QMessageBox.warning(
+                self,
+                "Aviso",
+                f"No se pudo completar el descarte. Revisa el estado de:\n{excel_path}",
+            )
+
+    def _schedule_historical_feedback(self, excel_path):
+        """Registra en segundo plano un presupuesto finalizado como histórico
+        pendiente de revisión (source_kind='own_final_budget').
+
+        Reutiliza el analizador existente (con salto por mtime y reconstrucción
+        de patrones incluida). Es silencioso: cualquier error se registra y se
+        ignora para no interrumpir el flujo del usuario.
+        """
+        import logging
+        import os as _os
+
+        from src.utils.helpers import run_in_background
+
+        if not excel_path or not _os.path.exists(excel_path):
+            return
+
+        def _work():
+            from src.core.historical_budget_analyzer import HistoricalBudgetAnalyzer
+            return HistoricalBudgetAnalyzer().analyze_files(
+                [excel_path],
+                source_folder=_os.path.dirname(excel_path),
+                source_kind="own_final_budget",
+            )
+
+        def _done(ok, payload):
+            if not ok:
+                logging.getLogger(__name__).debug(
+                    "Retroalimentación histórica falló para %s: %s", excel_path, payload
+                )
+
+        run_in_background(_work, _done)
 
     def _obtain_project_data(self):
         from src.gui.dialogs import obtain_project_data
         return obtain_project_data(self)
 
+    def _configure_obra_margin(self):
+        """Margen general de aviso antes del inicio previsto de una obra (EJECUTAR)."""
+        from PySide6.QtWidgets import QInputDialog
+
+        from src.core.settings import Settings
+
+        settings = Settings()
+        actual = settings.get_obra_margen_aviso_dias()
+        dias, ok = QInputDialog.getInt(
+            self, "Avisos de obras",
+            "Avisar cuántos días antes del inicio previsto de cada obra:\n"
+            "(se puede cambiar en una obra concreta desde «Planificación…»)",
+            actual, 0, 365,
+        )
+        if ok:
+            settings.save_obra_margen_aviso_dias(dias)
+
     def _open_default_paths(self):
         from src.gui.dialogs import DefaultPathsDialog
         dlg = DefaultPathsDialog(self)
         dlg.exec()
+
+    def _open_historical_analysis(self):
+        from src.gui.historical_analysis_dialog import HistoricalAnalysisDialog
+        dlg = HistoricalAnalysisDialog(self)
+        dlg.exec()
+
+    def _export_context_pack_manual(self):
+        from src.core import database
+        from src.core.settings import Settings
+        from scripts.export_context_pack import export_context_pack
+
+        settings = Settings()
+        out_dir = settings.get_default_path(Settings.PATH_CONTEXT_PACK)
+        if not out_dir:
+            out_dir = QFileDialog.getExistingDirectory(
+                self, "Selecciona la carpeta del paquete de contexto (p. ej. iCloud/Drive)"
+            )
+            if not out_dir:
+                return
+            settings.set_default_path(Settings.PATH_CONTEXT_PACK, out_dir)
+
+        try:
+            summary = export_context_pack(str(database.get_db_path()), out_dir)
+        except Exception as exc:
+            QMessageBox.warning(
+                self, "Error", f"No se pudo exportar el paquete de contexto:\n{exc}"
+            )
+            return
+
+        QMessageBox.information(
+            self, "Paquete exportado",
+            f"Carpeta: {out_dir}\n\n"
+            f"Patrones (precio evidenciado): {summary['patrones']}\n"
+            f"Repertorio: {summary['repertorio']}\n"
+            f"Modulos de vocabulario: {summary['vocabulario_modulos']}\n"
+            f"Partidas del ejemplo de estructura: {summary['estructura_partidas']}\n\n"
+            "El paquete no esta anonimizado: revisa LIMITES.md antes de compartirlo.",
+        )
+
+    def _import_ai_xml_budget(self):
+        """Importa el XML de partidas redactado con Claude (esquema-partidas-ia.md)
+        y lo anade, tras revision humana, a un presupuesto existente.
+
+        Nunca escribe nada sin pasar por CombinedPartidasReviewDialog: ni las
+        partidas sin evidencia de precio ni las que ya venian marcadas 'nueva'
+        se insertan solas.
+        """
+        from src.core.settings import Settings
+        from src.core.xml_budget_importer import parse_and_validate, match_partidas_with_evidence
+        from src.core.services.budget_partidas_flow import (
+            MODE_APPEND, apply_reviewed_partidas, split_generated_partidas_for_review,
+        )
+        from src.gui.combined_partidas_review_dialog import CombinedPartidasReviewDialog
+
+        xml_path, _ = QFileDialog.getOpenFileName(
+            self, "Importar borrador de partidas (XML)", "",
+            "XML (*.xml);;Todos (*.*)",
+        )
+        if not xml_path:
+            return
+
+        result = parse_and_validate(xml_path)
+        if not result["ok"]:
+            QMessageBox.critical(self, "Fichero rechazado", result["error"])
+            return
+
+        aceptadas = result["aceptadas"]
+        rechazadas = result["rechazadas"]
+        if not aceptadas:
+            detalle = "\n".join(f"- {r['concepto']}: {r['motivo']}" for r in rechazadas)
+            QMessageBox.warning(
+                self, "Sin partidas validas",
+                f"Ninguna partida ha pasado la validacion del esquema:\n\n{detalle}",
+            )
+            return
+
+        listas, pendientes = match_partidas_with_evidence(aceptadas)
+
+        avisos = []
+        if rechazadas:
+            avisos.append(
+                f"{len(rechazadas)} partida(s) rechazada(s) por el esquema:\n"
+                + "\n".join(f"- {r['concepto']}: {r['motivo']}" for r in rechazadas)
+            )
+        if pendientes:
+            avisos.append(
+                f"{len(pendientes)} partida(s) pendiente(s) de medida (no se importan todavia):\n"
+                + "\n".join(f"- {p['concepto']}" for p in pendientes)
+            )
+        if avisos:
+            QMessageBox.information(self, "Antes de continuar", "\n\n".join(avisos))
+
+        if not listas:
+            return
+
+        default_dir = Settings().get_default_path(Settings.PATH_OPEN_BUDGETS) or ""
+        excel_path, _ = QFileDialog.getOpenFileName(
+            self, "Presupuesto donde anadir estas partidas", default_dir,
+            "Excel (*.xlsx *.xls);;Todos (*.*)",
+        )
+        if not excel_path:
+            return
+
+        try:
+            existing = self._budget_svc.read_budget(excel_path)
+        except Exception as exc:
+            QMessageBox.critical(self, "Error", f"No se pudo leer el presupuesto:\n{exc}")
+            return
+        existing_partidas = (existing or {}).get("partidas", []) or []
+
+        historicas, ia_estimadas = split_generated_partidas_for_review(
+            listas, MODE_APPEND, existing_partidas=existing_partidas
+        )
+
+        review = CombinedPartidasReviewDialog(
+            self, historical_partidas=historicas, ai_partidas=ia_estimadas,
+        )
+        if review.exec() != 1:
+            return
+        selected = review.get_selected_partidas()
+        if not selected:
+            return
+
+        if apply_reviewed_partidas(self._budget_svc, excel_path, selected, MODE_APPEND):
+            QMessageBox.information(
+                self, "Éxito", f"{len(selected)} partida(s) añadida(s) a:\n{excel_path}",
+            )
+        else:
+            QMessageBox.critical(self, "Error", "Error al añadir las partidas al Excel.")
 
     def _buscar_comunidad_para_presupuesto(self, nombre_cliente: str, direccion: str = "") -> dict | None:
         from src.gui.dialogs import (
@@ -301,53 +745,320 @@ class MainFrame(QMainWindow):
 
         return None
 
-    def _offer_ai_partidas(self, excel_path, project_data):
+    def _offer_ai_partidas(self, excel_path, project_data, historical_context=None) -> str:
         from src.gui.ai_budget_dialog import AIBudgetDialog
         from src.gui.partidas_dialog import SuggestedPartidasDialog
 
-        ai_dlg = AIBudgetDialog(self, datos_proyecto=project_data)
+        ai_dlg = AIBudgetDialog(
+            self,
+            datos_proyecto=project_data,
+            historical_context=historical_context or {},
+        )
         if ai_dlg.exec() != 1:
-            QMessageBox.information(
-                self, "Éxito",
-                f"Presupuesto creado (sin partidas IA):\n{excel_path}",
-            )
-            return
+            return OUTCOME_CANCELLED
 
         result = ai_dlg.get_result()
 
         if not result or not result.get('partidas'):
-            QMessageBox.information(
-                self, "Éxito",
-                f"Presupuesto creado (sin partidas IA):\n{excel_path}",
-            )
-            return
+            return OUTCOME_EMPTY
 
         partidas_dlg = SuggestedPartidasDialog(self, result)
         if partidas_dlg.exec() != 1:
-            QMessageBox.information(
-                self, "Éxito",
-                f"Presupuesto creado (sin partidas IA):\n{excel_path}",
-            )
-            return
+            return OUTCOME_CANCELLED
 
         selected = partidas_dlg.get_selected_partidas()
+        return self._insert_final_partidas_once(excel_path, selected, project_data)
 
-        if selected:
-            if self._budget_svc.insert_partidas(excel_path, selected, project_data):
+    def _choose_partidas_source(self) -> str:
+        """Pregunta cómo añadir las partidas: biblioteca, IA o dejar vacío."""
+        box = QMessageBox(self)
+        box.setWindowTitle("Partidas del presupuesto")
+        box.setText("¿Cómo quieres añadir las partidas?")
+        # Textos cortos: con los largos no se leían por falta de espacio.
+        btn_lib = box.addButton("Biblioteca", QMessageBox.ButtonRole.AcceptRole)
+        btn_ai = box.addButton("IA", QMessageBox.ButtonRole.ActionRole)
+        box.addButton("Vacío", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(btn_lib)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is btn_lib:
+            return "library"
+        if clicked is btn_ai:
+            return "ai"
+        return "empty"
+
+    def _offer_partidas_for_new_budget(self, excel_path, project_data) -> str:
+        """Al crear: biblioteca, IA (flujo unificado) o dejar el presupuesto vacío."""
+        source = self._choose_partidas_source()
+        if source == "library":
+            return self._offer_partidas_from_library(excel_path, project_data)
+        if source == "ai":
+            return self._offer_partidas_unified(excel_path, project_data)
+        # Igual que "Saltar" en el flujo de IA: _handle_unfinished_budget ofrece
+        # conservar o descartar el borrador.
+        return OUTCOME_CANCELLED
+
+    def _offer_partidas_from_library(self, excel_path, project_data) -> str:
+        """Partidas elegidas en la biblioteca → revisión → escritura."""
+        # Por módulo (no `from ... import Clase`) para que los tests puedan sustituirlas.
+        from src.gui import combined_partidas_review_dialog as review_mod
+        from src.gui import partida_library_dialog as library_mod
+
+        dlg = library_mod.PartidaLibraryDialog(self)
+        if dlg.exec() != 1 or not dlg.get_candidates():
+            return OUTCOME_CANCELLED
+        review = review_mod.CombinedPartidasReviewDialog(self, library_partidas=dlg.get_candidates())
+        if review.exec() != 1:
+            return OUTCOME_CANCELLED
+        selected = review.get_selected_partidas()
+        if not selected:
+            return OUTCOME_EMPTY
+        return self._insert_final_partidas_once(excel_path, selected, project_data)
+
+    def _offer_partidas_unified(self, excel_path, project_data) -> str:
+        """Punto de entrada único de creación de partidas con IA.
+
+        El cliente describe la obra en lenguaje natural (voz o texto). El
+        BudgetOrchestrator decide internamente qué viene del histórico
+        (precio real) y qué genera la IA, sin que el usuario elija camino.
+
+        Reutiliza toda la maquinaria existente de revisión e inserción.
+        Si el orquestador no devuelve nada, cae al flujo clásico como fallback.
+        """
+        from src.core.settings import Settings
+        from src.gui.voice_budget_dialog import VoiceBudgetDialog
+        from src.gui.combined_partidas_review_dialog import CombinedPartidasReviewDialog
+        from src.core.services.budget_partidas_flow import MODE_CREATE, split_generated_partidas_for_review
+
+        # El orquestador espera 'tipo_obra'; la app lo guarda como 'tipo'.
+        datos = dict(project_data or {})
+        datos.setdefault("tipo_obra", (project_data or {}).get("tipo", ""))
+
+        dlg = VoiceBudgetDialog(
+            settings=Settings(),
+            datos_proyecto=datos,
+            parent=self,
+        )
+        if dlg.exec() != 1:
+            # El usuario cerró el diálogo unificado: presupuesto sin partidas IA.
+            return OUTCOME_CANCELLED
+
+        result = dlg.get_result() or {}
+        partidas = result.get("partidas", []) or []
+
+        if not partidas:
+            # El orquestador no pudo generar nada: probar el flujo clásico.
+            return self._offer_partidas(excel_path, project_data)
+
+        historicas, ia_estimadas = split_generated_partidas_for_review(partidas, MODE_CREATE)
+
+        review = CombinedPartidasReviewDialog(
+            self,
+            historical_partidas=historicas,
+            ai_partidas=ia_estimadas,
+            cobertura=result.get("cobertura"),
+        )
+        if review.exec() != 1:
+            return OUTCOME_CANCELLED
+
+        return self._insert_final_partidas_once(
+            excel_path, review.get_selected_partidas(), project_data,
+        )
+
+    def _offer_partidas(self, excel_path, project_data) -> str:
+        confirmed_context = self._request_historical_context(project_data)
+        if confirmed_context is None:
+            return self._offer_ai_partidas(excel_path, project_data)
+
+        historical_result = self._try_historical_suggestions(project_data, confirmed_context)
+        if historical_result and self._should_offer_context_retry(historical_result):
+            retried = self._retry_historical_with_manual_context(project_data, historical_result)
+            if retried is not None:
+                historical_result = retried
+            elif historical_result and historical_result.get("message") and not historical_result.get("partidas"):
                 QMessageBox.information(
-                    self, "Éxito",
-                    f"Presupuesto creado con {len(selected)} partidas:\n{excel_path}",
+                    self,
+                    "Sugerencias históricas",
+                    (
+                        f"{historical_result.get('message', 'No hay sugerencias históricas disponibles.')}\n\n"
+                        "Continuaremos con el flujo normal (IA opcional)."
+                    ),
                 )
-            else:
-                QMessageBox.warning(
-                    self, "Aviso",
-                    f"Presupuesto creado pero hubo un error al insertar las partidas.\n{excel_path}",
+        if historical_result and historical_result.get("partidas"):
+            from src.gui.historical_suggestions_dialog import HistoricalSuggestionsDialog
+            from src.gui.ai_complete_historical_budget_dialog import AICompleteHistoricalBudgetDialog
+            from src.gui.combined_partidas_review_dialog import CombinedPartidasReviewDialog
+            from src.gui.historical_selection_next_step_dialog import HistoricalSelectionNextStepDialog
+
+            hr = dict(historical_result)
+            partidas_dedup, dup_removed = dedupe_historical_partidas(hr.get("partidas", []))
+            hr["partidas"] = partidas_dedup
+            hr["duplicates_hidden_count"] = dup_removed
+
+            dlg = HistoricalSuggestionsDialog(self, hr, project_data=project_data)
+            if dlg.exec() == 1:
+                selected = dlg.get_selected_partidas()
+                if selected:
+                    selected_normalized = [
+                        normalize_partida_for_excel(p, source="historical")
+                        for p in selected
+                    ]
+                    next_step = HistoricalSelectionNextStepDialog(self, selected_count=len(selected_normalized))
+                    next_step.exec()
+                    user_action = next_step.get_result()
+                    if user_action == HistoricalSelectionNextStepDialog.CANCEL:
+                        return OUTCOME_CANCELLED
+                    if user_action == HistoricalSelectionNextStepDialog.CREATE_ONLY:
+                        review = CombinedPartidasReviewDialog(
+                            self,
+                            historical_partidas=selected_normalized,
+                            ai_partidas=[],
+                        )
+                        if review.exec() != 1:
+                            return OUTCOME_CANCELLED
+                        return self._insert_final_partidas_once(
+                            excel_path,
+                            review.get_selected_partidas(),
+                            project_data,
+                        )
+                    completion_dlg = AICompleteHistoricalBudgetDialog(
+                        self,
+                        project_data=project_data,
+                        confirmed_context=confirmed_context,
+                        selected_historical_partidas=selected,
+                        historical_result=historical_result,
+                    )
+                    if completion_dlg.exec() != 1:
+                        return OUTCOME_CANCELLED
+                    completion_action = completion_dlg.get_action()
+                    completion_result = completion_dlg.get_result()
+                    ai_partidas_raw = (
+                        completion_result.get("partidas", [])
+                        if completion_action == "ai_completion"
+                        else []
+                    )
+                    ai_partidas = [
+                        normalize_partida_for_excel(p, source="ai_completion")
+                        for p in ai_partidas_raw
+                    ]
+                    if completion_action == "ai_completion" and not ai_partidas:
+                        QMessageBox.information(
+                            self,
+                            "Sin complementos",
+                            "La IA no ha detectado partidas complementarias. Puedes continuar con históricas.",
+                        )
+                    hist_for_review, ai_for_review, cross_deduped = dedupe_merged_review_partidas(
+                        selected_normalized,
+                        ai_partidas,
+                    )
+                    merge_note = ""
+                    if cross_deduped > 0:
+                        merge_note = (
+                            f"Se han ocultado {cross_deduped} partidas duplicadas entre históricas "
+                            "e IA complementaria."
+                        )
+                    review = CombinedPartidasReviewDialog(
+                        self,
+                        historical_partidas=hist_for_review,
+                        ai_partidas=ai_for_review,
+                        merge_duplicates_note=merge_note,
+                    )
+                    if review.exec() != 1:
+                        return OUTCOME_CANCELLED
+                    return self._insert_final_partidas_once(
+                        excel_path,
+                        review.get_selected_partidas(),
+                        project_data,
+                    )
+                # Si acepta sin seleccionar, continuar a IA opcional
+                ask_ai_no_sel = QMessageBox.question(
+                    self,
+                    "Sin partidas históricas seleccionadas",
+                    "No has seleccionado partidas históricas.\n\n"
+                    "¿Deseas continuar con IA usando contexto histórico?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 )
-        else:
-            QMessageBox.information(
-                self, "Éxito",
-                f"Presupuesto creado (sin partidas):\n{excel_path}",
+                if ask_ai_no_sel == QMessageBox.StandardButton.Yes:
+                    return self._offer_ai_partidas(
+                        excel_path, project_data, historical_context=historical_result
+                    )
+                return OUTCOME_EMPTY
+            # Si cancela el diálogo histórico, preguntar IA sin contexto.
+            ask_ai = QMessageBox.question(
+                self,
+                "Sugerencias históricas canceladas",
+                "¿Deseas continuar con generación IA sin contexto histórico?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
+            if ask_ai == QMessageBox.StandardButton.Yes:
+                return self._offer_ai_partidas(excel_path, project_data, historical_context=None)
+            return OUTCOME_CANCELLED
+
+        return self._offer_ai_partidas(excel_path, project_data)
+
+    def _insert_final_partidas_once(
+        self, excel_path: str, selected: list, project_data: dict,
+    ) -> str:
+        from src.core.services.budget_partidas_flow import MODE_CREATE, apply_reviewed_partidas
+
+        if not selected:
+            return OUTCOME_EMPTY
+        if not apply_reviewed_partidas(
+            self._budget_svc, excel_path, selected, MODE_CREATE, project_data,
+        ):
+            return OUTCOME_FAILED
+        QMessageBox.information(
+            self,
+            "Éxito",
+            f"Presupuesto creado con {len(selected)} partidas:\n{excel_path}",
+        )
+        return OUTCOME_APPLIED
+
+    @staticmethod
+    def _should_offer_context_retry(suggestion_result: dict) -> bool:
+        if not suggestion_result or suggestion_result.get("partidas"):
+            return False
+        reason = (suggestion_result.get("failure_reason") or "").strip().upper()
+        return reason in {"NO_MODULES", "TOO_GENERIC", "NO_PATTERNS", "FILTERED_OUT"}
+
+    def _retry_historical_with_manual_context(self, project_data: dict, suggestion_result: dict):
+        from src.core.historical_suggestion_service import HistoricalSuggestionService
+
+        ctx_dlg = HistoricalSuggestionContextDialog(self, suggestion_result)
+        if ctx_dlg.exec() != 1 or not ctx_dlg.wants_search_again():
+            return None
+
+        manual_context = ctx_dlg.get_manual_context()
+        fresh = HistoricalSuggestionService().suggest_for_project(
+            project_data or {},
+            user_description=manual_context,
+        )
+        if not fresh.get("partidas"):
+            QMessageBox.information(
+                self,
+                "Sugerencias históricas",
+                (
+                    f"{fresh.get('message', 'No se han encontrado sugerencias suficientes.')}\n\n"
+                    "Puedes continuar con IA o sin sugerencias históricas."
+                ),
+            )
+        return fresh
+
+    def _request_historical_context(self, project_data: dict) -> str | None:
+        dlg = HistoricalSuggestionDescriptionDialog(self, project_data or {})
+        if dlg.exec() != 1 or not dlg.wants_search():
+            return None
+        return dlg.get_confirmed_context()
+
+    @staticmethod
+    def _try_historical_suggestions(project_data, confirmed_context: str = ""):
+        try:
+            return request_historical_suggestions_for_context(
+                project_data or {},
+                confirmed_context,
+            )
+        except Exception:
+            return None
 
     def _open_template_manager(self):
         from src.gui.template_manager_dialog import TemplateManagerDialog
@@ -355,34 +1066,8 @@ class MainFrame(QMainWindow):
         dlg.exec()
 
     def _open_ai_settings(self):
-        from src.core.settings import Settings
-        settings = Settings()
-        current_key = settings.get_api_key() or ""
+        from src.gui.ai_settings_dialog import AISettingsDialog
 
-        new_key, ok = QInputDialog.getText(
-            self,
-            "Configuración IA - API Key",
-            "Introduce tu API key de Google Gemini.\n"
-            "Puedes obtenerla gratis en: https://aistudio.google.com/apikey\n\n"
-            "La clave se guardará de forma local y segura.",
-            text=current_key,
-        )
-        if not ok:
-            return
-        new_key = new_key.strip()
-        if new_key and (len(new_key) < 10 or not new_key.startswith("AI")):
-            confirm = QMessageBox.warning(
-                self,
-                "Formato sospechoso",
-                "La clave introducida no parece tener el formato esperado "
-                "(las claves de Gemini suelen empezar por 'AI' y tener ~39 caracteres).\n\n"
-                "¿Guardar de todas formas?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            )
-            if confirm != QMessageBox.StandardButton.Yes:
-                return
-        settings.save_api_key(new_key)
-        if new_key:
-            QMessageBox.information(self, "Configuración IA", "API key guardada correctamente.")
-        else:
-            QMessageBox.information(self, "Configuración IA", "API key eliminada.")
+        dlg = AISettingsDialog(self)
+        if dlg.exec() == 1:
+            QMessageBox.information(self, "Configuración IA", "Configuración guardada correctamente.")

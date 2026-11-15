@@ -34,7 +34,8 @@ class FichaDialog(QDialog):
         from PySide6.QtWidgets import QGraphicsDropShadowEffect
         card = QFrame(parent)
         card.setStyleSheet(
-            "QFrame { background: #ffffff; border: 1px solid #e8ecf1; border-radius: 8px; }"
+            f"QFrame {{ background: {theme.BG_CARD}; border: 1px solid {theme.BORDER_LIGHT}; "
+            "border-radius: 8px; }"
         )
         shadow = QGraphicsDropShadowEffect(card)
         shadow.setBlurRadius(12)
@@ -105,7 +106,7 @@ class FichaDialog(QDialog):
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
-        self.setStyleSheet("QDialog { background: #f0f2f5; }")
+        self.setStyleSheet(f"QDialog {{ background: {theme.BG_PRIMARY}; }}")
 
         if self._entity_type == "admin":
             data = repo.get_administracion_por_id(self._entity_id)
@@ -203,7 +204,9 @@ class FichaDialog(QDialog):
         root.addWidget(scroll, 1)
 
         btn_bar = QWidget(self)
-        btn_bar.setStyleSheet("QWidget { background: #ffffff; border-top: 1px solid #e2e8f0; }")
+        btn_bar.setStyleSheet(
+            f"QWidget {{ background: {theme.BG_CARD}; border-top: 1px solid {theme.BORDER_LIGHT}; }}"
+        )
         btn_layout = QHBoxLayout(btn_bar)
         btn_layout.setContentsMargins(16, 8, 16, 8)
         btn_layout.addStretch()
@@ -211,22 +214,13 @@ class FichaDialog(QDialog):
             btn_edit = QPushButton("Editar", btn_bar)
             btn_edit.setFont(theme.font_base())
             btn_edit.setFixedSize(80, 28)
-            btn_edit.setStyleSheet(
-                f"QPushButton {{ background: #ffffff; color: {theme.TEXT_PRIMARY};"
-                f"border: 1px solid {theme.BORDER_LIGHT}; border-radius: 6px; }}"
-                f"QPushButton:hover {{ background: {theme.BG_SECONDARY}; border-color: {theme.BORDER_DEFAULT}; }}"
-            )
             btn_edit.clicked.connect(self._on_edit_click)
             btn_layout.addWidget(btn_edit)
             btn_layout.addSpacing(8)
         btn_close = QPushButton("Cerrar", btn_bar)
         btn_close.setFont(theme.font_base())
         btn_close.setFixedSize(80, 28)
-        btn_close.setStyleSheet(
-            f"QPushButton {{ background: {theme.ACCENT_PRIMARY}; color: #ffffff;"
-            "border: none; border-radius: 6px; }}"
-            f"QPushButton:hover {{ background: {theme.ACCENT_DARK}; }}"
-        )
+        btn_close.setProperty("class", "primary")
         btn_close.clicked.connect(self.accept)
         btn_layout.addWidget(btn_close)
         root.addWidget(btn_bar)
