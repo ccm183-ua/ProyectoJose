@@ -16,16 +16,17 @@ from datetime import date
 from typing import Dict, List, Optional, Tuple
 
 from PySide6.QtCore import QMimeData, Qt, QTimer
-from PySide6.QtGui import QDrag
+from PySide6.QtGui import QDrag, QFontMetrics, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QApplication, QFrame, QGridLayout, QHBoxLayout, QLabel, QMenu, QMessageBox,
-    QPushButton, QScrollArea, QToolButton, QVBoxLayout, QWidget,
+    QApplication, QDialog, QDialogButtonBox, QFrame, QGridLayout, QHBoxLayout, QLabel,
+    QLineEdit, QMenu, QMessageBox, QPushButton, QScrollArea, QSizePolicy, QTextBrowser,
+    QToolButton, QVBoxLayout, QWidget,
 )
 
 from src.core import obra_calendar as oc
 from src.core.obra_calendar_service import CalendarData, load_calendar_data, refresh_planning
 from src.core.obra_planning_service import planning_key
-from src.gui import planning_events
+from src.gui import planning_events, theme
 from src.gui.widgets.toast import show_toast
 from src.utils.helpers import run_in_background
 
@@ -33,8 +34,51 @@ logger = logging.getLogger(__name__)
 
 MIME_OBRA = "application/x-cubiapp-obra"
 _TITULO = "Calendario de obras"
-_DIAS = ("L", "M", "X", "J", "V", "S", "D")
+_DIAS = ("Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom")
 _AVISO_VACIA = "No hay obras cargadas. Abre «Presupuestos existentes» una vez para cargarlas."
+
+# Franja de color a la izquierda de cada etiqueta: la fase de la obra.
+FASE_COLOR = {
+    "EJECUTAR": theme.INFO,
+    "EJECUTANDO": theme.SUCCESS,
+    "TERMINADO": theme.TEXT_TERTIARY,
+}
+_COLOR_TEXTO = {"warning": "#92400e", "late": "#b91c1c"}
+_COLOR_BORDE = {"warning": theme.WARNING, "late": theme.ERROR}
+_FONDO_AVISO = {"warning": theme.WARNING_BG, "late": theme.ERROR_BG}
+
+HELP_HTML = f"""
+<h3 style="margin-top:0">Cómo usar el calendario</h3>
+<p><b>Poner una fecha.</b> Arrastra una obra de la lista «Sin fecha» a un día:
+ese día pasa a ser su inicio previsto. Si la carpeta ya lleva una fecha en el
+nombre («EJECUTAR EL 13-07-26»), el botón «Poner esta fecha» la guarda.</p>
+<p><b>Mover una fecha.</b> Arrastra la etiqueta ▶ (inicio previsto) o ■ (fin
+previsto) a otro día. Al mover el inicio, el fin previsto se desplaza los mismos
+días.</p>
+<p><b>Quitar la fecha.</b> Arrastra la etiqueta ▶ de vuelta a «Sin fecha», o clic
+derecho → «Quitar fechas previstas».</p>
+<p><b>Deshacer.</b> Cada cambio muestra un aviso abajo con el botón «Deshacer».</p>
+<p><b>Fechas reales.</b> Las etiquetas con relleno son fechas que ya pasaron de
+verdad (la obra empezó o terminó). No se arrastran; se corrigen con doble clic.</p>
+<p><b>Doble clic</b> en una etiqueta: ventana de planificación (fechas, margen de
+aviso y notas). <b>Clic derecho</b>: abrir el Excel o la carpeta de la obra.</p>
+<h4>Qué significa cada cosa</h4>
+<ul>
+<li>▶ inicio · ■ fin previsto · ✓ obra terminada · ≈ fecha aproximada</li>
+<li>Borde discontinuo: fecha prevista · relleno: fecha real</li>
+<li>Franja de la izquierda: <span style="color:{theme.INFO}"><b>azul</b></span> EJECUTAR,
+<span style="color:{theme.SUCCESS}"><b>verde</b></span> EJECUTANDO,
+<span style="color:{theme.TEXT_TERTIARY}"><b>gris</b></span> TERMINADO</li>
+<li><span style="color:#92400e"><b>Ámbar</b></span>: empieza dentro del margen de aviso ·
+<span style="color:#b91c1c"><b>rojo</b></span>: el inicio ya pasó y sigue en EJECUTAR, o va con retraso</li>
+</ul>
+<h4>Teclado</h4>
+<p>RePág / AvPág: mes anterior / siguiente · Inicio: volver a hoy ·
+F5: volver a leer las obras · F1: esta ayuda.</p>
+<p style="color:{theme.TEXT_SECONDARY}">Las obras salen de la última carga de
+«Presupuestos existentes». Si has movido carpetas fuera de la app, pulsa allí
+«⟳ Actualizar» y el calendario se pondrá al día solo.</p>
+"""
 
 
 def _encode(numero: str, fase: str, tipo: str) -> bytes:
@@ -56,13 +100,23 @@ def _margen_general() -> int:
 
 
 def _chip_style(ev: oc.CalendarEvent) -> str:
+    franja = FASE_COLOR.get(ev.fase, theme.TEXT_TERTIARY)
     if ev.real:
-        return ("QLabel{background:#e5e7eb;color:#111827;border:1px solid #9ca3af;"
-                "border-radius:4px;padding:1px 4px;}")
-    borde = {"warning": "#d97706", "late": "#dc2626"}.get(ev.color, "#6b7280")
-    texto = {"warning": "#92400e", "late": "#991b1b"}.get(ev.color, "palette(text)")
-    return (f"QLabel{{background:transparent;color:{texto};border:1px dashed {borde};"
-            "border-radius:4px;padding:1px 4px;}")
+        return (f"QLabel{{background:{theme.BG_SECONDARY};color:{theme.TEXT_PRIMARY};"
+                f"border:1px solid {theme.BORDER_DEFAULT};border-left:4px solid {franja};"
+                "border-radius:4px;padding:1px 4px;font-size:12px;}")
+    borde = _COLOR_BORDE.get(ev.color, theme.BORDER_DEFAULT)
+    texto = _COLOR_TEXTO.get(ev.color, theme.TEXT_PRIMARY)
+    fondo = _FONDO_AVISO.get(ev.color, theme.BG_CARD)
+    return (f"QLabel{{background:{fondo};color:{texto};border:1px dashed {borde};"
+            f"border-left:4px solid {franja};border-radius:4px;padding:1px 4px;font-size:12px;}}")
+
+
+def _caption(text: str, parent=None) -> QLabel:
+    label = QLabel(text, parent)
+    label.setWordWrap(True)
+    label.setStyleSheet(f"color:{theme.TEXT_SECONDARY};background:transparent;font-size:12px;")
+    return label
 
 
 class _DragSource:
@@ -93,19 +147,32 @@ class _DragSource:
 
 
 class _EventChip(QLabel, _DragSource):
+    """Etiqueta de una obra en un día. El texto se recorta con «…» según el ancho."""
+
     def __init__(self, window: "ObraCalendarWindow", event: oc.CalendarEvent, parent=None):
         super().__init__(event.texto, parent)
         self._window = window
         self.calendar_event = event  # no `self.event`: taparía QWidget.event() y la app se cierra de golpe
+        self._full_text = event.texto
         self._payload = (event.numero, event.fase, event.tipo) if event.arrastrable else None
         self.setToolTip(event.ayuda)
         self.setStyleSheet(_chip_style(event))
-        if event.arrastrable:
-            self.setCursor(Qt.CursorShape.OpenHandCursor)
+        # Que el texto largo no ensanche la columna: se recorta en resizeEvent.
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.setMinimumWidth(20)
+        self.setCursor(Qt.CursorShape.OpenHandCursor if event.arrastrable else Qt.CursorShape.PointingHandCursor)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(
             lambda pos: window.build_menu(event.numero).exec(self.mapToGlobal(pos))
         )
+
+    def full_text(self) -> str:
+        return self._full_text
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        disponible = max(0, self.contentsRect().width() - 2)
+        self.setText(self.fontMetrics().elidedText(self._full_text, Qt.TextElideMode.ElideRight, disponible))
 
     def mousePressEvent(self, e):
         self._drag_press(e)
@@ -126,20 +193,30 @@ class _DayCell(QFrame):
         self._window = window
         self.dia = dia
         self.en_mes = en_mes
+        self.es_hoy = es_hoy
+        self.highlighted = False
         self.setObjectName("dayCell")
         self.setAcceptDrops(en_mes)
-        self.setFrameShape(QFrame.Shape.StyledPanel)
-        self.setMinimumSize(110, 90)
-        if es_hoy:
-            self.setStyleSheet("#dayCell{border:2px solid #2563eb;}")
+        self.setMinimumSize(110, 96)
+        self._apply_style()
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(4, 2, 4, 2)
+        lay.setContentsMargins(5, 3, 5, 3)
         lay.setSpacing(2)
         numero = QLabel(str(dia.day), self)
-        numero.setEnabled(en_mes)
         if es_hoy:
-            numero.setStyleSheet("font-weight:bold;color:#2563eb;")
-        lay.addWidget(numero)
+            numero.setStyleSheet(
+                f"color:{theme.TEXT_INVERSE};background:{theme.ACCENT_PRIMARY};border-radius:9px;"
+                "font-weight:bold;padding:0 5px;"
+            )
+            numero.setToolTip("Hoy")
+        else:
+            color = theme.TEXT_PRIMARY if en_mes else theme.BORDER_DEFAULT
+            numero.setStyleSheet(f"color:{color};background:transparent;font-weight:600;")
+        fila = QHBoxLayout()
+        fila.setContentsMargins(0, 0, 0, 0)
+        fila.addWidget(numero)
+        fila.addStretch(1)
+        lay.addLayout(fila)
         self.chips: List[_EventChip] = []
         self.more_button: Optional[QToolButton] = None
         if en_mes:
@@ -150,23 +227,51 @@ class _DayCell(QFrame):
             if len(eventos) > oc.MAX_ETIQUETAS_DIA:
                 btn = QToolButton(self)
                 btn.setText(f"+{len(eventos) - oc.MAX_ETIQUETAS_DIA} más")
+                btn.setToolTip("Ver todas las obras de este día")
                 btn.setAutoRaise(True)
+                btn.setStyleSheet(f"color:{theme.ACCENT_DARK};font-size:12px;")
                 btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
                 btn.setMenu(window.build_day_menu(eventos, btn))
                 lay.addWidget(btn)
                 self.more_button = btn
         lay.addStretch(1)
 
+    def _apply_style(self) -> None:
+        if not self.en_mes:
+            fondo, borde, ancho = theme.BG_PRIMARY, theme.BORDER_LIGHT, 1
+        elif self.dia.weekday() >= 5:
+            fondo, borde, ancho = theme.BG_SECONDARY, theme.BORDER_LIGHT, 1
+        else:
+            fondo, borde, ancho = theme.BG_CARD, theme.BORDER_LIGHT, 1
+        if self.es_hoy:
+            borde, ancho = theme.ACCENT_PRIMARY, 2
+        if self.highlighted:
+            fondo, borde, ancho = theme.ACCENT_LIGHT, theme.ACCENT_PRIMARY, 2
+        self.setStyleSheet(f"#dayCell{{background:{fondo};border:{ancho}px solid {borde};border-radius:6px;}}")
+
+    def _set_highlight(self, on: bool) -> None:
+        if self.highlighted != on:
+            self.highlighted = on
+            self._apply_style()
+
     def dragEnterEvent(self, e):
+        if self.en_mes and e.mimeData().hasFormat(MIME_OBRA):
+            e.acceptProposedAction()
+            self._set_highlight(True)
+        else:
+            e.ignore()
+
+    def dragMoveEvent(self, e):
         if self.en_mes and e.mimeData().hasFormat(MIME_OBRA):
             e.acceptProposedAction()
         else:
             e.ignore()
 
-    def dragMoveEvent(self, e):
-        self.dragEnterEvent(e)
+    def dragLeaveEvent(self, e):
+        self._set_highlight(False)
 
     def dropEvent(self, e):
+        self._set_highlight(False)
         payload = _decode(e.mimeData().data(MIME_OBRA).data())
         if not payload:
             e.ignore()
@@ -178,28 +283,46 @@ class _DayCell(QFrame):
 
 
 class _UnscheduledRow(QFrame, _DragSource):
+    """Obra sin fecha: número en negrita y el nombre completo debajo (en varias líneas)."""
+
     def __init__(self, window: "ObraCalendarWindow", item: Dict, parent=None):
         super().__init__(parent)
         self._window = window
         self.numero = item["numero"]
+        self.search_text = f"{item['numero']} {item.get('nombre', '')}".lower()
         self._payload = (item["numero"], "EJECUTAR", "inicio")
-        self.setFrameShape(QFrame.Shape.StyledPanel)
+        self.setObjectName("sinFechaRow")
+        self.setStyleSheet(
+            f"#sinFechaRow{{background:{theme.BG_CARD};border:1px solid {theme.BORDER_LIGHT};"
+            f"border-left:4px solid {FASE_COLOR['EJECUTAR']};border-radius:6px;}}"
+            f"#sinFechaRow:hover{{border-color:{theme.ACCENT_PRIMARY};}}"
+        )
         self.setCursor(Qt.CursorShape.OpenHandCursor)
         self.setToolTip(f"{item['ayuda']}\nArrastra a un día para poner el inicio previsto · doble clic para editar")
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(6, 4, 6, 4)
+        lay.setContentsMargins(8, 5, 8, 6)
         lay.setSpacing(2)
-        lay.addWidget(QLabel(item["texto"], self))
+        titulo = QLabel(item["numero"], self)
+        titulo.setStyleSheet(f"font-weight:bold;color:{theme.TEXT_PRIMARY};background:transparent;")
+        lay.addWidget(titulo)
+        nombre = QLabel(item.get("nombre") or item["texto"], self)
+        nombre.setWordWrap(True)
+        nombre.setStyleSheet(f"color:{theme.TEXT_PRIMARY};background:transparent;font-size:12px;")
+        lay.addWidget(nombre)
         self.proposal_button: Optional[QPushButton] = None
         if item["propuesta"]:
-            fila = QHBoxLayout()
             propuesta = QLabel(item["propuesta_texto"], self)
-            propuesta.setStyleSheet("font-style:italic;color:#6b7280;")
+            propuesta.setStyleSheet(f"font-style:italic;color:{theme.TEXT_SECONDARY};background:transparent;font-size:12px;")
+            lay.addWidget(propuesta)
             btn = QPushButton("Poner esta fecha", self)
+            btn.setToolTip("Guarda la fecha del nombre de la carpeta como inicio previsto")
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
             numero = self.numero
             btn.clicked.connect(lambda: window.put_proposal(numero))
-            fila.addWidget(propuesta, 1)
+            fila = QHBoxLayout()
+            fila.setContentsMargins(0, 2, 0, 0)
             fila.addWidget(btn)
+            fila.addStretch(1)
             lay.addLayout(fila)
             self.proposal_button = btn
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -223,30 +346,57 @@ class _UnscheduledPanel(QFrame):
     def __init__(self, window: "ObraCalendarWindow", parent=None):
         super().__init__(parent)
         self._window = window
+        self.highlighted = False
+        self.setObjectName("sinFechaPanel")
         self.setAcceptDrops(True)
-        self.setFixedWidth(290)
+        self.setFixedWidth(330)
+        self._apply_style()
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setContentsMargins(10, 8, 10, 8)
+        lay.setSpacing(6)
         self.title = QLabel("Sin fecha (0)", self)
-        self.title.setStyleSheet("font-weight:bold;")
+        self.title.setStyleSheet(f"font-weight:bold;font-size:14px;color:{theme.TEXT_PRIMARY};background:transparent;")
         lay.addWidget(self.title)
+        lay.addWidget(_caption("Arrastra una obra a un día para ponerle fecha, o una etiqueta ▶ aquí para quitarla.", self))
+        self.search = QLineEdit(self)
+        self.search.setPlaceholderText("Buscar obra…")
+        self.search.setClearButtonEnabled(True)
+        self.search.textChanged.connect(self._apply_filter)
+        lay.addWidget(self.search)
         scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         inner = QWidget()
+        inner.setObjectName("sinFechaLista")
+        inner.setStyleSheet("#sinFechaLista{background:transparent;}")
         self._list = QVBoxLayout(inner)
-        self._list.setContentsMargins(0, 0, 0, 0)
+        self._list.setContentsMargins(0, 0, 4, 0)
+        self._list.setSpacing(6)
         self._list.addStretch(1)
         scroll.setWidget(inner)
+        scroll.viewport().setStyleSheet("background:transparent;")
         self._inner = inner
         lay.addWidget(scroll, 1)
-        pista = QLabel("Arrastra una obra a un día para ponerle fecha, o una etiqueta ▶ aquí para quitarla.", self)
-        pista.setWordWrap(True)
-        lay.addWidget(pista)
+        self.empty_label = _caption("", self)
+        self.empty_label.hide()
+        lay.addWidget(self.empty_label)
         self.rows: List[_UnscheduledRow] = []
+
+    def _apply_style(self) -> None:
+        fondo = theme.ACCENT_LIGHT if self.highlighted else theme.BG_PRIMARY
+        borde = theme.ACCENT_PRIMARY if self.highlighted else theme.BORDER_LIGHT
+        self.setStyleSheet(f"#sinFechaPanel{{background:{fondo};border:1px solid {borde};border-radius:8px;}}")
+
+    def _set_highlight(self, on: bool) -> None:
+        if self.highlighted != on:
+            self.highlighted = on
+            self._apply_style()
 
     def set_items(self, items: List[Dict]) -> None:
         for row in self.rows:
             self._list.removeWidget(row)
+            row.hide()
             row.deleteLater()
         self.rows = []
         for i, item in enumerate(items):
@@ -254,18 +404,51 @@ class _UnscheduledPanel(QFrame):
             self._list.insertWidget(i, row)
             self.rows.append(row)
         self.title.setText(f"Sin fecha ({len(items)})")
+        self._apply_filter()
+
+    def visible_numeros(self) -> List[str]:
+        return [r.numero for r in self.rows if not r.isHidden()]
+
+    def _apply_filter(self) -> None:
+        texto = self.search.text().strip().lower()
+        visibles = 0
+        for row in self.rows:
+            mostrar = not texto or texto in row.search_text
+            row.setVisible(mostrar)
+            visibles += mostrar
+        if not self.rows:
+            mensaje = "Todas las obras de EJECUTAR tienen fecha."
+        elif not visibles:
+            mensaje = "Ninguna obra coincide con la búsqueda."
+        else:
+            mensaje = ""
+        self.empty_label.setText(mensaje)
+        self.empty_label.setVisible(bool(mensaje))
+
+    def _accepts(self, e) -> bool:
+        if not e.mimeData().hasFormat(MIME_OBRA):
+            return False
+        payload = _decode(e.mimeData().data(MIME_OBRA).data())
+        return bool(payload and payload[1] == "EJECUTAR" and payload[2] == "inicio")
 
     def dragEnterEvent(self, e):
-        payload = _decode(e.mimeData().data(MIME_OBRA).data()) if e.mimeData().hasFormat(MIME_OBRA) else None
-        if payload and payload[1] == "EJECUTAR" and payload[2] == "inicio":
+        if self._accepts(e):
             e.acceptProposedAction()
+            self._set_highlight(True)
         else:
             e.ignore()
 
     def dragMoveEvent(self, e):
-        self.dragEnterEvent(e)
+        if self._accepts(e):
+            e.acceptProposedAction()
+        else:
+            e.ignore()
+
+    def dragLeaveEvent(self, e):
+        self._set_highlight(False)
 
     def dropEvent(self, e):
+        self._set_highlight(False)
         payload = _decode(e.mimeData().data(MIME_OBRA).data())
         if not payload:
             e.ignore()
@@ -275,12 +458,59 @@ class _UnscheduledPanel(QFrame):
         QTimer.singleShot(0, lambda: window.drop_on_unscheduled(*payload))
 
 
+class _HelpDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"{_TITULO} · Ayuda")
+        self.resize(560, 560)
+        lay = QVBoxLayout(self)
+        texto = QTextBrowser(self)
+        texto.setHtml(HELP_HTML)
+        texto.setOpenLinks(False)
+        lay.addWidget(texto)
+        botones = QDialogButtonBox(self)
+        cerrar = botones.addButton("Cerrar", QDialogButtonBox.ButtonRole.RejectRole)
+        cerrar.setDefault(True)
+        botones.rejected.connect(self.reject)
+        lay.addWidget(botones)
+
+
+def _legend(parent=None) -> QWidget:
+    """Leyenda fija bajo el calendario."""
+    host = QWidget(parent)
+    lay = QHBoxLayout(host)
+    lay.setContentsMargins(0, 0, 0, 0)
+    lay.setSpacing(8)
+
+    def muestra(texto: str, estilo: str, ayuda: str) -> None:
+        label = QLabel(texto, host)
+        label.setStyleSheet(f"QLabel{{{estilo}border-radius:4px;padding:1px 6px;font-size:12px;}}")
+        label.setToolTip(ayuda)
+        lay.addWidget(label)
+
+    prevista = f"background:{theme.BG_CARD};color:{theme.TEXT_PRIMARY};border:1px dashed {theme.BORDER_DEFAULT};"
+    real = f"background:{theme.BG_SECONDARY};color:{theme.TEXT_PRIMARY};border:1px solid {theme.BORDER_DEFAULT};"
+    muestra("▶ inicio · ■ fin previsto", prevista + f"border-left:4px solid {theme.INFO};",
+            "Fecha prevista (borde discontinuo): se puede arrastrar")
+    muestra("✓ terminada", real + f"border-left:4px solid {theme.TEXT_TERTIARY};",
+            "Fecha real (relleno): no se arrastra; se corrige con doble clic")
+    for fase, color in FASE_COLOR.items():
+        muestra(fase.capitalize(), f"background:transparent;color:{theme.TEXT_SECONDARY};"
+                f"border:none;border-left:4px solid {color};", f"Franja de color: obra en {fase}")
+    muestra("Empieza pronto", f"background:{theme.WARNING_BG};color:{_COLOR_TEXTO['warning']};"
+            f"border:1px dashed {theme.WARNING};", "Empieza dentro del margen de aviso")
+    muestra("Pasada / con retraso", f"background:{theme.ERROR_BG};color:{_COLOR_TEXTO['late']};"
+            f"border:1px dashed {theme.ERROR};", "El inicio ya pasó y sigue en EJECUTAR, o el fin previsto ya pasó")
+    lay.addStretch(1)
+    return host
+
+
 class ObraCalendarWindow(QWidget):
     def __init__(self, parent=None, hoy: Optional[date] = None, autoload: bool = True):
         super().__init__(parent, Qt.WindowType.Window)
         self.setWindowTitle(_TITULO)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-        self.resize(1150, 720)
+        self.resize(1200, 760)
         self._hoy = hoy or date.today()
         self._year, self._month = self._hoy.year, self._hoy.month
         self._data = CalendarData()
@@ -290,6 +520,7 @@ class ObraCalendarWindow(QWidget):
         self._margen = _margen_general()
         self._loading = False
         self._build_ui()
+        self._build_shortcuts()
         eventos = planning_events.planning_events()
         eventos.planning_changed.connect(self._on_planning_changed)
         eventos.obras_reloaded.connect(self._on_obras_reloaded)
@@ -300,74 +531,159 @@ class ObraCalendarWindow(QWidget):
     # ── Interfaz ─────────────────────────────────────────────────────────
 
     def _build_ui(self) -> None:
+        self.setObjectName("obraCalendar")
+        self.setStyleSheet(f"#obraCalendar{{background:{theme.BG_PRIMARY};}}")
         root = QVBoxLayout(self)
+        root.setContentsMargins(16, 12, 16, 10)
+        root.setSpacing(8)
+
         cabecera = QHBoxLayout()
-        self._btn_prev = QPushButton("◀", self)
-        self._btn_prev.setToolTip("Mes anterior")
+        cabecera.setSpacing(6)
+        self._btn_prev = QToolButton(self)
+        self._btn_prev.setText("◀")
+        self._btn_prev.setToolTip("Mes anterior (RePág)")
         self._btn_prev.clicked.connect(self.go_prev)
         self.month_label = QLabel(self)
-        self.month_label.setStyleSheet("font-size:16px;font-weight:bold;padding:0 8px;")
-        self._btn_next = QPushButton("▶", self)
-        self._btn_next.setToolTip("Mes siguiente")
+        self.month_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.month_label.setFont(theme.get_font_bold(16))
+        self.month_label.setStyleSheet(f"color:{theme.TEXT_PRIMARY};background:transparent;")
+        # Ancho fijo (el del mes más largo): las flechas no se mueven al cambiar de mes.
+        metricas = QFontMetrics(self.month_label.font())
+        ancho = max(metricas.horizontalAdvance(oc.month_title(2000, m)) for m in range(1, 13))
+        self.month_label.setFixedWidth(ancho + 24)
+        self._btn_next = QToolButton(self)
+        self._btn_next.setText("▶")
+        self._btn_next.setToolTip("Mes siguiente (AvPág)")
         self._btn_next.clicked.connect(self.go_next)
+        for btn in (self._btn_prev, self._btn_next):
+            btn.setFixedSize(34, 30)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_today = QPushButton("Hoy", self)
+        self._btn_today.setToolTip("Volver al mes actual (Inicio)")
         self._btn_today.clicked.connect(self.go_today)
-        self._btn_reload = QPushButton("⟳", self)
+        self._btn_help = QPushButton("? Ayuda", self)
+        self._btn_help.setToolTip("Cómo se ponen y se mueven las fechas (F1)")
+        self._btn_help.clicked.connect(self.show_help)
+        self._btn_reload = QPushButton("⟳ Volver a leer", self)
         self._btn_reload.setToolTip(
-            "Volver a leer las obras y su planificación.\n"
+            "Vuelve a leer las obras y su planificación (F5).\n"
             "Para detectar carpetas movidas fuera de la app, actualiza «Presupuestos existentes»."
         )
         self._btn_reload.clicked.connect(self.reload)
-        for w in (self._btn_prev, self.month_label, self._btn_next, self._btn_today):
+        for w in (self._btn_prev, self.month_label, self._btn_next):
             cabecera.addWidget(w)
+        cabecera.addSpacing(6)
+        cabecera.addWidget(self._btn_today)
         cabecera.addStretch(1)
         cabecera.addWidget(self._btn_reload)
+        cabecera.addWidget(self._btn_help)
         root.addLayout(cabecera)
 
-        self.summary_label = QLabel("", self)
-        root.addWidget(self.summary_label)
+        # Resumen del mes en tarjetas.
+        self._summary_host = QWidget(self)
+        self._summary_layout = QHBoxLayout(self._summary_host)
+        self._summary_layout.setContentsMargins(0, 0, 0, 0)
+        self._summary_layout.setSpacing(6)
+        self.summary_cards: List[QLabel] = []
+        root.addWidget(self._summary_host)
+
         self.message_label = QLabel("", self)
         self.message_label.setWordWrap(True)
-        self.message_label.setStyleSheet("color:#b45309;")
+        self.message_label.setStyleSheet(
+            f"color:#92400e;background:{theme.WARNING_BG};border:1px solid {theme.WARNING};"
+            "border-radius:6px;padding:6px 10px;"
+        )
         self.message_label.hide()
         root.addWidget(self.message_label)
 
         cuerpo = QHBoxLayout()
+        cuerpo.setSpacing(12)
+        izquierda = QVBoxLayout()
+        izquierda.setSpacing(6)
         grid_host = QWidget(self)
         self._grid = QGridLayout(grid_host)
-        self._grid.setSpacing(2)
+        self._grid.setContentsMargins(0, 0, 0, 0)
+        self._grid.setSpacing(4)
         for c, nombre in enumerate(_DIAS):
             cab = QLabel(nombre, grid_host)
             cab.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            color = theme.TEXT_TERTIARY if c >= 5 else theme.TEXT_SECONDARY
+            cab.setStyleSheet(f"color:{color};background:transparent;font-weight:600;padding:2px;")
             self._grid.addWidget(cab, 0, c)
             self._grid.setColumnStretch(c, 1)
-        cuerpo.addWidget(grid_host, 1)
+        izquierda.addWidget(grid_host, 1)
+        izquierda.addWidget(_legend(self))
+        cuerpo.addLayout(izquierda, 1)
         self.unscheduled_panel = _UnscheduledPanel(self, self)
         cuerpo.addWidget(self.unscheduled_panel)
         root.addLayout(cuerpo, 1)
 
-        self.footer_label = QLabel("", self)
-        self.footer_label.setStyleSheet("color:#6b7280;")
+        self.footer_label = _caption("", self)
         root.addWidget(self.footer_label)
+
+    def _build_shortcuts(self) -> None:
+        atajos = (
+            (Qt.Key.Key_PageUp, self.go_prev),
+            (Qt.Key.Key_PageDown, self.go_next),
+            (Qt.Key.Key_Home, self.go_today),
+            (Qt.Key.Key_F5, self.reload),
+            (Qt.Key.Key_F1, self.show_help),
+        )
+        self._shortcuts = []
+        for tecla, accion in atajos:
+            atajo = QShortcut(QKeySequence(tecla), self)
+            atajo.activated.connect(accion)
+            self._shortcuts.append(atajo)
+
+    def show_help(self) -> None:
+        _HelpDialog(self).exec()
+
+    def _render_summary(self) -> None:
+        while self._summary_layout.count():  # tarjetas y el hueco final de la vez anterior
+            item = self._summary_layout.takeAt(0)
+            if item.widget() is not None:
+                item.widget().hide()
+                item.widget().deleteLater()
+        self.summary_cards = []
+        resumen = oc.month_summary(self._eventos, self._year, self._month)
+        for texto, tono in oc.summary_parts(resumen):
+            card = QLabel(texto[:1].upper() + texto[1:], self._summary_host)
+            if tono == "late":
+                estilo = f"color:{_COLOR_TEXTO['late']};background:{theme.ERROR_BG};border:1px solid #fecaca;"
+            elif tono == "muted":
+                estilo = f"color:{theme.TEXT_TERTIARY};background:{theme.BG_CARD};border:1px solid {theme.BORDER_LIGHT};"
+            else:
+                estilo = f"color:{theme.TEXT_PRIMARY};background:{theme.BG_CARD};border:1px solid {theme.BORDER_LIGHT};"
+            card.setStyleSheet(f"QLabel{{{estilo}border-radius:10px;padding:3px 10px;font-size:12px;}}")
+            self._summary_layout.addWidget(card)
+            self.summary_cards.append(card)
+        self._summary_layout.addStretch(1)
+        self._summary_host.setToolTip(oc.summary_text(resumen) + "\n(Retrasos: a día de hoy, en cualquier mes.)")
 
     def _render(self) -> None:
         self.month_label.setText(oc.month_title(self._year, self._month))
-        self.summary_label.setText(oc.summary_text(oc.month_summary(self._eventos, self._year, self._month)))
+        self._btn_today.setEnabled((self._year, self._month) != (self._hoy.year, self._hoy.month))
+        self._render_summary()
         mensaje = self._data.error or (_AVISO_VACIA if self._data.vacia else "")
         self.message_label.setText(mensaje)
         self.message_label.setVisible(bool(mensaje))
 
         for cell in self._cells:
             self._grid.removeWidget(cell)
+            cell.hide()  # deleteLater no es inmediato: que no se vea la casilla vieja
             cell.deleteLater()
         self._cells = []
         por_dia = oc.events_by_day(self._eventos)
         host = self._grid.parentWidget()
-        for r, semana in enumerate(oc.month_weeks(self._year, self._month), start=1):
+        semanas = oc.month_weeks(self._year, self._month)
+        for r, semana in enumerate(semanas, start=1):
+            self._grid.setRowStretch(r, 1)
             for c, dia in enumerate(semana):
                 cell = _DayCell(self, dia, dia.month == self._month, dia == self._hoy, por_dia.get(dia, []), host)
                 self._grid.addWidget(cell, r, c)
                 self._cells.append(cell)
+        for r in range(len(semanas) + 1, 7):
+            self._grid.setRowStretch(r, 0)
 
         self.unscheduled_panel.set_items(oc.unscheduled(self._data.filas_por_estado.get("EJECUTAR", [])))
         n = self._data.repetidas

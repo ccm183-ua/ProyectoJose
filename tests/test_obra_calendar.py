@@ -23,9 +23,20 @@ def _ev(eventos, numero, tipo):
     return next(e for e in eventos if e.numero == numero and e.tipo == tipo)
 
 
-def test_short_label_recorta_el_nombre():
-    assert oc.short_label(_row("114-26")) == "114-26 C.P. RAFAEL ASÍN…"
-    assert oc.short_label(_row("208-26", carpeta="208-26 OBRA")) == "208-26 OBRA"
+def test_nombre_completo_sin_el_numero():
+    assert oc.obra_name(_row("114-26")) == "C.P. RAFAEL ASÍN 23 (HUMEDADES)"
+    assert oc.display_name(_row("114-26")) == "114-26 C.P. RAFAEL ASÍN 23 (HUMEDADES)"
+    assert oc.display_name(_row("208-26", carpeta="208-26 OBRA")) == "208-26 OBRA"
+
+
+def test_summary_parts_marca_retrasos_y_falta_de_datos():
+    assert oc.summary_parts(oc.MonthSummary(2, 1, 3, None, 1)) == [
+        ("2 empiezan", ""), ("1 termina", ""), ("3 con retraso", "late"),
+        ("duración media: sin datos suficientes", "muted"),
+    ]
+    assert oc.summary_parts(oc.MonthSummary(0, 0, 0, 12, 4))[2:] == [
+        ("0 con retraso", ""), ("duración media 12 días (4 obras)", ""),
+    ]
 
 
 def test_month_title():
@@ -76,7 +87,7 @@ def test_terminado_fechas_reales():
     plan = {"inicio_real": date(2026, 11, 2), "fin_real": date(2026, 11, 12)}
     eventos = oc.build_events({"TERMINADO": [_row("7-26", plan)]}, HOY, 7)
     fin = _ev(eventos, "7-26", "fin")
-    assert fin.texto.startswith("✔ 7-26") and fin.real and not fin.arrastrable
+    assert fin.texto.startswith("✓ 7-26") and fin.real and not fin.arrastrable
 
 
 def test_sin_extremo_y_repetidas_no_salen():
@@ -125,6 +136,7 @@ def test_unscheduled_ordena_y_propone():
     assert [i["numero"] for i in items] == ["30-26", "114-26"]
     assert items[0]["propuesta_texto"] == "≈ julio de 2026 según el nombre"
     assert items[1]["propuesta_texto"] == "≈ 13/07/26 según el nombre"
+    assert items[1]["nombre"] == "C.P. RAFAEL ASÍN 23 (HUMEDADES)"
     assert oc.proposal_text(None) == ""
 
 

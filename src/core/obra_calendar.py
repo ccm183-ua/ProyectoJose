@@ -22,7 +22,6 @@ MAX_ETIQUETAS_DIA = 3
 MIN_OBRAS_MEDIA = 3
 NOTA_PREVISTA_APROXIMADA = "Fecha prevista aproximada (solo el mes en el nombre de la carpeta)"
 
-_MAX_CORTO = 18
 _NUM_RE = re.compile(r"^\s*\d+-\d+(?:-\d+)?[\s.\-–]*")
 _MESES = (
     "", "enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
@@ -31,9 +30,9 @@ _MESES = (
 
 __all__ = [
     "FASES", "MAX_ETIQUETAS_DIA", "MIN_OBRAS_MEDIA", "NOTA_PREVISTA_APROXIMADA",
-    "CalendarEvent", "MonthSummary", "folder_name", "short_label", "numero_sort_key",
+    "CalendarEvent", "MonthSummary", "folder_name", "obra_name", "display_name", "numero_sort_key",
     "month_title", "build_events", "month_weeks", "events_by_day", "unscheduled",
-    "proposal_text", "month_summary", "summary_text", "drop_fields", "clear_fields",
+    "proposal_text", "month_summary", "summary_parts", "summary_text", "drop_fields", "clear_fields",
     "proposal_fields",
 ]
 
@@ -63,12 +62,14 @@ class MonthSummary:
     obras_duracion: int
 
 
-def short_label(row: Dict) -> str:
-    """Número + lo que sigue en el nombre de la carpeta, recortado."""
-    resto = _NUM_RE.sub("", folder_name(row), count=1).strip()
-    if len(resto) > _MAX_CORTO:
-        resto = resto[: _MAX_CORTO - 1].rstrip() + "…"
-    return f"{planning_key(row)} {resto}".strip()
+def obra_name(row: Dict) -> str:
+    """Lo que sigue al número en el nombre de la carpeta, completo."""
+    return _NUM_RE.sub("", folder_name(row), count=1).strip()
+
+
+def display_name(row: Dict) -> str:
+    """Número + nombre completo; la interfaz lo recorta con «…» según el ancho."""
+    return f"{planning_key(row)} {obra_name(row)}".strip()
 
 
 def numero_sort_key(numero: str):
@@ -90,8 +91,8 @@ def _margen(plan: Dict, general: int) -> int:
 
 def _event(row: Dict, fase: str, tipo: str, fecha: date, real: bool, aproximada: bool,
            color: str, arrastrable: bool) -> CalendarEvent:
-    simbolo = "▶" if tipo == "inicio" else ("✔" if fase == "TERMINADO" else "■")
-    texto = f"{'≈' if aproximada else ''}{simbolo} {short_label(row)}"
+    simbolo = "▶" if tipo == "inicio" else ("✓" if fase == "TERMINADO" else "■")
+    texto = f"{'≈' if aproximada else ''}{simbolo} {display_name(row)}"
     clase = ("real aproximado" if aproximada else "real") if real else "previsto"
     extremo = "Inicio" if tipo == "inicio" else "Fin"
     aviso = ""
@@ -181,7 +182,8 @@ def unscheduled(filas_ejecutar: Iterable[Dict]) -> List[Dict]:
         propuesta = row.get("planificacion_propuesta")
         items.append({
             "numero": numero,
-            "texto": short_label(row),
+            "texto": display_name(row),
+            "nombre": obra_name(row),
             "ayuda": folder_name(row),
             "propuesta": propuesta,
             "propuesta_texto": proposal_text(propuesta),
@@ -213,17 +215,22 @@ def _plural(n: int, singular: str, plural: str) -> str:
     return f"{n} {singular if n == 1 else plural}"
 
 
-def summary_text(resumen: MonthSummary) -> str:
-    partes = [
-        _plural(resumen.empiezan, "empieza", "empiezan"),
-        _plural(resumen.terminan, "termina", "terminan"),
-        f"{resumen.con_retraso} con retraso",
-    ]
+def summary_parts(resumen: MonthSummary) -> List[Tuple[str, str]]:
+    """Piezas del resumen para pintarlas como tarjetas: (texto, tono "" | "late" | "muted")."""
     if resumen.duracion_media is None:
-        partes.append("duración media: sin datos suficientes")
+        media = ("duración media: sin datos suficientes", "muted")
     else:
-        partes.append(f"duración media {resumen.duracion_media} días ({resumen.obras_duracion} obras)")
-    return "Este mes: " + " · ".join(partes)
+        media = (f"duración media {resumen.duracion_media} días ({resumen.obras_duracion} obras)", "")
+    return [
+        (_plural(resumen.empiezan, "empieza", "empiezan"), ""),
+        (_plural(resumen.terminan, "termina", "terminan"), ""),
+        (f"{resumen.con_retraso} con retraso", "late" if resumen.con_retraso else ""),
+        media,
+    ]
+
+
+def summary_text(resumen: MonthSummary) -> str:
+    return "Este mes: " + " · ".join(texto for texto, _ in summary_parts(resumen))
 
 
 def drop_fields(plan: Optional[Dict], fase: str, tipo: str, nueva: date) -> Tuple[Optional[Dict], str]:

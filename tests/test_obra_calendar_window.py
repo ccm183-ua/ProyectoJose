@@ -75,7 +75,9 @@ def test_pinta_el_mes_con_sus_etiquetas(entorno):
     assert [c.calendar_event.numero for c in win.cell_for(date(2026, 11, 20)).chips] == ["114-26"]
     vecino = win.cell_for(date(2026, 10, 26))
     assert vecino.en_mes is False and vecino.chips == []
-    assert win.summary_label.text().startswith("Este mes: 1 empieza")
+    assert [c.text() for c in win.summary_cards] == [
+        "1 empieza", "0 terminan", "0 con retraso", "Duración media: sin datos suficientes",
+    ]
 
 
 def test_mas_de_tres_en_un_dia(entorno):
@@ -282,3 +284,127 @@ def test_doble_clic_guarda_lo_del_dialogo(entorno, monkeypatch):
     win.edit_planning("114-26")
     assert _plan("114-26")["inicio_previsto"] == date(2026, 11, 27)
     assert _toast(win).text() == "114-26: planificación guardada"
+
+
+# ── Revisión de diseño ───────────────────────────────────────────────────
+
+def test_flechas_fijas_y_hoy_desactivado_en_el_mes_actual(entorno):
+    abrir, _ = entorno
+    win = abrir({"EJECUTAR": []})
+    ancho = win.month_label.width()
+    assert not win._btn_today.isEnabled()
+    win.go_next()  # diciembre
+    win.go_next()  # enero: nombre mucho más corto
+    assert win.month_label.width() == ancho
+    assert win._btn_today.isEnabled()
+
+
+def test_resumen_con_retrasos_en_rojo(entorno):
+    abrir, _ = entorno
+    win = abrir({"EJECUTAR": [_row("114-26", {"inicio_previsto": date(2026, 11, 10)})]})
+    retraso = win.summary_cards[2]
+    assert retraso.text() == "1 con retraso"
+    assert "#b91c1c" in retraso.styleSheet()
+    assert len(win.summary_cards) == 4
+    win.go_next()
+    assert len(win.summary_cards) == 4
+
+
+def test_etiqueta_recortada_con_puntos_suspensivos(entorno):
+    abrir, _ = entorno
+    carpeta = "114-26 C.P. RAFAEL ASIN 23 - GENERAL PINTOS 17 (HUMEDADES EN FACHADA)"
+    win = abrir({"EJECUTAR": [_row("114-26", {"inicio_previsto": date(2026, 11, 20)}, carpeta=carpeta)]})
+    win.resize(900, 700)
+    win.show()
+    chip = win.cell_for(date(2026, 11, 20)).chips[0]
+    chip.resize(90, chip.height())
+    assert chip.full_text() == f"▶ {carpeta}"
+    assert chip.text().endswith("…") and len(chip.text()) < len(chip.full_text())
+    assert carpeta in chip.toolTip()
+
+
+def test_sin_fecha_muestra_el_nombre_completo_y_busca(entorno):
+    abrir, _ = entorno
+    win = abrir({"EJECUTAR": [
+        _row("114-26", carpeta="114-26 C.P. RAFAEL ASIN 23 - GENERAL PINTOS 17 (HUMEDADES)"),
+        _row("30-26", carpeta="30-26 C.P. DR. FLEMING 1 (FACHADA)"),
+    ]})
+    panel = win.unscheduled_panel
+    textos = [l.text() for l in panel.rows[1].findChildren(type(panel.title))]
+    assert "C.P. RAFAEL ASIN 23 - GENERAL PINTOS 17 (HUMEDADES)" in textos
+    panel.search.setText("fleming")
+    assert panel.visible_numeros() == ["30-26"]
+    panel.search.setText("nada que coincida")
+    assert panel.visible_numeros() == []
+    assert panel.empty_label.text() == "Ninguna obra coincide con la búsqueda."
+    panel.search.clear()
+    assert panel.visible_numeros() == ["30-26", "114-26"]
+
+
+def test_la_busqueda_se_mantiene_al_repintar(entorno):
+    abrir, _ = entorno
+    win = abrir({"EJECUTAR": [_row("114-26"), _row("30-26"), _row("9-26")]})
+    win.unscheduled_panel.search.setText("114")
+    win.drop_on_day("30-26", "EJECUTAR", "inicio", date(2026, 11, 25))
+    assert win.unscheduled_panel.visible_numeros() == ["114-26"]
+
+
+def test_el_dia_se_ilumina_al_arrastrar(entorno):
+    abrir, _ = entorno
+    win = abrir({"EJECUTAR": []})
+    celda = win.cell_for(date(2026, 11, 20))
+    antes = celda.styleSheet()
+    celda._set_highlight(True)
+    assert celda.highlighted and celda.styleSheet() != antes
+    celda._set_highlight(False)
+    assert celda.styleSheet() == antes
+
+
+def test_ayuda_explica_arrastrar_y_atajos(entorno, monkeypatch):
+    import src.gui.obra_calendar_window as cw
+
+    abrir, _ = entorno
+    win = abrir({"EJECUTAR": []})
+    for frase in ("Arrastra una obra", "Deshacer", "doble clic", "RePág", "▶", "■", "✓"):
+        assert frase in cw.HELP_HTML
+    abiertas = []
+    monkeypatch.setattr(cw._HelpDialog, "exec", lambda self: abiertas.append(self) or 0)
+    win.show_help()
+    assert len(abiertas) == 1
+
+
+def test_atajos_de_teclado(entorno):
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QKeySequence
+
+    abrir, _ = entorno
+    win = abrir({"EJECUTAR": []})
+    teclas = {a.key() for a in win._shortcuts}
+    for tecla in (Qt.Key.Key_PageUp, Qt.Key.Key_PageDown, Qt.Key.Key_Home, Qt.Key.Key_F5, Qt.Key.Key_F1):
+        assert QKeySequence(tecla) in teclas
+    siguiente = next(a for a in win._shortcuts if a.key() == QKeySequence(Qt.Key.Key_PageDown))
+    siguiente.activated.emit()
+    assert win.month_label.text() == "Diciembre 2026"
+
+
+def test_al_repintar_no_quedan_casillas_viejas_visibles(entorno):
+    abrir, _ = entorno
+    win = abrir({"EJECUTAR": []})
+    win.show()
+    win.go_next()
+    from PySide6.QtWidgets import QApplication
+
+    from src.gui.obra_calendar_window import _DayCell
+
+    QApplication.processEvents()  # muestra las casillas nuevas; el borrado de las viejas sigue pendiente
+    visibles = [c for c in win.findChildren(_DayCell) if c.isVisible()]
+    assert len(visibles) == len(win._cells)
+
+
+def test_ayuda_en_castellano(entorno):
+    from PySide6.QtWidgets import QPushButton
+
+    from src.gui.obra_calendar_window import _HelpDialog
+
+    textos = [b.text() for b in _HelpDialog().findChildren(QPushButton)]
+    assert textos == ["Cerrar"]
