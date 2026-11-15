@@ -1062,7 +1062,14 @@ class PartidasWriter:
         return 0
 
     def _update_bottom_client_cell(self, sheet_xml, cliente, shared_strings):
-        """Busca la última celda en columna A (fila >= 50) con texto y la reemplaza con cliente."""
+        """Sustituye por el cliente la última celda con texto de la columna A
+        tras el subtotal («LA PROPIEDAD» o el cliente anterior).
+
+        Se busca desde el subtotal y no desde una fila fija: con una sola
+        partida el pie sube y esa celda queda en la fila 48.
+        """
+        subtotal_row = _find_partidas_subtotal_row(sheet_xml, shared_strings)
+        min_row = subtotal_row + 1 if subtotal_row else 50
         last_row = None
         for m in re.finditer(
             r'<c r="A(\d+)"[^>]*?(?:/>|>.*?</c>)',
@@ -1070,7 +1077,7 @@ class PartidasWriter:
         ):
             row = int(m.group(1))
             cell = m.group(0)
-            if row < 50 or "<f>" in cell:
+            if row < min_row or "<f>" in cell:
                 continue
             text = resolve_cell_text(cell, shared_strings)
             if text.strip():

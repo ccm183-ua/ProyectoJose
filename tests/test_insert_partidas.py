@@ -580,3 +580,26 @@ class TestSpanishNumbers:
         assert '<c r="G19" s="34"><v>1.0</v></c>' in sheet  # vacía: 1, igual que en el total
         # El subtotal guardado (y el total en letras) cuadra con las filas: 3125 + 40.
         assert "<f>SUM(I17:I20)</f><v>3165.0</v>" in sheet
+
+
+@pytest.mark.usefixtures("no_page_config")
+@pytest.mark.parametrize("n", [1, 2, 3, 8])
+def test_regenerar_cabecera_cambia_el_cliente_del_pie(budget_file, n):
+    """Con una sola partida el pie sube y «LA PROPIEDAD» queda en la fila 48."""
+    from src.core.xlsx_cell_utils import read_shared_strings_from_dict, resolve_cell_text
+
+    em = ExcelManager()
+    assert em.insert_partidas_via_xml(budget_file, _mk_partidas(n, "A"))
+    assert PartidasWriter().update_header_fields(budget_file, {"cliente": "C.P. NUEVO CLIENTE"})
+
+    with zipfile.ZipFile(budget_file) as z:
+        sheet = z.read(SHEET_12220).decode("utf-8")
+        ss = read_shared_strings_from_dict({k: z.read(k) for k in z.namelist()})
+    textos = [
+        resolve_cell_text(m.group(0), ss)
+        for m in re.finditer(r'<c r="A(\d+)"[^>]*?(?:/>|>.*?</c>)', sheet, re.DOTALL)
+        if int(m.group(1)) > 20
+    ]
+    textos = [t for t in textos if t.strip()]
+    assert textos[-1] == "C.P. NUEVO CLIENTE"
+    assert "LA PROPIEDAD" not in textos
