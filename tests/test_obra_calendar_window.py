@@ -406,5 +406,6 @@ def test_ayuda_en_castellano(entorno):
 
     from src.gui.obra_calendar_window import _HelpDialog
 
-    textos = [b.text() for b in _HelpDialog().findChildren(QPushButton)]
+    dialogo = _HelpDialog()  # referencia viva: si no, se destruye antes de leer los botones
+    textos = [b.text() for b in dialogo.findChildren(QPushButton)]
     assert textos == ["Cerrar"]
