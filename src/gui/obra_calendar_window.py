@@ -519,6 +519,7 @@ class ObraCalendarWindow(QWidget):
         self._cells: List[_DayCell] = []
         self._margen = _margen_general()
         self._loading = False
+        self._reload_pending = False
         self._build_ui()
         self._build_shortcuts()
         eventos = planning_events.planning_events()
@@ -698,8 +699,12 @@ class ObraCalendarWindow(QWidget):
 
     def reload(self) -> None:
         if self._loading:
+            # Ya está cargando, pero quizá con datos de antes de esta petición
+            # (p. ej. el dashboard acaba de recargar): se repite al terminar.
+            self._reload_pending = True
             return
         self._loading = True
+        self._reload_pending = False
         self._btn_reload.setEnabled(False)
         hoy = self._hoy
 
@@ -712,8 +717,10 @@ class ObraCalendarWindow(QWidget):
             if not ok:
                 logger.error("No se pudieron cargar las obras del calendario: %s", payload)
                 self.set_data(CalendarData(error=f"No se pudieron cargar las obras: {payload}"))
-                return
-            self.set_data(payload)
+            else:
+                self.set_data(payload)
+            if self._reload_pending:
+                self.reload()
 
         run_in_background(lambda: load_calendar_data(hoy), _done)
 
