@@ -12,7 +12,7 @@ import tempfile
 import zipfile
 from xml.sax.saxutils import escape as xml_escape
 
-from src.core.budget_math import IVA_RATE, calcular_importe_linea, calcular_totales
+from src.core.budget_math import IVA_RATE, calcular_importe_linea, calcular_totales, parse_decimal_es
 from src.core.excel_template_filler import (
     SHEET_12220,
     euros_en_letras,
@@ -124,11 +124,22 @@ TEMPLATE_SUBTOTAL_ROW = 27
 _ROW_ELEMENT_RE = re.compile(r'<row r="(\d+)"[^>]*?(?:/>|>.*?</row>)', re.DOTALL)
 
 
-def _find_partidas_subtotal_row(sheet_xml: str) -> int:
-    """Fila del subtotal de partidas: la celda I con fórmula ``SUM(I17:...)``.
+class PartidasLayoutError(Exception):
+    """El Excel no tiene la estructura esperada para escribir partidas."""
 
-    En la plantilla recién creada es la 27; en un presupuesto que ya tiene
-    partidas está tras la última. Si no se encuentra, se asume la plantilla.
+
+_SUBTOTAL_LABEL = "TOTAL PRESUPUESTO PARCIAL"
+_PARTIDA_NUM_RE = re.compile(r"^\s*(\d+)\.(\d+)\s*$")
+
+
+def _find_partidas_subtotal_row(sheet_xml: str, shared_strings=None) -> "int | None":
+    """Fila del subtotal de partidas, o None si no se encuentra.
+
+    Primero por su fórmula ``SUM(I17:...)`` (plantilla y presupuestos escritos
+    por la app); si se editó a mano, por la etiqueta de la columna C («Total
+    presupuesto parcial…»). No se supone la fila 27 de la plantilla: en un
+    presupuesto con más partidas, borrar solo hasta la 27 dejaba las viejas
+    duplicadas tras las nuevas.
     """
     rows = [
         int(m.group(1))
@@ -139,7 +150,60 @@ def _find_partidas_subtotal_row(sheet_xml: str) -> int:
         )
     ]
     rows = [r for r in rows if r > PARTIDAS_FIRST_ROW]
-    return min(rows) if rows else TEMPLATE_SUBTOTAL_ROW
+    if rows:
+        return min(rows)
+    for m in re.finditer(r'<c r="C(\d+)"[^>]*?(?:/>|>.*?</c>)', sheet_xml, re.DOTALL):
+        row = int(m.group(1))
+        if row <= PARTIDAS_FIRST_ROW:
+            continue
+        text = resolve_cell_text(m.group(0), shared_strings or []).strip().upper()
+        if text.startswith(_SUBTOTAL_LABEL):
+            return row
+    return None
+
+
+def _cell_xml(sheet_xml: str, ref: str) -> "str | None":
+    m = re.search(r'<c r="' + ref + r'"[^>]*?(?:/>|>.*?</c>)', sheet_xml, re.DOTALL)
+    return m.group(0) if m else None
+
+
+def _next_partida_number(sheet_xml: str, shared_strings, subtotal_row: int) -> "tuple[str, int]":
+    """Capítulo y siguiente número tras la última partida («2.3» → ("2", 4))."""
+    prefix, last = "1", 0
+    for row in range(PARTIDAS_FIRST_ROW, subtotal_row):
+        cell = _cell_xml(sheet_xml, f"A{row}")
+        if not cell:
+            continue
+        m = _PARTIDA_NUM_RE.match(resolve_cell_text(cell, shared_strings or []))
+        if m:
+            prefix, last = m.group(1), int(m.group(2))
+    return prefix, last + 1
+
+
+def _existing_partidas_total(sheet_xml: str, subtotal_row: int) -> float:
+    """Importe de las partidas que ya hay: el valor guardado del subtotal o,
+    si no lo tiene, la suma de los valores guardados de la columna I."""
+    def _cached(ref):
+        cell = _cell_xml(sheet_xml, ref)
+        m = re.search(r"<v>([^<]+)</v>", cell or "")
+        try:
+            return float(m.group(1)) if m else None
+        except ValueError:
+            return None
+
+    subtotal = _cached(f"I{subtotal_row}")
+    if subtotal is not None:
+        return subtotal
+    return sum(v for r in range(PARTIDAS_FIRST_ROW, subtotal_row) if (v := _cached(f"I{r}")) is not None)
+
+
+def _to_number(value, default: float) -> float:
+    """Cantidad o precio en formato español («2,5», «1.250,00»); si no es un
+    número, el valor por defecto."""
+    try:
+        return parse_decimal_es(value)
+    except (ValueError, TypeError):
+        return default
 
 
 def _remove_rows_in_range(sheet_xml: str, first: int, last: int) -> str:
@@ -335,7 +399,7 @@ def _estimate_row_height_impl(titulo: str, descripcion: str, chars_per_line: int
 class PartidasWriter:
     """Inserta y actualiza partidas en archivos Excel 122-20 vía XML."""
 
-    def insert_partidas_via_xml(self, file_path, partidas):
+    def insert_partidas_via_xml(self, file_path, partidas, append=False):
         """
         Inserta partidas en el Excel usando manipulación XML directa en sheet2.
 
@@ -374,6 +438,7 @@ class PartidasWriter:
                 asciende_style=wrap_style,
                 partida_desc_style=partida_desc_style,
                 shared_strings=read_shared_strings_from_dict(otros),
+                append=append,
             )
 
             fd, tmp_path = tempfile.mkstemp(suffix=".xlsx")
@@ -421,39 +486,55 @@ class PartidasWriter:
         asciende_style="47",
         partida_desc_style="32",
         shared_strings=None,
+        append=False,
     ):
         """
-        Reemplaza el bloque de partidas (fila 17 hasta el subtotal, inclusive)
-        con las partidas reales.
+        Escribe las partidas en el bloque que va de la fila 17 al subtotal.
 
-        Funciona tanto sobre la plantilla recién creada (partidas de ejemplo
-        17-26, subtotal en 27) como sobre un presupuesto que ya tiene partidas
-        (regenerar / añadir): el subtotal existente se localiza por su fórmula
-        ``SUM(I17:...)`` en lugar de asumir la fila 27.
+        - ``append=False`` (crear / regenerar): sustituye todas las filas del
+          bloque, de la 17 al subtotal inclusive.
+        - ``append=True`` (añadir): deja intactas las filas existentes (importes
+          tecleados a mano, capítulos, notas, numeración) y escribe las nuevas
+          justo antes del subtotal, continuando la numeración.
+
+        El subtotal se localiza por su fórmula ``SUM(I17:...)`` o, si se editó a
+        mano, por su etiqueta («Total presupuesto parcial…»). Si no se encuentra,
+        se lanza ``PartidasLayoutError`` en vez de suponer la fila de la
+        plantilla, que dejaría partidas viejas duplicadas tras las nuevas.
         """
         shared_strings = shared_strings or []
-        old_subtotal_row = _find_partidas_subtotal_row(sheet_xml)
-        sheet_xml = _remove_rows_in_range(sheet_xml, PARTIDAS_FIRST_ROW, old_subtotal_row)
+        old_subtotal_row = _find_partidas_subtotal_row(sheet_xml, shared_strings)
+        if old_subtotal_row is None:
+            raise PartidasLayoutError(
+                "No se encontró la fila del subtotal de partidas "
+                "(«Total presupuesto parcial…» con SUM(I17:…))."
+            )
+
+        if append:
+            first_new_row = old_subtotal_row
+            prefix, first_index = _next_partida_number(sheet_xml, shared_strings, old_subtotal_row)
+            previous_total = _existing_partidas_total(sheet_xml, old_subtotal_row)
+            removed_first = old_subtotal_row
+        else:
+            first_new_row = PARTIDAS_FIRST_ROW
+            prefix, first_index = "1", 1
+            previous_total = 0.0
+            removed_first = PARTIDAS_FIRST_ROW
+        sheet_xml = _remove_rows_in_range(sheet_xml, removed_first, old_subtotal_row)
 
         new_rows_xml = []
-        first_data_row = PARTIDAS_FIRST_ROW
-        current_row = first_data_row
+        current_row = first_new_row
         ps = str(partida_desc_style)
         chars_per_line = _description_chars_per_line(sheet_xml)
+        line_totals = []
 
         for idx, partida in enumerate(partidas):
-            num = f"1.{idx + 1}"
+            num = f"{prefix}.{first_index + idx}"
             unidad = xml_escape(str(partida.get('unidad', 'ud')))
-            cantidad = partida.get('cantidad', 1)
-            precio = partida.get('precio_unitario', 0)
-            try:
-                cantidad = float(cantidad)
-            except (ValueError, TypeError):
-                cantidad = 1.0
-            try:
-                precio = float(precio)
-            except (ValueError, TypeError):
-                precio = 0.0
+            # La misma conversión para la fila y para el total en letras: si no,
+            # «2,5» o una cantidad vacía daban importes distintos en cada sitio.
+            cantidad = _to_number(partida.get('cantidad', 1), 1.0)
+            precio = _to_number(partida.get('precio_unitario', 0), 0.0)
 
             titulo_plain = str(partida.get("titulo", "") or "").strip()
             descripcion_plain = str(partida.get("descripcion", "") or "").strip()
@@ -513,6 +594,7 @@ class PartidasWriter:
                 )
 
             total = calcular_importe_linea(cantidad, precio)
+            line_totals.append(total)
             data_row = (
                 f'<row r="{current_row}" spans="1:9" ht="{row_height}" customHeight="1">'
                 f'<c r="A{current_row}" s="31" t="inlineStr"><is><t>{num}</t></is></c>'
@@ -545,13 +627,11 @@ class PartidasWriter:
             new_rows_xml.append(spacer_row)
             current_row += 1
 
+        first_data_row = PARTIDAS_FIRST_ROW
         last_data_row = current_row - 1
         subtotal_row_num = current_row
         subtotal_label = xml_escape("Total presupuesto parcial nº 1 ACTUACIONES.")
-        grand_total = round(sum(
-            calcular_importe_linea(p.get('cantidad', 1), p.get('precio_unitario', 0))
-            for p in partidas
-        ), 2)
+        grand_total = round(previous_total + sum(line_totals), 2)
         subtotal_row = (
             f'<row r="{subtotal_row_num}" spans="1:9" customHeight="1">'
             f'<c r="A{subtotal_row_num}" s="39"/>'
@@ -583,14 +663,14 @@ class PartidasWriter:
         )
 
         sheet_xml = _remove_merges_starting_in_range(
-            sheet_xml, PARTIDAS_FIRST_ROW, old_subtotal_row
+            sheet_xml, removed_first, old_subtotal_row
         )
         if offset != 0:
             sheet_xml = self._renumber_merges(
                 sheet_xml, start_from=old_subtotal_row + 1, offset=offset
             )
         new_merges = []
-        row = first_data_row
+        row = first_new_row
         for idx in range(len(partidas)):
             new_merges.append(f'<mergeCell ref="C{row}:F{row}"/>')
             row += 2
@@ -1005,35 +1085,15 @@ class PartidasWriter:
 
     def append_partidas_via_xml(self, file_path, new_partidas):
         """
-        Añade partidas al final de las existentes en un presupuesto.
+        Añade partidas tras las existentes, antes del subtotal.
+
+        No reescribe las que ya hay: se conservan tal cual los importes
+        tecleados a mano en la columna I, los capítulos, las notas y la
+        numeración (las nuevas continúan desde la última, p. ej. 2.4).
         """
         if not new_partidas:
             return True
-
-        from src.core.budget_reader import BudgetReader
-
-        try:
-            reader = BudgetReader()
-            existing_data = reader.read(file_path)
-            existing_partidas = existing_data["partidas"] if existing_data else []
-
-            combined = []
-            for p in existing_partidas:
-                combined.append({
-                    "titulo": p.get("concepto", "").split("\n")[0] if p.get("concepto") else "",
-                    "descripcion": "\n".join(p.get("concepto", "").split("\n")[1:]) if "\n" in p.get("concepto", "") else "",
-                    "concepto": p.get("concepto", ""),
-                    "cantidad": p.get("cantidad", 1),
-                    "unidad": p.get("unidad", "ud"),
-                    "precio_unitario": p.get("precio", 0),
-                })
-            for p in new_partidas:
-                combined.append(p)
-
-            return self.insert_partidas_via_xml(file_path, combined)
-        except Exception as e:
-            logger.exception("Error al añadir partidas")
-            return False
+        return self.insert_partidas_via_xml(file_path, new_partidas, append=True)
 
     @staticmethod
     def _apply_page_config_after_write(file_path):
