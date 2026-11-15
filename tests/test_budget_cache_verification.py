@@ -127,3 +127,48 @@ def test_migration_adds_verification_columns(tmp_path, monkeypatch):
         cols = {row[1] for row in conn.execute("PRAGMA table_info(presupuesto)")}
         assert {"clave_verificacion", "hoja_coincide"} <= cols
         assert conn.execute("SELECT COUNT(*) FROM presupuesto").fetchone()[0] == 1
+
+
+# ── Revisión 2026-11-15: un fallo pasajero de lectura no se congela ──────
+
+def test_transient_read_failure_is_retried_next_sync(tmp_path, db, monkeypatch):
+    excel = tmp_path / "11-26 obra.xlsx"
+    _make_excel(excel, ["11/26"])
+    original = BudgetReader._load_file_bytes
+    monkeypatch.setattr(BudgetReader, "_load_file_bytes", staticmethod(lambda _p: None))  # Excel bloqueado
+    first = sync_presupuestos(_scanned(excel, "11-26"), {}, "PRESUPUESTADO")
+    assert first[0]["cliente"] in ("", None)
+    assert get_presupuesto_por_ruta(str(excel))["clave_verificacion"] == ""
+
+    monkeypatch.setattr(BudgetReader, "_load_file_bytes", staticmethod(original))  # ya se puede leer
+    second = sync_presupuestos(_scanned(excel, "11-26"), {}, "PRESUPUESTADO")
+
+    assert second[0]["cliente"] == "Comunidad Excel"
+    assert get_presupuesto_por_ruta(str(excel))["clave_verificacion"]
+
+
+def test_read_exception_is_not_marked_verified(tmp_path, db, monkeypatch):
+    excel = tmp_path / "12-26 obra.xlsx"
+    _make_excel(excel, ["12/26"])
+
+    def _boom(self, *a, **k):
+        raise OSError("bloqueado por otro proceso")
+
+    monkeypatch.setattr(BudgetReader, "read", _boom)
+    sync_presupuestos(_scanned(excel, "12-26"), {}, "PRESUPUESTADO")
+
+    assert get_presupuesto_por_ruta(str(excel))["clave_verificacion"] == ""
+
+
+def test_failed_upsert_is_not_marked_verified(tmp_path, db, monkeypatch):
+    import src.core.budget_cache as bc
+
+    excel = tmp_path / "13-26 obra.xlsx"
+    _make_excel(excel, ["13/26"])
+    marcadas = []
+    monkeypatch.setattr(bc, "upsert_presupuesto", lambda _d: (_ for _ in ()).throw(RuntimeError("bd ocupada")))
+    monkeypatch.setattr(bc, "_mark_verified", lambda ruta, *_a: marcadas.append(ruta))
+
+    sync_presupuestos(_scanned(excel, "13-26"), {}, "PRESUPUESTADO")
+
+    assert marcadas == []

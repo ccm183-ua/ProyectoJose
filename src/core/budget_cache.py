@@ -57,6 +57,16 @@ def _verification_key(mtime_iso: str) -> str:
     return f"{READER_REVISION}|{mtime_iso}"
 
 
+def _verificable(numero: str, has_match: Optional[bool], lectura_ok: bool = True) -> bool:
+    """Si el resultado de esta lectura se puede dar por definitivo para este mtime.
+
+    ``has_match is None`` con número significa que el Excel no se pudo abrir
+    (bloqueado mientras Excel guarda, OneDrive sincronizando...): no se marca
+    como verificado para que la siguiente recarga lo vuelva a intentar.
+    """
+    return lectura_ok and (has_match is not None or not numero)
+
+
 def _mark_verified(ruta_excel: str, mtime_iso: str, has_match: Optional[bool]) -> None:
     try:
         marcar_verificacion_presupuesto(ruta_excel, _verification_key(mtime_iso), has_match)
@@ -294,11 +304,14 @@ def sync_presupuestos(
                     proj, reader, relation_index, ruta_excel, mtime_actual, state_name,
                     has_match=has_match,
                 )
+                lectura_ok = datos_cache.pop("_lectura_ok", False)
                 try:
                     upsert_presupuesto(datos_cache)
                 except Exception:
                     logger.exception("Error al refrescar cache por política: %s", ruta_excel)
-                _mark_verified(ruta_excel, mtime_actual, has_match)
+                else:
+                    if _verificable(numero, has_match, lectura_ok):
+                        _mark_verified(ruta_excel, mtime_actual, has_match)
                 persisted = get_presupuesto_por_ruta(ruta_excel)
                 _fill_entry_from_cache(entry, persisted or datos_cache)
                 result.append(entry)
@@ -313,7 +326,8 @@ def sync_presupuestos(
                 except Exception:
                     logger.debug("No se pudo actualizar estado en cache para %s", ruta_excel)
 
-            _mark_verified(ruta_excel, mtime_actual, has_match)
+            if _verificable(numero, has_match):
+                _mark_verified(ruta_excel, mtime_actual, has_match)
             _fill_entry_from_cache(entry, cached)
             result.append(entry)
             continue
@@ -329,11 +343,14 @@ def sync_presupuestos(
         _try_link_fks(datos_cache)
 
         # Guardar en cache
+        lectura_ok = datos_cache.pop("_lectura_ok", False)
         try:
             upsert_presupuesto(datos_cache)
         except Exception:
             logger.exception("Error al guardar en cache: %s", ruta_excel)
-        _mark_verified(ruta_excel, mtime_actual, has_match)
+        else:
+            if _verificable(numero, has_match, lectura_ok):
+                _mark_verified(ruta_excel, mtime_actual, has_match)
 
         # Rellenar la entrada para la UI
         persisted = get_presupuesto_por_ruta(ruta_excel)
@@ -468,6 +485,7 @@ def _build_cache_data(
     # *has_match* lo calcula el llamador para no leer el Excel dos veces.
     if has_match is False:
         _apply_no_matching_sheet_policy(datos, numero)
+        datos["_lectura_ok"] = True  # resultado definitivo: ninguna hoja coincide
         return datos
 
     # ── Fuente 1: Relación de presupuestos (metadatos) ──────────────
@@ -483,6 +501,9 @@ def _build_cache_data(
     # ── Fuente 2: Cabecera y totales desde el Excel ─────────
     try:
         budget_data = reader.read(ruta_excel, expected_numero=numero)
+        # Marca interna (el llamador la quita antes de guardar): sin lectura no
+        # se da el Excel por verificado y la siguiente recarga lo reintenta.
+        datos["_lectura_ok"] = bool(budget_data)
         if budget_data:
             cab = budget_data.get("cabecera", {}) or {}
             direccion = (cab.get("direccion") or "").strip()
