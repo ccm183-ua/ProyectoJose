@@ -67,6 +67,7 @@ def batch(qapp, monkeypatch, tmp_path):
 
     frame = BudgetDashboardFrame()
     monkeypatch.setattr(frame, "_load_data", lambda: None)
+    monkeypatch.setattr(frame, "_refresh_rows", lambda rutas, on_done=None: None)
     yield frame, budgets, written, dialogs_asked, tmp_path
     frame.close()
 

@@ -49,6 +49,8 @@ def _row_to_presupuesto_cache(r) -> Dict:
         "motivo_incompleto": r[33] or "",
         "metodo_resolucion_admin": r[34] or "",
         "metodo_resolucion_comunidad": r[35] or "",
+        "clave_verificacion": r[36] or "",
+        "hoja_coincide": None if r[37] is None else bool(r[37]),
     }
 
 
@@ -59,7 +61,8 @@ _PRESUPUESTO_COLS = (
     "direccion, localizacion, comunidad_id, administracion_id, comunidad_nombre, "
     "administracion_nombre, fecha_modificacion_excel, fecha_cache, datos_completos, "
     "total_partidas, num_partidas, fuente_datos, es_finalizado, fecha_finalizacion, "
-    "calidad_datos, motivo_incompleto, metodo_resolucion_admin, metodo_resolucion_comunidad"
+    "calidad_datos, motivo_incompleto, metodo_resolucion_admin, metodo_resolucion_comunidad, "
+    "clave_verificacion, hoja_coincide"
 )
 
 
@@ -103,6 +106,53 @@ def get_presupuesto_por_ruta(ruta_excel: str) -> Optional[Dict]:
         if not r:
             return None
         return _row_to_presupuesto_cache(r)
+
+
+def marcar_verificacion_presupuesto(
+    ruta_excel: str, clave: str, coincide: Optional[bool]
+) -> None:
+    """Recuerda con qué mtime/revisión se comprobó la hoja del Excel y su resultado.
+
+    Cualquier ``upsert_presupuesto*`` posterior borra la marca, así que lo
+    escrito por otra vía se vuelve a validar una vez.
+    """
+    ruta = (ruta_excel or "").strip()
+    if not ruta:
+        return
+    with database.get_connection() as conn:
+        conn.execute(
+            "UPDATE presupuesto SET clave_verificacion = ?, hoja_coincide = ? WHERE ruta_excel = ?",
+            (clave, None if coincide is None else (1 if coincide else 0), ruta),
+        )
+        conn.commit()
+
+
+# SQLite limita los parámetros por sentencia (999 en versiones antiguas).
+_BULK_BATCH = 500
+
+
+def get_presupuestos_por_rutas(rutas: List[str]) -> Dict[str, Dict]:
+    """Devuelve ``{ruta_excel: datos}`` de la cache para varias rutas en una conexión.
+
+    Las rutas vacías o sin fila en la cache no aparecen en el resultado.
+    """
+    unique = list(dict.fromkeys((r or "").strip() for r in rutas or []))
+    unique = [r for r in unique if r]
+    if not unique:
+        return {}
+    result: Dict[str, Dict] = {}
+    with database.get_connection() as conn:
+        for start in range(0, len(unique), _BULK_BATCH):
+            batch = unique[start:start + _BULK_BATCH]
+            placeholders = ",".join("?" for _ in batch)
+            cur = conn.execute(
+                f"SELECT {_PRESUPUESTO_COLS} FROM presupuesto WHERE ruta_excel IN ({placeholders})",
+                batch,
+            )
+            for r in cur.fetchall():
+                row = _row_to_presupuesto_cache(r)
+                result[row["ruta_excel"]] = row
+    return result
 
 
 def get_presupuesto_por_id(presupuesto_id: int) -> Optional[Dict]:
@@ -215,7 +265,9 @@ def upsert_presupuesto(datos: Dict) -> Tuple[Optional[int], Optional[str]]:
                        calidad_datos    = excluded.calidad_datos,
                        motivo_incompleto = excluded.motivo_incompleto,
                        metodo_resolucion_admin = excluded.metodo_resolucion_admin,
-                       metodo_resolucion_comunidad = excluded.metodo_resolucion_comunidad
+                       metodo_resolucion_comunidad = excluded.metodo_resolucion_comunidad,
+                       clave_verificacion = NULL,
+                       hoja_coincide    = NULL
                    WHERE presupuesto.es_finalizado = 0
                 """,
                 (
@@ -359,7 +411,9 @@ def upsert_presupuesto_finalizado(
                        calidad_datos    = excluded.calidad_datos,
                        motivo_incompleto = excluded.motivo_incompleto,
                        metodo_resolucion_admin = excluded.metodo_resolucion_admin,
-                       metodo_resolucion_comunidad = excluded.metodo_resolucion_comunidad
+                       metodo_resolucion_comunidad = excluded.metodo_resolucion_comunidad,
+                       clave_verificacion = NULL,
+                       hoja_coincide    = NULL
                 """,
                 (
                     (datos.get("numero_proyecto") or "").strip() or None,

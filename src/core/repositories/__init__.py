@@ -57,6 +57,8 @@ from src.core.repositories.historial_repository import (
 )
 from src.core.repositories.presupuesto_cache_repository import (
     get_presupuesto_por_ruta,
+    get_presupuestos_por_rutas,
+    marcar_verificacion_presupuesto,
     get_presupuesto_por_id,
     get_presupuesto_detalle_por_ruta,
     get_presupuestos_por_estado,
@@ -174,6 +176,8 @@ __all__ = [
     "eliminar_historial_por_ruta",
     "buscar_historial",
     "get_presupuesto_por_ruta",
+    "get_presupuestos_por_rutas",
+    "marcar_verificacion_presupuesto",
     "get_presupuesto_por_id",
     "get_presupuesto_detalle_por_ruta",
     "get_presupuestos_por_estado",
