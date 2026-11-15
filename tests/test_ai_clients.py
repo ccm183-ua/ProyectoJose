@@ -194,3 +194,52 @@ def test_gemini_client_se_crea_con_timeout(monkeypatch):
     client = GeminiAIClient("AI-test-key-not-real", "gemini-test")
     assert client.generate_text("hola") == "ok"
     assert captured["http_options"].timeout == GEMINI_TIMEOUT_MS
+
+
+# ── Revisión 2026-11-15: Gemini 2.5 cuenta el «razonamiento» en el límite ──
+
+def _capturar_config(monkeypatch):
+    from google import genai
+
+    capturado = {}
+
+    class _FakeModels:
+        def generate_content(self, **kwargs):
+            capturado["config"] = kwargs.get("config")
+            return type("R", (), {"text": "ok", "usage_metadata": None})()
+
+    class _FakeClient:
+        def __init__(self, **kwargs):
+            self.models = _FakeModels()
+
+    monkeypatch.setattr(genai, "Client", _FakeClient)
+    return capturado
+
+
+def test_gemini_25_suma_margen_para_el_razonamiento(monkeypatch):
+    from src.core.ai_clients import GEMINI_THINKING_HEADROOM_TOKENS
+
+    capturado = _capturar_config(monkeypatch)
+    GeminiAIClient("AI-test-key-not-real", "gemini-2.5-flash").generate_text("hola", max_tokens=32)
+    assert capturado["config"].max_output_tokens == 32 + GEMINI_THINKING_HEADROOM_TOKENS
+
+
+def test_gemini_sin_razonamiento_usa_el_limite_pedido(monkeypatch):
+    capturado = _capturar_config(monkeypatch)
+    GeminiAIClient("AI-test-key-not-real", "gemini-2.0-flash").generate_text("hola", max_tokens=32)
+    assert capturado["config"].max_output_tokens == 32
+
+
+def test_generar_partidas_con_gemini_pide_respuesta_larga(monkeypatch):
+    """Antes iba con el límite por defecto (1200): 10-15 partidas con
+    descripción llegaban cortadas y salía «no hay partidas»."""
+    from src.core.ai_service import PARTIDAS_MAX_OUTPUT_TOKENS, AIService
+
+    pedidos = []
+    service = AIService.__new__(AIService)
+    service._client = type("C", (), {
+        "generate_text": lambda self, prompt, **kw: pedidos.append(kw) or "[]",
+    })()
+    service._call_api("prompt")
+    assert pedidos == [{"max_tokens": PARTIDAS_MAX_OUTPUT_TOKENS}]
+    assert PARTIDAS_MAX_OUTPUT_TOKENS >= 4096
