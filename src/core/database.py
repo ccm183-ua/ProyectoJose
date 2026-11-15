@@ -64,6 +64,9 @@ def _db_is_truly_empty(path: Path) -> bool:
     return not path.exists() or path.stat().st_size == 0
 
 
+logger = logging.getLogger(__name__)
+
+
 def get_db_path() -> Path:
     """
     Ruta del fichero de base de datos.
@@ -88,6 +91,13 @@ def get_db_path() -> Path:
     stable_path = get_stable_default_db_path()
     legacy_path = get_legacy_db_path()
     if _db_is_truly_empty(stable_path) and _db_has_historical_data(legacy_path):
+        # Se fija la elección: si no, al vaciar la memoria histórica el datos.db
+        # antiguo dejaría de cumplir la condición y la app pasaría a una base de
+        # datos nueva y vacía.
+        try:
+            Settings().set_database_path(str(legacy_path))
+        except OSError:
+            logger.warning("No se pudo fijar la base de datos antigua en la configuración")
         return legacy_path
     return stable_path
 
