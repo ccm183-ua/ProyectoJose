@@ -212,6 +212,7 @@ def start_new_version(
     lines: List[Dict],
     origen: str = "manual_edit",
     iva_rate: Optional[float] = None,
+    reconciliation_warnings_json: Optional[str] = None,
 ) -> Tuple[Optional[int], Optional[str]]:
     """Crea una version nueva (siempre 'draft') que reemplaza la activa:
     marca la anterior 'superseded' y repunta active_version_id, en una
@@ -247,6 +248,7 @@ def start_new_version(
 
             version_id = _insert_version_and_lines(
                 conn, budget_id, numero_version, lines, origen, effective_iva_rate, "draft", now,
+                reconciliation_warnings_json,
             )
 
             if active_version_id:

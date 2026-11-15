@@ -124,12 +124,47 @@ def test_import_duplicate_orden_reassigned_and_warns(db_env):
     assert sorted(l["orden"] for l in lines) == [1, 2]
 
 
-def test_reimport_same_legacy_id_is_idempotent_and_creates_new_version(db_env):
+def test_reimport_without_changes_reuses_active_version(db_env):
+    """Finalizar varias veces sin cambios no multiplica versiones ni evidencias."""
+    presupuesto = _presupuesto(db_env)
+    first = import_from_cache_snapshot(presupuesto, _partidas())
+    second = import_from_cache_snapshot(presupuesto, _partidas())
+
+    assert second.success is True
+    assert second.budget_version_id == first.budget_version_id
+    assert len(list_versions(first.budget_id)) == 1
+
+
+def test_reimport_without_changes_still_approves_when_finalized(db_env):
+    presupuesto = _presupuesto(db_env, es_finalizado=False)
+    first = import_from_cache_snapshot(presupuesto, _partidas())
+    presupuesto["es_finalizado"] = True
+    second = import_from_cache_snapshot(presupuesto, _partidas())
+    assert second.budget_version_id == first.budget_version_id
+    assert get_active_version(first.budget_id)["estado"] == "approved"
+
+
+def test_reconciliation_warnings_are_stored_in_the_version(db_env):
+    import json
+
+    presupuesto = _presupuesto(db_env, total=300.0)
+    first = import_from_cache_snapshot(presupuesto, _partidas())
+    stored = json.loads(get_active_version(first.budget_id)["reconciliation_warnings_json"])
+    assert [w["codigo"] for w in stored] == ["TOTAL_MISMATCH"]
+
+    otras = _partidas() + [{"orden": 2, "concepto": "Otra", "unidad": "ud", "cantidad": 1, "precio": 5.0}]
+    second = import_from_cache_snapshot(presupuesto, otras)
+    stored = json.loads(get_active_version(second.budget_id)["reconciliation_warnings_json"])
+    assert [w["codigo"] for w in stored] == ["TOTAL_MISMATCH"]
+
+
+def test_reimport_with_changed_lines_creates_new_version(db_env):
     presupuesto = _presupuesto(db_env)
     first = import_from_cache_snapshot(presupuesto, _partidas())
     assert first.success is True
 
-    second = import_from_cache_snapshot(presupuesto, _partidas())
+    cambiadas = [dict(_partidas()[0], precio=25.0)]
+    second = import_from_cache_snapshot(presupuesto, cambiadas)
     assert second.success is True
     assert second.budget_id == first.budget_id
     assert second.budget_version_id != first.budget_version_id

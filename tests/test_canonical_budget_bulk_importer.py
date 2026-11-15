@@ -74,7 +74,7 @@ def test_import_all_from_cache_reports_total_mismatch_warning(db_env):
     assert summary.warnings_por_codigo.get("TOTAL_MISMATCH") == 1
 
 
-def test_import_all_from_cache_is_idempotent_creates_new_versions_on_rerun(db_env):
+def test_import_all_from_cache_rerun_reuses_budget_and_unchanged_version(db_env):
     _finalizar(db_env, "obra_repetida", 220.0, [
         {"orden": 1, "concepto": "Sustitucion bajante", "unidad": "ml", "cantidad": 10, "precio": 20.0, "importe": 200.0},
     ])
@@ -84,14 +84,14 @@ def test_import_all_from_cache_is_idempotent_creates_new_versions_on_rerun(db_en
 
     assert first.importados_ok == 1
     assert second.importados_ok == 1
-    # mismo budget en ambas pasadas: la segunda anade version 2, no un budget nuevo
+    # mismo budget en ambas pasadas y, sin cambios en las lineas, ninguna version nueva
     from src.core.repositories.presupuesto_cache_repository import get_presupuesto_por_ruta
     from src.core.repositories.canonical_budget_repository import get_budget_by_legacy_id
 
     legacy = get_presupuesto_por_ruta(str(db_env / "obra_repetida.xlsx"))
     budget = get_budget_by_legacy_id(legacy["id"])
     versions = list_versions(budget["id"])
-    assert len(versions) == 2
+    assert len(versions) == 1
 
 
 def test_import_all_from_cache_records_failure_without_stopping_others(db_env):

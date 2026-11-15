@@ -71,13 +71,29 @@ def test_finalize_budget_mirrors_to_canonical_domain_as_approved(db_env, tmp_pat
     assert lines[0]["concepto"] == "Sustitucion bajante"
 
 
-def test_finalize_budget_twice_creates_new_canonical_version(db_env, tmp_path):
+def test_finalize_budget_twice_without_changes_keeps_one_canonical_version(db_env, tmp_path):
     file_path = str(tmp_path / "obra_repetida.xlsx")
     open(file_path, "w").close()
     svc = _make_service(_sample_data())
 
     assert svc.finalize_budget(file_path) is True
     assert svc.finalize_budget(file_path) is True
+
+    legacy = db_repository.get_presupuesto_por_ruta(file_path)
+    budget = get_budget_by_legacy_id(legacy["id"])
+    versions = list_versions(budget["id"])
+    assert [v["estado"] for v in versions] == ["approved"]
+
+
+def test_finalize_budget_after_changes_creates_new_canonical_version(db_env, tmp_path):
+    file_path = str(tmp_path / "obra_cambiada.xlsx")
+    open(file_path, "w").close()
+    assert _make_service(_sample_data()).finalize_budget(file_path) is True
+
+    cambiado = _sample_data()
+    cambiado["partidas"][0].update(precio=25.0, importe=250.0)
+    cambiado.update(total=275.0, subtotal=250.0, iva=25.0)
+    assert _make_service(cambiado).finalize_budget(file_path) is True
 
     legacy = db_repository.get_presupuesto_por_ruta(file_path)
     budget = get_budget_by_legacy_id(legacy["id"])
