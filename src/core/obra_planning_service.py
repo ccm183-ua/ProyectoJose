@@ -41,6 +41,7 @@ def planning_key(row: Dict) -> str:
 
 
 _numero = planning_key
+folder_name = _folder_name
 
 
 def enrich_with_planning(
