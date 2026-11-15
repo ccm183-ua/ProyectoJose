@@ -408,3 +408,81 @@ main()
                 except Exception:
                     logger.debug("Error al liberar COM")
 
+
+    @staticmethod
+    def default_printer_name() -> str:
+        """Nombre de la impresora predeterminada de Windows, o "" si no se puede saber."""
+        try:
+            import win32print
+
+            return win32print.GetDefaultPrinter() or ""
+        except Exception:
+            return ""
+
+    def print_workbook(self, xlsx_path: str, copies: int = 1) -> Tuple[bool, str]:
+        """Imprime el xlsx en la impresora predeterminada (decisión D, 2026-11-13).
+
+        Misma pauta que export(): instancia propia de Excel con DispatchEx (no se
+        adjunta a los libros que tenga abiertos el usuario), se cierra sin
+        guardar y se sale de Excel aunque la impresión falle.
+        """
+        if not os.path.exists(xlsx_path):
+            return (False, f"El archivo no existe: {xlsx_path}")
+        if not self.is_available():
+            return (False, "win32com no está disponible. Instala pywin32.")
+
+        xlsx_path = os.path.abspath(xlsx_path)
+        logger.info("Imprimir - inicio: %s (%d copias)", xlsx_path, copies)
+
+        com_initialized = False
+        excel = None
+        wb = None
+        try:
+            try:
+                import pythoncom
+                pythoncom.CoInitialize()
+                com_initialized = True
+            except Exception:
+                logger.debug("No se pudo inicializar COM (pythoncom)")
+
+            import win32com.client
+            excel = win32com.client.DispatchEx("Excel.Application")
+            excel.Visible = False
+            excel.DisplayAlerts = False
+
+            wb = excel.Workbooks.Open(xlsx_path)
+            wb.PrintOut(Copies=max(1, int(copies or 1)))
+            logger.info("Imprimir - OK: %s", xlsx_path)
+            return (True, xlsx_path)
+        except Exception as e:
+            logger.error("Imprimir - error COM: %s", e)
+            return (False, f"Error al imprimir: {e}")
+        finally:
+            if wb:
+                try:
+                    wb.Close(SaveChanges=False)
+                except Exception:
+                    logger.debug("Error al cerrar workbook COM")
+            if excel:
+                try:
+                    excel.Quit()
+                except Exception:
+                    logger.debug("Error al cerrar Excel COM")
+            if com_initialized:
+                try:
+                    import pythoncom as _pc
+                    _pc.CoUninitialize()
+                except Exception:
+                    logger.debug("Error al liberar COM")
+
+    _VIRTUAL_PRINTER_MARKERS = ("pdf", "xps", "onenote", "fax")
+
+    @classmethod
+    def is_virtual_printer(cls, name: str) -> bool:
+        """True si la impresora no es física (o no hay ninguna).
+
+        "Microsoft Print to PDF" y similares abren un diálogo de "Guardar como"
+        que, con un Excel invisible, quedaría oculto y colgaría la impresión.
+        """
+        lowered = (name or "").strip().lower()
+        return not lowered or any(m in lowered for m in cls._VIRTUAL_PRINTER_MARKERS)
